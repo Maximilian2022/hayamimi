@@ -25,3 +25,4 @@ huggingface_hub==1.28.0
 # extra rather than a hard dependency; comment it out if LGPL is a concern for
 # your distribution.
 kiwipiepy==0.23.2
+opencc-python-reimplemented==0.1.7

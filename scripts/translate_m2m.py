@@ -54,7 +54,20 @@ EOS_TOKEN = "</s>"
 # scripts/eval_translate.py and docs/design/translate_m2m.md's "Validation tiers"
 # section). Any other M2M-100 target is still accepted (see
 # is_supported_target() below) but its quality has not been checked.
-VALIDATED_TARGETS = {"zh", "ko", "es"}
+VALIDATED_TARGETS = {"zh", "zh-tw", "zh-hk", "zh-cn", "tw", "hk", "cn", "ko", "es"}
+
+# Regional variants of Chinese mapped to OpenCC conversion configurations:
+# zh-tw / tw: Traditional Chinese (Taiwan standard phrases & characters: s2twp)
+# zh-hk / hk: Traditional Chinese (Hong Kong standard characters: s2hk)
+# zh-cn / cn: Simplified Chinese (Mainland China standard, base M2M-100 zh)
+CHINESE_VARIANTS = {
+    "zh-tw": "s2twp",
+    "tw": "s2twp",
+    "zh-hk": "s2hk",
+    "hk": "s2hk",
+    "zh-cn": None,
+    "cn": None,
+}
 
 # Per-target settings, matching Mojicast's reported configuration (zh:
 # greedy, ko: beam_size=4). See docs/design/translate_m2m.md for the measurements
@@ -62,6 +75,12 @@ VALIDATED_TARGETS = {"zh", "ko", "es"}
 # listed here fall back to DEFAULT_BEAM_SIZE (untuned).
 BEAM_SIZE_BY_TARGET = {
     "zh": 1,
+    "zh-tw": 1,
+    "zh-hk": 1,
+    "zh-cn": 1,
+    "tw": 1,
+    "hk": 1,
+    "cn": 1,
     "ko": 4,
     "en": 1,
 }
@@ -85,19 +104,16 @@ def _load_vocab(model_dir: str = _MODEL_DIR) -> "set[str]":
 
 
 def is_supported_target(lang: str, model_dir: str = _MODEL_DIR) -> bool:
-    """True if the model's vocabulary has a `__<lang>__` target-language token.
-
-    This is a direct check against shared_vocabulary.json rather than a
-    hardcoded allowlist, so any of M2M-100's ~100 target languages that this
-    CTranslate2 conversion actually supports is accepted -- see the module
-    docstring for the distinction between "supported" (accepted here) and
-    "validated" (quality-measured, tracked in VALIDATED_TARGETS).
-    """
+    """True if the model's vocabulary has a `__<lang>__` target-language token,
+    or if lang is a supported regional Chinese variant (zh-tw, zh-hk, etc.)."""
+    norm = lang.lower()
+    if norm in CHINESE_VARIANTS:
+        return is_supported_target("zh", model_dir)
     try:
         vocab = _load_vocab(model_dir)
     except (OSError, json.JSONDecodeError):
         return False
-    return f"__{lang}__" in vocab
+    return f"__{norm}__" in vocab
 
 
 # NOTE: Mojicast's report says no_repeat_ngram_size=3 "eliminated" repetition
@@ -128,10 +144,30 @@ class TranslatorM2M:
         compute_type: str = "int8",
         intra_threads: int = 0,
     ):
-        if not is_supported_target(target_lang, model_dir):
+        norm_lang = target_lang.lower()
+        self.target_lang = target_lang
+        self._opencc = None
+
+        if norm_lang in CHINESE_VARIANTS:
+            base_lang = "zh"
+            opencc_cfg = CHINESE_VARIANTS[norm_lang]
+            if opencc_cfg:
+                try:
+                    from opencc import OpenCC
+                    self._opencc = OpenCC(opencc_cfg)
+                except Exception as e:
+                    print(
+                        f"note: opencc not available for {target_lang} ({e}); "
+                        "falling back to standard Simplified Chinese output",
+                        file=sys.stderr,
+                    )
+        else:
+            base_lang = norm_lang
+
+        if not is_supported_target(base_lang, model_dir):
             raise ValueError(
                 f"Unsupported target_lang: {target_lang!r} "
-                f"(no __{target_lang}__ token in {model_dir}'s shared_vocabulary.json)"
+                f"(no __{base_lang}__ token in {model_dir}'s shared_vocabulary.json)"
             )
         if target_lang not in VALIDATED_TARGETS:
             print(
@@ -140,9 +176,8 @@ class TranslatorM2M:
                 file=sys.stderr,
             )
 
-        self.target_lang = target_lang
         self.model_dir = model_dir
-        self._target_token = f"__{target_lang}__"
+        self._target_token = f"__{base_lang}__"
         self._beam_size = BEAM_SIZE_BY_TARGET.get(target_lang, DEFAULT_BEAM_SIZE)
 
         # Imported lazily so vocabulary-only helpers (is_supported_target)
@@ -211,6 +246,12 @@ class TranslatorM2M:
             translated = self._sp.decode(out_tokens).strip()
             if not translated:
                 return text
+
+            if self._opencc:
+                try:
+                    translated = self._opencc.convert(translated)
+                except Exception:
+                    pass
 
             return translated
         except Exception:

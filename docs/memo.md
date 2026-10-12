@@ -21,3 +21,10 @@
      - GUI上のログコンソールにもコンテナの新着ログ（`[コンテナ] ...`）をリアルタイム表示。
      - GUI上から直接 `container.log`、`launcher.log`、`logs` フォルダを開くワンクリックボタンを追加。
      - `logs/launcher.log` (ランチャー操作ログ) と `logs/container.log` (ASRエンジンログ) の2層ロギング体制が完成。
+  5. **中国語の地域別分離（台湾語・香港語・中国語）**:
+     - 既存の `zh` は Meta M2M-100 の中国本土標準・普通話（簡体字中国語）。
+     - `requirements.txt` に `opencc-python-reimplemented` を追加し、`translate_m2m.py` で台湾繁体字・慣用句（`zh-tw` / `s2twp`）および香港繁体字（`zh-hk` / `s2hk`）へのリアルタイム変換パイプラインを実装。
+     - GUIランチャー上で「中国語・簡体字」「台湾語・繁体字」「香港語・繁体字」を独立選択・同時出力可能に。
+  6. **ワンクリック配布用インストーラー (`setup.bat`, `setup.ps1`)**:
+     - `setup.bat`: GitHub から最新の `setup.ps1` を取得・実行する軽量バッチ。
+     - `setup.ps1`: WPF モダンGUIインストーラー。保存先選択（既定: マイドキュメント\hayamimi）、GitHub ZIP自動ダウンロード＆展開、デスクトップショートカット作成、WSL Containers環境チェック、完了後即時起動をサポート。

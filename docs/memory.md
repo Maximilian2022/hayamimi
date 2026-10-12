@@ -25,14 +25,15 @@
      - `start.vbs`: VBScript Shellラッパーにより、黒いコマンドプロンプトを0秒表示（完全非表示）で起動可能。
 
 3. **リアルタイム多言語同時翻訳**:
-   - GUIランチャー上で英語 (en)、中国語 (zh)、韓国語 (ko)、スペイン語 (es)、フランス語 (fr)、ドイツ語 (de) などを複数選択可能。
-   - 選択された言語群を `--translate en,zh,...` としてコンテナ引数に渡す。
+   - GUIランチャー上で英語 (en)、中国語・簡体字 (zh)、台湾語・繁体字 (zh-tw)、香港語・繁体字 (zh-hk)、韓国語 (ko)、スペイン語 (es)、フランス語 (fr)、ドイツ語 (de) などを複数選択可能。
+   - 選択された言語群を `--translate en,zh,zh-tw,zh-hk,...` としてコンテナ引数に渡す。
    - 翻訳エンジン:
      - 英語 (en): FuguMT CTranslate2 (`mojicast-fugumt-ja-en-ct2`)
      - 多言語 (zh/ko/es/fr/de等100言語): M2M-100 418M CTranslate2 (`mojicast-m2m100-ct2`)
+     - 台湾繁体字 (`zh-tw`) / 香港繁体字 (`zh-hk`): M2M-100 の `zh` 出力を OpenCC (`s2twp` / `s2hk`) で台湾・香港の標準表記・慣用語に高精度変換。
    - 翻訳字幕出力:
      - ダッシュボード (`/dashboard`): 確定文ごとに複数言語の翻訳行が並列カード表示される。
-     - OBSオーバーレイ (`/`): 複数言語の翻訳イベントが改行されて同時表示されるよう更新。
+     - OBSオーバーレイ (`/`): 複数言語の翻訳イベントが各言語タグ付きで改行同時表示されるよう更新。
 
 4. **二層ロギング仕様 (`logs/`)**:
    - プロジェクト直下に `logs/` フォルダを自動配置（`.gitignore` 済み）。
@@ -40,3 +41,7 @@
    - `logs/container.log`: WSL Containers 内部（ASRエンジン、モデルロード、VAD、WebSocket等）の標準出力・標準エラーログを常時同期保存。
    - ランチャーGUI上のログコンソールにもコンテナの新着ログ（`[コンテナ] ...`）をリアルタイム表示。
    - GUI上の「📄 container.log」「📄 launcher.log」「📁 logsフォルダ」ボタンからワンクリックで開くことが可能。
+
+5. **ワンクリック配布・セットアップ仕様 (`setup.bat`, `setup.ps1`)**:
+   - 初回導入者向けに、GitHub (`Maximilian2022/hayamimi`) からインストーラーを取得する `setup.bat` を提供。
+   - `setup.ps1` はモダンWPF GUI。保存先（既定: `MyDocuments\hayamimi`）の選択、リポジトリZIPの自動ダウンロード＆展開、デスクトップショートカット（`start.vbs` リンク）作成、WSL Containers環境の自動診断を実行。

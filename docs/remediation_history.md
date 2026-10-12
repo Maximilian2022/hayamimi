@@ -72,3 +72,28 @@
   - ログコンソールヘッダーに `[📄 container.log]`、`[📄 launcher.log]`、`[📁 logsフォルダ]` ボタンを追加。クリックで直接ログファイルやフォルダを開けるように拡張。
 - **PowerShell 5.1 / 7 文字コード対策の徹底**:
   - `scripts/launcher_gui.ps1` を UTF-8 with BOM (`EF BB BF`) で保存し、PS 5.1 環境下での日本語文字化け・バックスラッシュ構文誤認エラーを完全解消。構文解析テスト (`ParseFile`) で双方のパスを確認。
+
+### 8. 中国語の地域別分離（台湾語・香港語・中国語）の実装
+- **言語仕様の明確化**:
+  - 既存の `zh` は Meta M2M-100 の中国本土標準・普通話（簡体字中国語: Simplified Chinese）。
+  - 台湾（繁体字 / 台湾華語）および香港（繁体字 / 香港広東語表記）に対応するため、OpenCC（`opencc-python-reimplemented`）による高精度地域バリアント変換パイプラインを構築。
+- **バックエンド実装 (`scripts/translate_m2m.py`, `requirements.txt`, `Dockerfile`)**:
+  - `requirements.txt` に軽量かつ純Pythonの `opencc-python-reimplemented==0.1.7` を追加。
+  - `scripts/translate_m2m.py`:
+    - `CHINESE_VARIANTS` マッピングを新設（`zh-tw` / `tw` → `s2twp`: 台湾繁体字・慣用句、`zh-hk` / `hk` → `s2hk`: 香港繁体字、`zh-cn` / `cn` → 簡体字）。
+    - M2M-100 の基底 `zh` 翻訳結果から各地域の標準文字体系および語彙（例: 软件→軟體、出租车→計程車）へリアルタイム変換。
+    - コンテナイメージ `hayamimi:latest` を再ビルドし、単体変換テスト完了。
+- **GUIランチャーの拡張 (`scripts/launcher_gui.ps1`)**:
+  - 翻訳設定カードに「中国語・簡体字 (zh)」「台湾語・繁体字 (zh-tw)」「香港語・繁体字 (zh-hk)」の個別チェックボックスを配置し、複数選択・同時出力を可能に。
+
+### 9. 配布用セットアップシステムの実装 (`setup.bat`, `setup.ps1`)
+- **`setup.bat`**:
+  - GitHub (`https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/setup.ps1`) から `setup.ps1` を一時フォルダにダウンロードし、実行ポリシーをバイパスして即座に起動する軽量バッチ（ASCII英数字 + CRLF）。ローカルに `setup.ps1` が存在する場合はローカル版をフォールバック実行。
+- **`setup.ps1`**:
+  - WPFによるモダンダークテーマのインストーラーGUI。
+  - 保存先ディレクトリ選択（既定値: `マイドキュメント\hayamimi`、`[📁 参照...]` ダイアログによる自由指定）。
+  - GitHubから最新リポジトリZIP（`main.zip`）を自動ダウンロード・解凍・配置。Git未インストール環境でも100%動作。
+  - デスクトップショートカット（`hayamimi (早耳).lnk` -> `start.vbs`）の自動作成機能（CLI画面非表示起動）。
+  - WSL Containers (`wslc`) の要件自動事前検出。
+  - インストール完了時のワンクリック起動ボタン（`▶ hayamimi を起動する`）を実装。
+  - UTF-8 with BOM、PS 5.1 / 7 ハイブリッド両対応。

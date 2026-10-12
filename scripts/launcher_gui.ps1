@@ -218,12 +218,14 @@ function Update-ContainerLogFile {
                     </StackPanel>
                 </Grid>
                 <WrapPanel Orientation="Horizontal">
-                    <CheckBox x:Name="ChkEn" Content="英語 (en)" IsChecked="True" Foreground="#ECE5D8" Margin="0,0,14,6"/>
-                    <CheckBox x:Name="ChkZh" Content="中国語 (zh)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,14,6"/>
-                    <CheckBox x:Name="ChkKo" Content="韓国語 (ko)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,14,6"/>
-                    <CheckBox x:Name="ChkEs" Content="スペイン語 (es)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,14,6"/>
-                    <CheckBox x:Name="ChkFr" Content="フランス語 (fr)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,14,6"/>
-                    <CheckBox x:Name="ChkDe" Content="ドイツ語 (de)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,14,6"/>
+                    <CheckBox x:Name="ChkEn" Content="英語 (en)" IsChecked="True" Foreground="#ECE5D8" Margin="0,0,12,6"/>
+                    <CheckBox x:Name="ChkZh" Content="中国語・簡体字 (zh)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
+                    <CheckBox x:Name="ChkZhTw" Content="台湾語・繁体字 (zh-tw)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
+                    <CheckBox x:Name="ChkZhHk" Content="香港語・繁体字 (zh-hk)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
+                    <CheckBox x:Name="ChkKo" Content="韓国語 (ko)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
+                    <CheckBox x:Name="ChkEs" Content="スペイン語 (es)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
+                    <CheckBox x:Name="ChkFr" Content="フランス語 (fr)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
+                    <CheckBox x:Name="ChkDe" Content="ドイツ語 (de)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
                 </WrapPanel>
             </StackPanel>
         </Border>
@@ -339,6 +341,8 @@ $btnOpenLogsDir = $window.FindName("BtnOpenLogsDir")
 
 $chkEn = $window.FindName("ChkEn")
 $chkZh = $window.FindName("ChkZh")
+$chkZhTw = $window.FindName("ChkZhTw")
+$chkZhHk = $window.FindName("ChkZhHk")
 $chkKo = $window.FindName("ChkKo")
 $chkEs = $window.FindName("ChkEs")
 $chkFr = $window.FindName("ChkFr")
@@ -367,6 +371,8 @@ function Set-UIState {
     
     $chkEn.IsEnabled = $CanStart
     $chkZh.IsEnabled = $CanStart
+    $chkZhTw.IsEnabled = $CanStart
+    $chkZhHk.IsEnabled = $CanStart
     $chkKo.IsEnabled = $CanStart
     $chkEs.IsEnabled = $CanStart
     $chkFr.IsEnabled = $CanStart
@@ -448,6 +454,8 @@ $btnStart.Add_Click({
         $selectedLangs = [System.Collections.Generic.List[string]]::new()
         if ($chkEn.IsChecked) { $selectedLangs.Add("en") }
         if ($chkZh.IsChecked) { $selectedLangs.Add("zh") }
+        if ($chkZhTw.IsChecked) { $selectedLangs.Add("zh-tw") }
+        if ($chkZhHk.IsChecked) { $selectedLangs.Add("zh-hk") }
         if ($chkKo.IsChecked) { $selectedLangs.Add("ko") }
         if ($chkEs.IsChecked) { $selectedLangs.Add("es") }
         if ($chkFr.IsChecked) { $selectedLangs.Add("fr") }
