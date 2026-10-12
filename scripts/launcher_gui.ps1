@@ -473,6 +473,77 @@ function Test-ContainerRunning {
     return $false
 }
 
+# ビルド監視用タイマー & 状態変数 (安全なイベント駆動方式)
+$script:BuildLogFile = Join-Path $LogsDir "build.log"
+$script:LastBuildLogLineCount = 0
+$script:ProcBuild = $null
+$script:BuildAutoStart = $false
+
+$buildTimer = [System.Windows.Threading.DispatcherTimer]::new()
+$buildTimer.Interval = [TimeSpan]::FromMilliseconds(500)
+
+$buildTimer.Add_Tick({
+    try {
+        # 1. ビルドログの読み込みとGUIリアルタイム反映
+        if (Test-Path $script:BuildLogFile) {
+            try {
+                $lines = [System.IO.File]::ReadAllLines($script:BuildLogFile, [System.Text.Encoding]::UTF8)
+                if ($lines.Length -gt $script:LastBuildLogLineCount) {
+                    for ($i = $script:LastBuildLogLineCount; $i -lt $lines.Length; $i++) {
+                        $line = $lines[$i]
+                        if ($line.Trim() -and $line -notmatch "^# hayamimi build log") {
+                            Write-AppLog "[ビルド] $line" "INFO"
+                        }
+                    }
+                    $script:LastBuildLogLineCount = $lines.Length
+                }
+            } catch {}
+        }
+
+        # 2. プロセス終了チェック
+        if ($script:ProcBuild -and $script:ProcBuild.HasExited) {
+            $buildTimer.Stop()
+
+            # 最後のログを読み切る
+            Start-Sleep -Milliseconds 200
+            if (Test-Path $script:BuildLogFile) {
+                try {
+                    $lines = [System.IO.File]::ReadAllLines($script:BuildLogFile, [System.Text.Encoding]::UTF8)
+                    if ($lines.Length -gt $script:LastBuildLogLineCount) {
+                        for ($i = $script:LastBuildLogLineCount; $i -lt $lines.Length; $i++) {
+                            $line = $lines[$i]
+                            if ($line.Trim() -and $line -notmatch "^# hayamimi build log") {
+                                Write-AppLog "[ビルド] $line" "INFO"
+                            }
+                        }
+                    }
+                } catch {}
+            }
+
+            $exitCode = $script:ProcBuild.ExitCode
+            if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
+
+            if ($exitCode -eq 0) {
+                Write-AppLog "✔ コンテナイメージ ($ImageName) の構築が正常に完了しました！" "INFO"
+                Write-AppLog "=========================================="
+                Set-UIState "停止中" $brushGray $true $false
+                if ($script:BuildAutoStart) {
+                    Write-AppLog "コンテナの起動処理へ自動移行します..."
+                    Start-HayamimiContainer
+                }
+            } else {
+                Write-AppLog "コンテナイメージのビルドに失敗しました (ExitCode: $exitCode)" "ERROR"
+                Set-UIState "ビルド失敗" $brushRed $true $false
+            }
+        }
+    } catch {
+        $buildTimer.Stop()
+        Write-AppLog "ビルド監視中に例外が発生しました: $_" "ERROR"
+        Set-UIState "エラー" $brushRed $true $false
+        if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
+    }
+})
+
 # ヘルスチェックタイマー
 $script:HealthCheckAttempts = 0
 $healthTimer = [System.Windows.Threading.DispatcherTimer]::new()
@@ -670,7 +741,7 @@ function Test-HayamimiImageExists {
     }
 }
 
-# コンテナイメージのビルド / リビルド関数 (リアルタイムログ同期対応)
+# コンテナイメージのビルド / リビルド関数 (ファイルリダイレクト & タイマー駆動方式)
 function Invoke-BuildContainerImage {
     param(
         [bool]$Force = $false,
@@ -713,57 +784,28 @@ function Invoke-BuildContainerImage {
     Write-AppLog "実行: wslc build -t $ImageName ." "INFO"
     Write-AppLog "※ 環境により数分かかります。完了までそのままお待ちください..." "INFO"
 
+    $script:BuildAutoStart = $AutoStart
+    $script:LastBuildLogLineCount = 0
+
     try {
+        if (Test-Path $script:BuildLogFile) {
+            Remove-Item -Path $script:BuildLogFile -Force -ErrorAction SilentlyContinue
+        }
+        [System.IO.File]::WriteAllText($script:BuildLogFile, "# hayamimi build log`r`n", [System.Text.Encoding]::UTF8)
+
         $pinfoBuild = [System.Diagnostics.ProcessStartInfo]::new()
-        $pinfoBuild.FileName = $script:WslcCmd
-        $pinfoBuild.Arguments = "build -t $ImageName ."
+        $pinfoBuild.FileName = "cmd.exe"
+        $pinfoBuild.Arguments = "/c `"`"$script:WslcCmd`" build -t $ImageName . > `"$script:BuildLogFile`" 2>&1`""
         $pinfoBuild.WorkingDirectory = $ProjectRoot
-        $pinfoBuild.RedirectStandardOutput = $true
-        $pinfoBuild.RedirectStandardError = $true
         $pinfoBuild.UseShellExecute = $false
         $pinfoBuild.CreateNoWindow = $true
 
-        $procBuild = [System.Diagnostics.Process]::new()
-        $procBuild.StartInfo = $pinfoBuild
-
-        $outputHandler = {
-            param($sender, $e)
-            if ($e.Data) {
-                $window.Dispatcher.Invoke([Action]{
-                    Write-AppLog "[ビルド] $($e.Data)" "INFO"
-                })
-            }
-        }
-        $procBuild.add_OutputDataReceived($outputHandler)
-        $procBuild.add_ErrorDataReceived($outputHandler)
-
-        $procBuild.Start() | Out-Null
-        $procBuild.BeginOutputReadLine()
-        $procBuild.BeginErrorReadLine()
-
-        while (-not $procBuild.WaitForExit(200)) {
-            [System.Windows.Forms.Application]::DoEvents()
-        }
-
-        if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
-
-        if ($procBuild.ExitCode -eq 0) {
-            Write-AppLog "✔ コンテナイメージ ($ImageName) の構築が正常に完了しました！" "INFO"
-            Write-AppLog "=========================================="
-            Set-UIState "停止中" $brushGray $true $false
-            if ($AutoStart) {
-                Write-AppLog "コンテナの起動処理へ自動移行します..."
-                Start-HayamimiContainer
-            }
-            return $true
-        } else {
-            Write-AppLog "コンテナイメージのビルドに失敗しました (ExitCode: $($procBuild.ExitCode))" "ERROR"
-            Set-UIState "ビルド失敗" $brushRed $true $false
-            return $false
-        }
+        $script:ProcBuild = [System.Diagnostics.Process]::Start($pinfoBuild)
+        $buildTimer.Start()
+        return $true
     } catch {
         if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
-        Write-AppLog "ビルド実行中に例外が発生しました: $_" "ERROR"
+        Write-AppLog "ビルドプロセスの起動に失敗しました: $_" "ERROR"
         Set-UIState "エラー" $brushRed $true $false
         return $false
     }
@@ -981,6 +1023,13 @@ $script:IsClosing = $false
 $window.Add_Closing({
     param($sender, $e)
     if ($script:IsClosing) { return }
+
+    if ($buildTimer -and $buildTimer.IsEnabled) {
+        $buildTimer.Stop()
+    }
+    if ($script:ProcBuild -and -not $script:ProcBuild.HasExited) {
+        try { $script:ProcBuild.Kill() } catch {}
+    }
 
     if (Test-ContainerRunning) {
         $script:IsClosing = $true
