@@ -1,4 +1,4 @@
-﻿$version = "GUI v1.0.0"
+﻿$version = "GUI v1.0.1"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -270,7 +270,7 @@ function Update-ContainerLogFile {
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Border Background="#242C3D" CornerRadius="12" Padding="10,4" Margin="0,0,8,0" BorderBrush="#3A465D" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.0.0" FontSize="11" Foreground="#F6AD55" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.0.1" FontSize="11" Foreground="#F6AD55" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#1A202C" CornerRadius="12" Padding="10,4">
                         <TextBlock x:Name="RuntimeBadge" Text="WSL3 Native" FontSize="11" Foreground="#4FD1C5" FontWeight="SemiBold"/>

@@ -587,7 +587,8 @@
     }
     .preview-final { display: block; }
     .preview-partial { display: block; opacity: 0.75; font-style: italic; font-size: 0.85em; }
-    .preview-trans { display: block; opacity: 0.8; font-size: 0.8em; margin-top: 0.3em; }
+    .preview-trans { display: block; opacity: 0.85; font-size: 0.82em; margin-top: 0.3em; }
+    .preview-trans-line { margin-top: 0.2em; line-height: 1.35; }
 
     .btn-primary {
       background: var(--shu);
@@ -985,9 +986,9 @@
 
         <div class="preview-viewport">
           <div id="preview-box" class="preview-box">
-            <span id="preview-final" class="preview-final">早耳によるリアルタイム字幕の表示例です。</span>
-            <span id="preview-partial" class="preview-partial">いま話している途中です…</span>
-            <span id="preview-trans" class="preview-trans">→ This is a real-time subtitle example.</span>
+            <div id="preview-final" class="preview-final">早耳によるリアルタイム字幕の表示例です。</div>
+            <div id="preview-partial" class="preview-partial">いま話している途中です…</div>
+            <div id="preview-trans" class="preview-trans"></div>
           </div>
         </div>
       </div>
@@ -1257,6 +1258,7 @@
             idleTimer = setTimeout(() => {
               partialText.classList.add("idle");
             }, 4000);
+            updateLivePreviewFromEvent(ev);
           } else if (ev.type === "final") {
             const item = document.createElement("div");
             item.className = "feed-item";
@@ -1276,6 +1278,7 @@
             if (ev.latency_ms != null) {
               latVal.textContent = Math.round(ev.latency_ms);
             }
+            updateLivePreviewFromEvent(ev);
           } else if (ev.type === "translation") {
             const first = finalFeed.firstElementChild;
             if (first) {
@@ -1286,6 +1289,7 @@
               tr.textContent = `→ [${ev.lang}] ${ev.text}`;
               first.appendChild(tr);
             }
+            updateLivePreviewFromEvent(ev);
           } else if (ev.type === "error") {
             showError("サーバーエラー: " + ev.message);
             stopRecording();
@@ -1486,6 +1490,17 @@
     return s.join(", ");
   }
 
+  const SAMPLE_TRANSLATIONS = {
+    "en": "→ [en] This is a real-time subtitle example.",
+    "zh": "→ [zh] 这是实时字幕的示例。",
+    "zh-tw": "→ [zh-tw] 這是即時字幕的範例。",
+    "zh-hk": "→ [zh-hk] 這是實時字幕的範例。",
+    "ko": "→ [ko] 이것은 실시간 자막의 표시 예시입니다.",
+    "es": "→ [es] Este es un ejemplo de subtítulo en tiempo real.",
+    "fr": "→ [fr] Ceci est un exemple de sous-titre en temps réel.",
+    "de": "→ [de] Dies ist ein Beispiel für Live-Untertitel."
+  };
+
   function updatePreview() {
     const box = document.getElementById("preview-box");
     const fin = document.getElementById("preview-final");
@@ -1519,7 +1534,66 @@
     box.style.borderRadius = currentStyle.radius + "px";
     box.style.padding = currentStyle.bgOpacity > 0 ? "0.6rem 1rem" : "0";
 
-    tr.style.display = currentStyle.showTrans ? "block" : "none";
+    // 複数翻訳言語のプレビュー反映
+    const transEnabled = document.getElementById("cfg-trans-enable").checked;
+    if (!currentStyle.showTrans || !transEnabled) {
+      tr.style.display = "none";
+      tr.innerHTML = "";
+    } else {
+      const selectedLangs = Array.from(document.querySelectorAll('input[name="trans-lang"]:checked')).map(c => c.value);
+      if (selectedLangs.length === 0) {
+        tr.style.display = "none";
+        tr.innerHTML = "";
+      } else {
+        tr.style.display = "block";
+        tr.innerHTML = "";
+        selectedLangs.forEach(lang => {
+          const line = document.createElement("div");
+          line.className = "preview-trans-line";
+          line.textContent = SAMPLE_TRANSLATIONS[lang] || `→ [${lang}] Sample translation subtitle.`;
+          tr.appendChild(line);
+        });
+      }
+    }
+  }
+
+  let livePreviewResetTimer = null;
+  function updateLivePreviewFromEvent(ev) {
+    const box = document.getElementById("preview-box");
+    const fin = document.getElementById("preview-final");
+    const par = document.getElementById("preview-partial");
+    const tr = document.getElementById("preview-trans");
+    if (!box || !fin || !par || !tr) return;
+
+    if (livePreviewResetTimer) {
+      clearTimeout(livePreviewResetTimer);
+      livePreviewResetTimer = null;
+    }
+
+    if (ev.type === "partial") {
+      par.textContent = ev.text;
+    } else if (ev.type === "final") {
+      fin.textContent = ev.text;
+      par.textContent = "";
+      tr.innerHTML = "";
+    } else if (ev.type === "translation") {
+      const showTrans = document.getElementById("style-show-trans").checked;
+      const transEnabled = document.getElementById("cfg-trans-enable").checked;
+      if (showTrans && transEnabled) {
+        tr.style.display = "block";
+        const line = document.createElement("div");
+        line.className = "preview-trans-line";
+        line.textContent = `→ [${ev.lang}] ${ev.text}`;
+        tr.appendChild(line);
+      }
+    }
+
+    // 7秒間無音なら、設定画面用のサンプル表示に復帰
+    livePreviewResetTimer = setTimeout(() => {
+      fin.textContent = "早耳によるリアルタイム字幕の表示例です。";
+      par.textContent = "いま話している途中です…";
+      updatePreview();
+    }, 7000);
   }
 
   // 設定入力イベント
@@ -1538,6 +1612,7 @@
         document.getElementById("cfg-trans-enable").checked = true;
         document.getElementById("trans-lang-group").style.display = "flex";
       }
+      updatePreview();
       saveAllSettings();
     });
   });
@@ -1553,6 +1628,7 @@
       }
     }
     updateTransPillStates();
+    updatePreview();
     saveAllSettings();
   });
 
