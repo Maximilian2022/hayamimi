@@ -48,6 +48,9 @@ Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName System.Drawing
 
+# --- WPF ハードウェアアクセラレーション起因の Win32 メッセージクォータ溢れ (エラー 1816) を完全防止 ---
+[System.Windows.Media.RenderOptions]::ProcessRenderMode = [System.Windows.Interop.RenderMode]::SoftwareOnly
+
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
 
 # 1. パスの動的解決 (他環境での実行に対応)
@@ -74,7 +77,7 @@ $MicUrl = "http://localhost:8833/mic"
 $ObsUrl = "http://localhost:8833/"
 $DashboardUrl = "http://localhost:8833/dashboard"
 
-# ランチャー用ロギング関数
+# ランチャー用ロギング関数 (単一メッセージ)
 function Write-AppLog {
     param([string]$Message, [string]$Level = "INFO")
     $now = Get-Date
@@ -88,6 +91,36 @@ function Write-AppLog {
 
     if ($logTextBox -and $logScrollViewer) {
         $logTextBox.AppendText("[$timeOnly] $Message`r`n")
+        $logScrollViewer.ScrollToEnd()
+    }
+}
+
+# ランチャー用ロギング関数 (複数行バッチ・メッセージキュー溢れ防止)
+function Write-AppLogBatch {
+    param([System.Collections.IEnumerable]$Messages, [string]$Level = "INFO")
+    if (-not $Messages) { return }
+    $now = Get-Date
+    $timestamp = $now.ToString("yyyy-MM-dd HH:mm:ss")
+    $timeOnly = $now.ToString("HH:mm:ss")
+
+    $fileSb = [System.Text.StringBuilder]::new()
+    $guiSb = [System.Text.StringBuilder]::new()
+    $count = 0
+
+    foreach ($msg in $Messages) {
+        if (-not $msg) { continue }
+        [void]$fileSb.AppendLine("[$timestamp] [$Level] $msg")
+        [void]$guiSb.AppendLine("[$timeOnly] $msg")
+        $count++
+    }
+    if ($count -eq 0) { return }
+
+    try {
+        [System.IO.File]::AppendAllText($LogFile, $fileSb.ToString(), [System.Text.Encoding]::UTF8)
+    } catch {}
+
+    if ($logTextBox -and $logScrollViewer) {
+        $logTextBox.AppendText($guiSb.ToString())
         $logScrollViewer.ScrollToEnd()
     }
 }
@@ -328,12 +361,20 @@ function Update-ContainerLogFile {
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="※ ソース更新時はリビルドで最新コードをコンテナに即時反映できます。" FontSize="11" Foreground="#718096" VerticalAlignment="Center"/>
-                <Button x:Name="BtnRebuild" Grid.Column="1" Background="#1A202C" Foreground="#A0AEC0" Height="28" Padding="12,4" FontSize="11" ToolTip="最新のソースコードをコンテナイメージに再反映します">
+                <TextBlock Grid.Column="0" Text="※ GitHubの最新コード取得とコンテナ更新を行えます。" FontSize="11" Foreground="#718096" VerticalAlignment="Center"/>
+                <Button x:Name="BtnUpdateApp" Grid.Column="1" Background="#1A202C" Foreground="#4FD1C5" Height="28" Padding="10,4" FontSize="11" ToolTip="GitHubから最新のソースコードを取得します">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="🔄" FontSize="11" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                        <TextBlock Text="コンテナをリビルド (更新反映)" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBlock Text="📥" FontSize="11" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="本体を最新版に更新" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <Button x:Name="BtnRebuild" Grid.Column="3" Background="#1A202C" Foreground="#A0AEC0" Height="28" Padding="10,4" FontSize="11" ToolTip="最新のソースコードをコンテナイメージに再反映します">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🔄" FontSize="11" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="コンテナをリビルド" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
             </Grid>
@@ -408,6 +449,12 @@ $reader = [System.Xml.XmlNodeReader]::new($xaml)
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
 # --- WPF UIスレッド未処理例外の安全捕捉 (プロセスクラッシュ完全防止) ---
+$window.Dispatcher.Add_UnhandledExceptionFilter({
+    param($sender, $e)
+    try {
+        $e.RequestCatch = $true
+    } catch {}
+})
 $window.Dispatcher.Add_UnhandledException({
     param($sender, $e)
     try {
@@ -422,6 +469,7 @@ $statusText = $window.FindName("StatusText")
 $runtimeBadge = $window.FindName("RuntimeBadge")
 $btnStart = $window.FindName("BtnStart")
 $btnStop = $window.FindName("BtnStop")
+$btnUpdateApp = $window.FindName("BtnUpdateApp")
 $btnRebuild = $window.FindName("BtnRebuild")
 $btnOpenMic = $window.FindName("BtnOpenMic")
 $btnOpenObs = $window.FindName("BtnOpenObs")
@@ -830,23 +878,133 @@ function Invoke-BuildContainerImage {
     }
 }
 
-# ビルド監視用タイマー (安全なイベント駆動方式)
+# 本体の最新コード取得（アップデート）関数
+function Invoke-UpdateAppCode {
+    try {
+        $confirm = Show-AppConfirm -Message "GitHub (Maximilian2022/hayamimi) から最新のソースコードを取得（アップデート）しますか？`r`n`r`n※ 取得完了後、コンテナのリビルドを実施することで最新機能が反映されます。" -Title "本体のアップデート - hayamimi"
+        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+        Write-AppLog "=========================================="
+        Write-AppLog "本体の最新コード取得（アップデート）を開始します..." "INFO"
+        Set-UIState "更新取得中..." $brushOrange $false $false
+        if ($btnUpdateApp) { $btnUpdateApp.IsEnabled = $false }
+        if ($btnRebuild) { $btnRebuild.IsEnabled = $false }
+
+        $updateSuccess = $false
+        $hasGit = $false
+
+        # 1. git の存在確認
+        try {
+            $gitCmd = where.exe git 2>$null
+            if ($gitCmd -and (Test-Path (Join-Path $ProjectRoot ".git"))) {
+                $hasGit = $true
+            }
+        } catch {}
+
+        if ($hasGit) {
+            Write-AppLog "Git リポジトリを検出しました。git pull を実行中..." "INFO"
+            $pinfoGit = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoGit.FileName = "git.exe"
+            $pinfoGit.Arguments = "pull origin main"
+            $pinfoGit.WorkingDirectory = $ProjectRoot
+            $pinfoGit.RedirectStandardOutput = $true
+            $pinfoGit.RedirectStandardError = $true
+            $pinfoGit.UseShellExecute = $false
+            $pinfoGit.CreateNoWindow = $true
+
+            $procGit = [System.Diagnostics.Process]::Start($pinfoGit)
+            $gitStdout = $procGit.StandardOutput.ReadToEnd()
+            $gitStderr = $procGit.StandardError.ReadToEnd()
+            $procGit.WaitForExit()
+
+            if ($gitStdout) {
+                $gLines = ($gitStdout -split "`r?`n") | Where-Object { $_.Trim() }
+                if ($gLines) {
+                    Write-AppLogBatch -Messages ($gLines | ForEach-Object { "[Git] $_" }) -Level "INFO"
+                }
+            }
+            if ($procGit.ExitCode -eq 0) {
+                Write-AppLog "✔ Git による最新コードの取得が正常に完了しました！" "INFO"
+                $updateSuccess = $true
+            } else {
+                if ($gitStderr) {
+                    $eLines = ($gitStderr -split "`r?`n") | Where-Object { $_.Trim() }
+                    if ($eLines) {
+                        Write-AppLogBatch -Messages ($eLines | ForEach-Object { "[Git エラー] $_" }) -Level "WARN"
+                    }
+                }
+                Write-AppLog "Git pull に失敗したため、GitHub からの直接ダウンロードに切り替えます..." "WARN"
+            }
+        }
+
+        # 2. Git がない、または git pull 失敗時は GitHub ZIP 直接取得
+        if (-not $updateSuccess) {
+            Write-AppLog "GitHub API から最新ソースコードアーカイブを取得中..." "INFO"
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+            $zipUrl = "https://github.com/Maximilian2022/hayamimi/archive/refs/heads/main.zip"
+            $tempZip = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "hayamimi-latest.zip")
+            $tempExtract = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "hayamimi-extract-" + [System.Guid]::NewGuid().ToString("N"))
+
+            Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing -TimeoutSec 30
+            Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force
+
+            # 展開フォルダ内のファイルをプロジェクトルートに安全上書き (models/ や logs/ や .git は保持)
+            $innerDir = Get-ChildItem -Path $tempExtract -Directory | Select-Object -First 1
+            if ($innerDir) {
+                $srcItems = Get-ChildItem -Path $innerDir.FullName
+                foreach ($item in $srcItems) {
+                    if ($item.Name -in @(".git", "models", "logs", "scratch")) { continue }
+                    $destPath = Join-Path $ProjectRoot $item.Name
+                    Copy-Item -Path $item.FullName -Destination $destPath -Recurse -Force
+                }
+                Write-AppLog "✔ GitHub アーカイブからの最新コード反映が完了しました！" "INFO"
+                $updateSuccess = $true
+            }
+
+            # クリーンアップ
+            Remove-Item -Path $tempZip -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        if ($btnUpdateApp) { $btnUpdateApp.IsEnabled = $true }
+        if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
+        Set-UIState "停止中" $brushGray $true $false
+
+        if ($updateSuccess) {
+            $askRebuild = Show-AppConfirm -Message "最新のソースコードを取得しました！`r`n`r`n更新をコンテナに反映するため、今すぐリビルドを実行しますか？" -Title "コンテナの更新反映 - hayamimi"
+            if ($askRebuild -eq [System.Windows.MessageBoxResult]::Yes) {
+                Invoke-BuildContainerImage -Force $true -AutoStart $false | Out-Null
+            }
+        }
+    } catch {
+        Write-AppLog "本体アップデート処理中にエラーが発生しました: $_" "ERROR"
+        Set-UIState "エラー" $brushRed $true $false
+        if ($btnUpdateApp) { $btnUpdateApp.IsEnabled = $true }
+        if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
+    }
+}
+
+# ビルド監視用タイマー (安全なイベント駆動方式 & バッチログ出力)
 $buildTimer = [System.Windows.Threading.DispatcherTimer]::new()
 $buildTimer.Interval = [TimeSpan]::FromMilliseconds(500)
 
 $buildTimer.Add_Tick({
     try {
-        # 1. ビルドログの読み込みとGUIリアルタイム反映 (ロック共有で安全読み取り)
+        # 1. ビルドログの読み込みとGUIリアルタイム反映 (ロック共有で安全読み取り & バッチ出力)
         if (Test-Path $script:BuildLogFile) {
             $lines = Read-FileSharedLines -FilePath $script:BuildLogFile
             if ($lines.Length -gt $script:LastBuildLogLineCount) {
+                $batch = [System.Collections.Generic.List[string]]::new()
                 for ($i = $script:LastBuildLogLineCount; $i -lt $lines.Length; $i++) {
                     $line = $lines[$i]
                     if ($line.Trim() -and $line -notmatch "^# hayamimi build log") {
-                        Write-AppLog "[ビルド] $line" "INFO"
+                        $batch.Add("[ビルド] $line")
                     }
                 }
                 $script:LastBuildLogLineCount = $lines.Length
+                if ($batch.Count -gt 0) {
+                    Write-AppLogBatch -Messages $batch -Level "INFO"
+                }
             }
         }
 
@@ -859,13 +1017,17 @@ $buildTimer.Add_Tick({
             if (Test-Path $script:BuildLogFile) {
                 $lines = Read-FileSharedLines -FilePath $script:BuildLogFile
                 if ($lines.Length -gt $script:LastBuildLogLineCount) {
+                    $batch = [System.Collections.Generic.List[string]]::new()
                     for ($i = $script:LastBuildLogLineCount; $i -lt $lines.Length; $i++) {
                         $line = $lines[$i]
                         if ($line.Trim() -and $line -notmatch "^# hayamimi build log") {
-                            Write-AppLog "[ビルド] $line" "INFO"
+                            $batch.Add("[ビルド] $line")
                         }
                     }
                     $script:LastBuildLogLineCount = $lines.Length
+                    if ($batch.Count -gt 0) {
+                        Write-AppLogBatch -Messages $batch -Level "INFO"
+                    }
                 }
             }
 
@@ -988,6 +1150,13 @@ $btnStart.Add_Click({
         Set-UIState "エラー" $brushRed $true $false
     }
 })
+
+# 本体アップデートボタン処理 (GitHubからの最新コード取得)
+if ($btnUpdateApp) {
+    $btnUpdateApp.Add_Click({
+        Invoke-UpdateAppCode
+    })
+}
 
 # リビルドボタン処理 (ソースコード更新時の再構築・完全例外保護)
 if ($btnRebuild) {
