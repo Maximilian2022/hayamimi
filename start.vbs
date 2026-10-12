@@ -23,5 +23,28 @@ Else
     Next
 End If
 
-cmdLine = psCmd & " -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & scriptDir & "\scripts\launcher_gui.ps1"""
+' launcher_gui.ps1 のパス確認 (二重ネスト時もフォールバック検出)
+targetScript = scriptDir & "\scripts\launcher_gui.ps1"
+If Not fso.FileExists(targetScript) Then
+    If fso.FileExists(scriptDir & "\scripts\scripts\launcher_gui.ps1") Then
+        targetScript = scriptDir & "\scripts\scripts\launcher_gui.ps1"
+    Else
+        MsgBox "ランチャーの起動スクリプトが見つかりませんでした:" & vbCrLf & _
+               scriptDir & "\scripts\launcher_gui.ps1" & vbCrLf & vbCrLf & _
+               "フォルダ階層またはファイルの存在を確認してください。", _
+               vbCritical, "hayamimi 起動エラー"
+        WScript.Quit 1
+    End If
+End If
+
+cmdLine = psCmd & " -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & targetScript & """"
+
+On Error Resume Next
 WshShell.Run cmdLine, 0, False
+If Err.Number <> 0 Then
+    MsgBox "ランチャーの起動に失敗しました (エラーコード: " & Err.Number & "):" & vbCrLf & _
+           Err.Description & vbCrLf & vbCrLf & _
+           "コマンドライン: " & cmdLine, _
+           vbCritical, "hayamimi 起動エラー"
+    WScript.Quit Err.Number
+End If

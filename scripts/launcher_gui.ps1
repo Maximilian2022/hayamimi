@@ -1,4 +1,4 @@
-﻿$version = "GUI v1.0.2"
+$version = "GUI v1.0.3"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -71,6 +71,25 @@ if (-not (Test-Path $LogsDir)) {
 }
 $LogFile = Join-Path $LogsDir "launcher.log"
 $ContainerLogFile = Join-Path $LogsDir "container.log"
+
+# 過去のバグで発生した二重ネストフォルダ (scripts/scripts, docs/docs 等) の自動修復
+try {
+    $nestedCandidateDirs = @("scripts", "docs", "tests", "demo", "mobile", "nginx", ".github")
+    foreach ($cand in $nestedCandidateDirs) {
+        $pDir = Join-Path $ProjectRoot $cand
+        $nDir = Join-Path $pDir $cand
+        if ((Test-Path $pDir) -and (Test-Path $nDir) -and (Get-Item $nDir).PSIsContainer) {
+            $childItems = Get-ChildItem -Path $nDir
+            foreach ($ci in $childItems) {
+                $targetCiPath = Join-Path $pDir $ci.Name
+                if (-not (Test-Path $targetCiPath)) {
+                    Move-Item -Path $ci.FullName -Destination $targetCiPath -Force
+                }
+            }
+            Remove-Item -Path $nDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+} catch {}
 
 $ContainerName = "hayamimi_app"
 $ImageName = "hayamimi:latest"
@@ -1010,8 +1029,33 @@ function Invoke-UpdateAppCode {
                 foreach ($item in $srcItems) {
                     if ($item.Name -in @(".git", "models", "logs", "scratch")) { continue }
                     $destPath = Join-Path $ProjectRoot $item.Name
-                    Copy-Item -Path $item.FullName -Destination $destPath -Recurse -Force
+                    if ($item.PSIsContainer) {
+                        if (-not (Test-Path $destPath)) {
+                            New-Item -ItemType Directory -Path $destPath -Force | Out-Null
+                        }
+                        Copy-Item -Path (Join-Path $item.FullName "*") -Destination $destPath -Recurse -Force
+                    } else {
+                        Copy-Item -Path $item.FullName -Destination $destPath -Force
+                    }
                 }
+
+                # 過去の二重ネストフォルダの自己修復
+                $cleanCandidateDirs = @("scripts", "docs", "tests", "demo", "mobile", "nginx", ".github")
+                foreach ($cand in $cleanCandidateDirs) {
+                    $pDir = Join-Path $ProjectRoot $cand
+                    $nDir = Join-Path $pDir $cand
+                    if ((Test-Path $pDir) -and (Test-Path $nDir) -and (Get-Item $nDir).PSIsContainer) {
+                        $cItems = Get-ChildItem -Path $nDir
+                        foreach ($ci in $cItems) {
+                            $targetCi = Join-Path $pDir $ci.Name
+                            if (-not (Test-Path $targetCi)) {
+                                Move-Item -Path $ci.FullName -Destination $targetCi -Force
+                            }
+                        }
+                        Remove-Item -Path $nDir -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                }
+
                 Write-AppLog "✔ GitHub アーカイブからの最新コード反映が完了しました！" "INFO"
                 $updateSuccess = $true
             }

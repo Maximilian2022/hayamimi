@@ -1,4 +1,4 @@
-﻿[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
 # --- コンソール & Windows Terminal の完全非表示化 (SW_HIDE) ---
@@ -563,15 +563,41 @@ $stepTimer.Add_Tick({
                         # modelsフォルダが存在すればコピーまたは作成
                         $destModels = Join-Path $script:targetDir "models"
                         if (-not (Test-Path $destModels)) {
-                            Copy-Item -Path $item.FullName -Destination $destModels -Recurse -Force
+                            New-Item -ItemType Directory -Path $destModels -Force | Out-Null
+                            Copy-Item -Path (Join-Path $item.FullName "*") -Destination $destModels -Recurse -Force
                         }
                         continue
                     }
                     if ($item.Name -eq "logs") { continue }
 
                     $destPath = Join-Path $script:targetDir $item.Name
-                    Copy-Item -Path $item.FullName -Destination $destPath -Recurse -Force
+                    if ($item.PSIsContainer) {
+                        if (-not (Test-Path $destPath)) {
+                            New-Item -ItemType Directory -Path $destPath -Force | Out-Null
+                        }
+                        Copy-Item -Path (Join-Path $item.FullName "*") -Destination $destPath -Recurse -Force
+                    } else {
+                        Copy-Item -Path $item.FullName -Destination $destPath -Force
+                    }
                     Write-SetupLog "配置: $($item.Name)"
+                }
+
+                # 過去のバグで発生した二重ネスト (scripts/scripts 等) の自動検出・自己修復
+                $possibleNestedDirs = @("scripts", "docs", "tests", "demo", "mobile", "nginx", ".github")
+                foreach ($dirName in $possibleNestedDirs) {
+                    $parentDir = Join-Path $script:targetDir $dirName
+                    $nestedDir = Join-Path $parentDir $dirName
+                    if ((Test-Path $parentDir) -and (Test-Path $nestedDir) -and (Get-Item $nestedDir).PSIsContainer) {
+                        Write-SetupLog "二重ネストフォルダを検出・自動修復中: $nestedDir"
+                        $nestedChildren = Get-ChildItem -Path $nestedDir
+                        foreach ($nc in $nestedChildren) {
+                            $targetNcPath = Join-Path $parentDir $nc.Name
+                            if (-not (Test-Path $targetNcPath)) {
+                                Move-Item -Path $nc.FullName -Destination $targetNcPath -Force
+                            }
+                        }
+                        Remove-Item -Path $nestedDir -Recurse -Force -ErrorAction SilentlyContinue
+                    }
                 }
 
                 # 必須ディレクトリの作成

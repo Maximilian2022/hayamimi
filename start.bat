@@ -18,7 +18,7 @@ echo.
 set /p "DO_INSTALL=今すぐ全自動で WSL 3.0 をインストールしますか？ (Y/N): "
 if /i "%DO_INSTALL%"=="Y" (
     echo [*] 管理者権限で WSL 3.0 の自動インストールを開始します...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "& { Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"%~dp0scripts\launcher_gui.ps1\"' }"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "& { Start-Process powershell -Verb RunAs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', '%~dp0scripts\launcher_gui.ps1') }"
     exit /b 0
 )
 echo.
