@@ -77,6 +77,14 @@ htmlcov/
 .playwright-mcp/
 .agents/
 
+# AI Agent External Memory & Remediation History (一時外部記憶・長期記憶・履歴)
+docs/memo.md
+docs/memory.md
+docs/remediation_history.md
+memo.md
+memory.md
+remediation_history.md
+
 # ==============================================================================
 # Operating System Artifacts (OS固有の一時ファイル)
 # ==============================================================================
