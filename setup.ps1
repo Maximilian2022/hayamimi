@@ -246,34 +246,43 @@ $btnBrowse.Add_Click({
     }
 })
 
+# スクリプトディレクトリの取得 (ローカルファイル検出用)
+$ScriptDir = $PSScriptRoot
+if (-not $ScriptDir -and $MyInvocation.MyCommand.Path) {
+    $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+if (-not $ScriptDir) {
+    $ScriptDir = (Get-Location).Path
+}
+
 # インストール実行用ステートマシンタイマー
-$step = 0
-$tempZipPath = ""
-$tempExtractDir = ""
-$targetDir = ""
+$script:step = 0
+$script:tempZipPath = ""
+$script:tempExtractDir = ""
+$script:targetDir = ""
 
 $stepTimer = [System.Windows.Threading.DispatcherTimer]::new()
-$stepTimer.Interval = [TimeSpan]::FromMilliseconds(100)
+$stepTimer.Interval = [TimeSpan]::FromMilliseconds(50)
 
 $stepTimer.Add_Tick({
     $stepTimer.Stop()
 
-    switch ($step) {
+    switch ($script:step) {
         1 {
             # ステップ 1: 保存先ディレクトリ準備
-            $targetDir = $txtInstallPath.Text.Trim()
-            if (-not $targetDir) {
+            $script:targetDir = $txtInstallPath.Text.Trim()
+            if (-not $script:targetDir) {
                 Write-SetupLog "エラー: 保存先パスが空です。"
                 $txtStatus.Text = "エラー: 保存先パスを指定してください。"
                 $btnInstall.IsEnabled = $true
                 return
             }
 
-            Write-SetupLog "インストール先: $targetDir"
+            Write-SetupLog "インストール先: $script:targetDir"
             try {
-                if (-not (Test-Path $targetDir)) {
-                    New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-                    Write-SetupLog "フォルダを作成しました: $targetDir"
+                if (-not (Test-Path $script:targetDir)) {
+                    New-Item -ItemType Directory -Path $script:targetDir -Force | Out-Null
+                    Write-SetupLog "フォルダを作成しました: $script:targetDir"
                 }
             } catch {
                 Write-SetupLog "フォルダ作成エラー: $_"
@@ -282,22 +291,36 @@ $stepTimer.Add_Tick({
                 return
             }
 
-            $pbInstall.Value = 10
-            $txtPercent.Text = "10%"
-            $txtStatus.Text = "GitHub から最新ファイルをダウンロード中..."
+            $pbInstall.Value = 15
+            $txtPercent.Text = "15%"
+
+            # ローカルにファイル群が存在するかチェック (高速インストール)
+            $isLocalAvailable = (Test-Path (Join-Path $ScriptDir "start.bat")) -and (Test-Path (Join-Path $ScriptDir "scripts"))
+            if ($isLocalAvailable -and ($ScriptDir -ne $script:targetDir)) {
+                Write-SetupLog "ローカルの hayamimi パッケージを検出しました。"
+                Write-SetupLog "ローカルからインストール先へ高速配置します..."
+                $pbInstall.Value = 40
+                $txtPercent.Text = "40%"
+                $script:step = 3  # ファイル配置ステップへ直行
+                $stepTimer.Start()
+                return
+            }
+
+            # GitHub からダウンロード
+            $txtStatus.Text = "GitHub から最新パッケージをダウンロード中..."
             Write-SetupLog "GitHub から ZIP アーカイブをダウンロードします..."
             Write-SetupLog "URL: $RepoZipUrl"
 
-            $tempZipPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "hayamimi_main.zip")
-            $tempExtractDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "hayamimi_extracted_" + [System.Guid]::NewGuid().ToString("N"))
+            $script:tempZipPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "hayamimi_main.zip")
+            $script:tempExtractDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "hayamimi_extracted_" + [System.Guid]::NewGuid().ToString("N"))
 
-            # ダウンロード実行 (WebClient)
             try {
                 $wc = [System.Net.WebClient]::new()
-                $wc.DownloadFile($RepoZipUrl, $tempZipPath)
+                $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) hayamimi-installer")
+                $wc.DownloadFile($RepoZipUrl, $script:tempZipPath)
                 Write-SetupLog "ダウンロードが完了しました。"
-                $pbInstall.Value = 40
-                $txtPercent.Text = "40%"
+                $pbInstall.Value = 45
+                $txtPercent.Text = "45%"
             } catch {
                 Write-SetupLog "ダウンロードエラー: $_"
                 $txtStatus.Text = "エラー: ダウンロードに失敗しました。"
@@ -305,18 +328,18 @@ $stepTimer.Add_Tick({
                 return
             }
 
-            $step = 2
+            $script:step = 2
             $stepTimer.Start()
         }
 
         2 {
             # ステップ 2: ZIP 展開
-            $txtStatus.Text = "アーカイブを展開しています..."
+            $txtStatus.Text = "パッケージを展開しています..."
             Write-SetupLog "ZIP アーカイブを展開中..."
             try {
-                if (Test-Path $tempExtractDir) { Remove-Item -Path $tempExtractDir -Recurse -Force | Out-Null }
-                [System.IO.Compression.ZipFile]::ExtractToDirectory($tempZipPath, $tempExtractDir)
-                Write-SetupLog "展開完了。"
+                if (Test-Path $script:tempExtractDir) { Remove-Item -Path $script:tempExtractDir -Recurse -Force | Out-Null }
+                [System.IO.Compression.ZipFile]::ExtractToDirectory($script:tempZipPath, $script:tempExtractDir)
+                Write-SetupLog "アーカイブの展開が完了しました。"
                 $pbInstall.Value = 65
                 $txtPercent.Text = "65%"
             } catch {
@@ -326,34 +349,52 @@ $stepTimer.Add_Tick({
                 return
             }
 
-            $step = 3
+            $script:step = 3
             $stepTimer.Start()
         }
 
         3 {
             # ステップ 3: インストール先へファイル配置
             $txtStatus.Text = "ファイルを配置しています..."
-            Write-SetupLog "ファイルをインストール先にコピーしています..."
+            Write-SetupLog "インストール先へファイルをコピーしています..."
 
             try {
-                # ZIP のトップレベルフォルダ (hayamimi-main) を取得
-                $subDirs = Get-ChildItem -Path $tempExtractDir -Directory
-                $sourceRoot = $tempExtractDir
-                if ($subDirs.Count -eq 1 -and (Test-Path (Join-Path $subDirs[0].FullName "start.bat"))) {
-                    $sourceRoot = $subDirs[0].FullName
+                $sourceRoot = ""
+                if ($script:tempExtractDir -and (Test-Path $script:tempExtractDir)) {
+                    $subDirs = Get-ChildItem -Path $script:tempExtractDir -Directory
+                    $sourceRoot = $script:tempExtractDir
+                    if ($subDirs.Count -eq 1 -and (Test-Path (Join-Path $subDirs[0].FullName "start.bat"))) {
+                        $sourceRoot = $subDirs[0].FullName
+                    }
+                } elseif (Test-Path (Join-Path $ScriptDir "start.bat")) {
+                    $sourceRoot = $ScriptDir
+                }
+
+                if (-not $sourceRoot -or -not (Test-Path $sourceRoot)) {
+                    throw "インストール元のファイルが見つかりません。"
                 }
 
                 $items = Get-ChildItem -Path $sourceRoot
                 foreach ($item in $items) {
-                    $destPath = Join-Path $targetDir $item.Name
+                    if ($item.Name -eq "models" -and ($sourceRoot -ne $script:targetDir)) {
+                        # modelsフォルダが存在すればコピーまたは作成
+                        $destModels = Join-Path $script:targetDir "models"
+                        if (-not (Test-Path $destModels)) {
+                            Copy-Item -Path $item.FullName -Destination $destModels -Recurse -Force
+                        }
+                        continue
+                    }
+                    if ($item.Name -eq "logs") { continue }
+
+                    $destPath = Join-Path $script:targetDir $item.Name
                     Copy-Item -Path $item.FullName -Destination $destPath -Recurse -Force
                     Write-SetupLog "配置: $($item.Name)"
                 }
 
-                # models フォルダと logs フォルダを準備
-                $modelsDir = Join-Path $targetDir "models"
+                # 必須ディレクトリの作成
+                $modelsDir = Join-Path $script:targetDir "models"
                 if (-not (Test-Path $modelsDir)) { New-Item -ItemType Directory -Path $modelsDir -Force | Out-Null }
-                $logsDir = Join-Path $targetDir "logs"
+                $logsDir = Join-Path $script:targetDir "logs"
                 if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir -Force | Out-Null }
 
                 $pbInstall.Value = 85
@@ -365,7 +406,7 @@ $stepTimer.Add_Tick({
                 return
             }
 
-            $step = 4
+            $script:step = 4
             $stepTimer.Start()
         }
 
@@ -376,8 +417,8 @@ $stepTimer.Add_Tick({
                 try {
                     $desktopPath = [System.Environment]::GetFolderPath("Desktop")
                     $shortcutPath = Join-Path $desktopPath "hayamimi (早耳).lnk"
-                    $targetVbs = Join-Path $targetDir "start.vbs"
-                    $targetBat = Join-Path $targetDir "start.bat"
+                    $targetVbs = Join-Path $script:targetDir "start.vbs"
+                    $targetBat = Join-Path $script:targetDir "start.bat"
 
                     $wsh = New-Object -ComObject WScript.Shell
                     $shortcut = $wsh.CreateShortcut($shortcutPath)
@@ -389,7 +430,7 @@ $stepTimer.Add_Tick({
                         $shortcut.TargetPath = $targetBat
                     }
                     
-                    $shortcut.WorkingDirectory = $targetDir
+                    $shortcut.WorkingDirectory = $script:targetDir
                     $shortcut.Description = "hayamimi (早耳) - リアルタイム音声認識 & 翻訳"
                     $shortcut.IconLocation = "%SystemRoot%\System32\shell32.dll, 168"
                     $shortcut.Save()
@@ -402,8 +443,12 @@ $stepTimer.Add_Tick({
 
             # テンポラリのクリーンアップ
             try {
-                if (Test-Path $tempZipPath) { Remove-Item -Path $tempZipPath -Force | Out-Null }
-                if (Test-Path $tempExtractDir) { Remove-Item -Path $tempExtractDir -Recurse -Force | Out-Null }
+                if ($script:tempZipPath -and (Test-Path $script:tempZipPath)) {
+                    Remove-Item -Path $script:tempZipPath -Force | Out-Null
+                }
+                if ($script:tempExtractDir -and (Test-Path $script:tempExtractDir)) {
+                    Remove-Item -Path $script:tempExtractDir -Recurse -Force | Out-Null
+                }
             } catch {}
 
             $pbInstall.Value = 100
@@ -411,9 +456,9 @@ $stepTimer.Add_Tick({
             $txtStatus.Text = "🎉 セットアップが正常に完了しました！"
             Write-SetupLog "=========================================="
             Write-SetupLog "hayamimi のセットアップが完了しました。"
-            Write-SetupLog "保存先: $targetDir"
+            Write-SetupLog "保存先: $script:targetDir"
             if ($chkShortcut.IsChecked) {
-                Write-SetupLog "デスクトップのショートカットまたは start.bat / start.vbs から起動できます。"
+                Write-SetupLog "デスクトップのショートカットまたは start.vbs / start.bat から起動できます。"
             }
 
             $btnInstall.Visibility = [System.Windows.Visibility]::Collapsed
@@ -430,7 +475,7 @@ $btnInstall.Add_Click({
     $btnInstall.IsEnabled = $false
     $txtStatus.Text = "セットアップを開始しています..."
     Write-SetupLog "セットアップ処理を開始します..."
-    $step = 1
+    $script:step = 1
     $stepTimer.Start()
 })
 
