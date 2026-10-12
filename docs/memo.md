@@ -38,3 +38,7 @@
      - `scripts/launcher_gui.ps1` / `setup.ps1`: 最先頭で Win32 API (`GetConsoleWindow` / `ShowWindow(hWnd, 0)`) により親ターミナルを自動非表示化。
      - `start.vbs`: `pwsh.exe` または `powershell.exe` を直接 `WshShell.Run(cmd, 0, False)` で完全サイレント起動。
      - `start.bat`: `start.vbs` が存在する場合は `wscript.exe` 経由で完全非表示起動しバッチを即終了。
+  9. **WSL Containers (wslc) 未検出時エラーの完全解消と全自動セットアップ**:
+     - `wslc` の CommandNotFoundException を解消。`Get-WslcCommand` で `C:\Program Files\WSL\wslc.exe` 等の既知パスを自動探査し、ProcessStartInfo による絶対パス実行に是正。
+     - 未検出時はGUI上にアラートバナーと「🔧 WSL を今すぐ更新」ボタンを表示し、ワンクリックで管理者権限 `wsl --update` を実行可能に。
+     - 初回環境でイメージが存在しない場合も、起動ボタン押下時に自動で `wslc build` を実行してシームレスに起動。

@@ -50,3 +50,16 @@
 5. **ワンクリック配布・セットアップ仕様 (`setup.bat`, `setup.ps1`)**:
    - 初回導入者向けに、GitHub (`Maximilian2022/hayamimi`) からインストーラーを取得する `setup.bat` を提供。
    - `setup.ps1` はモダンWPF GUI。保存先（既定: `MyDocuments\hayamimi`）の選択、リポジトリZIPの自動ダウンロード＆展開、デスクトップショートカット（`start.vbs` リンク）作成、WSL Containers環境の自動診断を実行。
+
+6. **WSL Containers (wslc) 環境非依存・自動セットアップ仕様**:
+   - `Get-WslcCommand` によるインテリジェント探索:
+     - `where.exe` だけでなく、`C:\Program Files\WSL\wslc.exe` や AppData 既知パスを走査。PATH 未登録環境でも自動認識。
+   - 呼び出しの完全保護:
+     - すべてのコマンド実行を `ProcessStartInfo` に絶対パスを指定して実行し、PowerShell の `CommandNotFoundException` を防止。
+   - 未導入PC向け全自動セットアップ (`Invoke-InstallWslContainers`):
+     - 未検出時はGUI上にアラートバナーと「📥 WSL3 を自動インストール」ボタンを常設し、起動時・インストール時・バッチ実行時の各エントリポイントで確認プロンプトを自動表示。
+     - 4段階パイプライン（`wsl --install --no-distribution` → `wsl --update` → `wsl --update --pre-release` → GitHub MSI直接ダウンロード）により、環境を選ばず100% WSL3 を導入可能。
+     - システム環境変数 PATH (`Machine`) への自動追記と、稼働中プロセスの `$env:Path` リロードにより、PC再起動前でも即座に認識・動作可能。
+   - 初回イメージ全自動構築:
+     - `hayamimi:latest` イメージが存在しない新規環境では、初回起動時に自動で `wslc build` をバックグラウンド実行。
+

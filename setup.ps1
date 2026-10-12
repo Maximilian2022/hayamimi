@@ -139,9 +139,12 @@ $DefaultInstallPath = [System.IO.Path]::Combine([System.Environment]::GetFolderP
                     <TextBlock Text="WSL Containers (WSL3) リアルタイム音声認識 &amp; 翻訳システム" 
                                FontSize="12" Foreground="#8C93A0" Margin="2,4,0,0"/>
                 </StackPanel>
-                <Border Grid.Column="1" Background="#1A202C" CornerRadius="12" Padding="10,4" VerticalAlignment="Center">
-                    <TextBlock x:Name="WslcBadge" Text="環境チェック中..." FontSize="11" Foreground="#4FD1C5" FontWeight="SemiBold"/>
-                </Border>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Background="#1A202C" CornerRadius="12" Padding="10,4" VerticalAlignment="Center">
+                        <TextBlock x:Name="WslcBadge" Text="環境チェック中..." FontSize="11" Foreground="#4FD1C5" FontWeight="SemiBold"/>
+                    </Border>
+                    <Button x:Name="BtnInstallWsl" Content="📥 WSL3 を自動インストール" Background="#2ECC71" Foreground="#0E1117" FontSize="11" FontWeight="Bold" Padding="10,4" Margin="8,0,0,0" Visibility="Collapsed"/>
+                </StackPanel>
             </Grid>
         </Border>
 
@@ -230,6 +233,7 @@ $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
 # コントロール取得
 $wslcBadge = $window.FindName("WslcBadge")
+$btnInstallWsl = $window.FindName("BtnInstallWsl")
 $txtInstallPath = $window.FindName("TxtInstallPath")
 $btnBrowse = $window.FindName("BtnBrowse")
 $chkShortcut = $window.FindName("ChkShortcut")
@@ -252,21 +256,167 @@ function Write-SetupLog {
 }
 
 # 1. WSL Containers (wslc) チェック
-$hasWslc = $false
-try {
-    $wslcCheck = where.exe wslc 2>$null
-    if ($wslcCheck) { $hasWslc = $true }
-} catch {}
+function Get-SetupWslcCommand {
+    try {
+        $cmd = Get-Command "wslc" -ErrorAction SilentlyContinue
+        if ($cmd) { return $cmd.Source }
+        $whereCmd = where.exe wslc 2>$null
+        if ($whereCmd) { return ($whereCmd -split "`r?`n")[0].Trim() }
+    } catch {}
 
-if ($hasWslc) {
+    $knownPaths = @(
+        "C:\Program Files\WSL\wslc.exe",
+        "$env:LOCALAPPDATA\Microsoft\WindowsApps\wslc.exe",
+        "C:\Windows\System32\wslc.exe"
+    )
+    foreach ($p in $knownPaths) {
+        if (Test-Path $p) { return $p }
+    }
+    return $null
+}
+
+# WSL 3.0 自動インストール関数
+function Invoke-SetupInstallWslContainers {
+    try {
+        Write-SetupLog "WSL 3.0 / WSL Containers の自動セットアップを開始します..."
+        $installScript = @'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
+Write-Host "===================================================" -ForegroundColor Cyan
+Write-Host "  hayamimi - WSL 3.0 / WSL Containers 自動セットアップ" -ForegroundColor Cyan
+Write-Host "===================================================" -ForegroundColor Cyan
+Write-Host ""
+
+# 1. WSL 自体の存在確認
+$hasWsl = (where.exe wsl 2>$null)
+if (-not $hasWsl) {
+    Write-Host "[ステップ 1/4] Windows Subsystem for Linux (WSL) 基盤を新規インストールしています..." -ForegroundColor Yellow
+    Write-Host "実行中: wsl.exe --install --no-distribution"
+    wsl.exe --install --no-distribution
+} else {
+    Write-Host "[ステップ 1/4] WSL 基盤は検出されました。" -ForegroundColor Green
+}
+
+# 2. WSL を最新版に更新
+Write-Host ""
+Write-Host "[ステップ 2/4] WSL パッケージを最新版に更新しています..." -ForegroundColor Yellow
+Write-Host "実行中: wsl.exe --update"
+wsl.exe --update
+
+# 3. プレリリース (WSL 3.0 / wslc) パッケージの適用チェック
+$hasWslc = (where.exe wslc 2>$null)
+if (-not $hasWslc -and -not (Test-Path "C:\Program Files\WSL\wslc.exe")) {
+    Write-Host ""
+    Write-Host "[ステップ 3/4] WSL 3.0 (wslc) プレリリース版パッケージを取得しています..." -ForegroundColor Yellow
+    Write-Host "実行中: wsl.exe --update --pre-release"
+    wsl.exe --update --pre-release
+}
+
+# 4. フォールバック: GitHub 公式リリースからの直接インストール (Store 制限等の環境向け)
+$hasWslc = (where.exe wslc 2>$null)
+if (-not $hasWslc -and -not (Test-Path "C:\Program Files\WSL\wslc.exe")) {
+    Write-Host ""
+    Write-Host "[ステップ 4/4] GitHub から最新の WSL x64 インストーラーを直接取得しています..." -ForegroundColor Yellow
+    try {
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+        $apiUrl = "https://api.github.com/repos/microsoft/WSL/releases"
+        $headers = @{ "User-Agent" = "hayamimi-installer" }
+        $releases = Invoke-RestMethod -Uri $apiUrl -Headers $headers -TimeoutSec 15
+        
+        $targetAsset = $null
+        foreach ($rel in $releases) {
+            $msiAsset = $rel.assets | Where-Object { $_.name -match "wsl.*x64.*\.msi" } | Select-Object -First 1
+            if ($msiAsset) {
+                $targetAsset = $msiAsset
+                break
+            }
+        }
+
+        if ($targetAsset) {
+            $tempMsi = [System.IO.Path]::Combine($env:TEMP, $targetAsset.name)
+            Write-Host "ダウンロード中: $($targetAsset.browser_download_url)"
+            Invoke-WebRequest -Uri $targetAsset.browser_download_url -OutFile $tempMsi
+            Write-Host "MSI パッケージをインストール中..."
+            Start-Process msiexec.exe -ArgumentList "/i `"$tempMsi`" /quiet /norestart" -Wait
+        }
+    } catch {
+        Write-Host "GitHub からの直接取得エラー: $_" -ForegroundColor Red
+    }
+}
+
+# 5. PATH 環境変数の確認と登録
+$wslDir = "C:\Program Files\WSL"
+if (Test-Path (Join-Path $wslDir "wslc.exe")) {
+    try {
+        $curSysPath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+        if ($curSysPath -notlike "*$wslDir*") {
+            [Environment]::SetEnvironmentVariable("Path", "$curSysPath;$wslDir", "Machine")
+            Write-Host "環境変数 PATH に '$wslDir' を追加しました。" -ForegroundColor Green
+        }
+    } catch {}
+}
+
+Write-Host ""
+Write-Host "===================================================" -ForegroundColor Green
+Write-Host "  WSL 3.0 のセットアップが完了しました！" -ForegroundColor Green
+Write-Host "===================================================" -ForegroundColor Green
+Write-Host "※ 新規に WSL を有効化した場合は、PC の再起動が必要になる場合があります。" -ForegroundColor Cyan
+Write-Host "このウィンドウを閉じると、セットアップウィザードで自動認識されます。"
+Write-Host ""
+Read-Host "Enterキーを押して終了してください..."
+'@
+
+        $scriptBlockFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "install_wsl3_setup.ps1")
+        [System.IO.File]::WriteAllText($scriptBlockFile, $installScript, [System.Text.Encoding]::UTF8)
+
+        $proc = Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptBlockFile`"" -PassThru
+        $proc.WaitForExit()
+        Remove-Item -Path $scriptBlockFile -Force -ErrorAction SilentlyContinue
+
+        # システム環境変数 PATH のリロード (現在のプロセス)
+        try {
+            $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+            $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+            $env:Path = "$machinePath;$userPath;C:\Program Files\WSL"
+        } catch {}
+
+        # 再検出
+        $script:wslcCmd = Get-SetupWslcCommand
+        if ($script:wslcCmd) {
+            Write-SetupLog "✔ WSL 3.0 (WSL Containers) が正常にインストール・検出されました: $script:wslcCmd"
+            $wslcBadge.Text = "✔ WSL Containers 検出済み"
+            $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2ECC71")
+            if ($btnInstallWsl) { $btnInstallWsl.Visibility = [System.Windows.Visibility]::Collapsed }
+            return $true
+        } else {
+            Write-SetupLog "WSL更新後も wslc.exe が見つかりませんでした。PC再起動後に再度お試しください。"
+            return $false
+        }
+    } catch {
+        Write-SetupLog "管理者権限プロンプトの起動がキャンセルされたか失敗しました: $_"
+        return $false
+    }
+}
+
+$script:wslcCmd = Get-SetupWslcCommand
+if ($script:wslcCmd) {
     $wslcBadge.Text = "✔ WSL Containers 検出済み"
     $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2ECC71")
-    Write-SetupLog "WSL Containers (wslc.exe) が正常に検出されました。"
+    if ($btnInstallWsl) { $btnInstallWsl.Visibility = [System.Windows.Visibility]::Collapsed }
+    Write-SetupLog "WSL Containers (wslc.exe) が正常に検出されました: $script:wslcCmd"
 } else {
     $wslcBadge.Text = "⚠ WSL Containers 未検出"
     $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F39C12")
+    if ($btnInstallWsl) { $btnInstallWsl.Visibility = [System.Windows.Visibility]::Visible }
     Write-SetupLog "注意: WSL Containers (wslc.exe) が見つかりません。"
-    Write-SetupLog "インストール後に PowerShell で 'wsl --update' を実行してください。"
+    Write-SetupLog "右上の「📥 WSL3 を自動インストール」ボタンから全自動セットアップを実行できます。"
+}
+
+if ($btnInstallWsl) {
+    $btnInstallWsl.Add_Click({
+        Invoke-SetupInstallWslContainers | Out-Null
+    })
 }
 
 # フォルダ参照ボタン
@@ -505,6 +655,19 @@ $stepTimer.Add_Tick({
 
 # インストールボタン
 $btnInstall.Add_Click({
+    # もし WSL 3.0 (WSL Containers) が未検出の場合、自動インストールを提案
+    if (-not $script:wslcCmd) {
+        $ask = [System.Windows.MessageBox]::Show(
+            "hayamimi の実行には WSL 3.0 (WSL Containers) が必要です。`r`n`r`n今すぐ全自動で WSL 3.0 をインストールしますか？`r`n(管理者権限のインストール画面が開きます)",
+            "WSL 3.0 の自動インストール - hayamimi",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Question
+        )
+        if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
+            Invoke-SetupInstallWslContainers | Out-Null
+        }
+    }
+
     $btnInstall.IsEnabled = $false
     $txtStatus.Text = "セットアップを開始しています..."
     Write-SetupLog "セットアップ処理を開始します..."
@@ -517,6 +680,25 @@ $btnLaunch.Add_Click({
     $targetDir = $txtInstallPath.Text.Trim()
     $vbsPath = Join-Path $targetDir "start.vbs"
     $batPath = Join-Path $targetDir "start.bat"
+
+    # 起動前に WSL3 の存在を最終確認
+    if (-not $script:wslcCmd) {
+        $script:wslcCmd = Get-SetupWslcCommand
+    }
+    if (-not $script:wslcCmd) {
+        $ask = [System.Windows.MessageBox]::Show(
+            "hayamimi の実行に必要な WSL 3.0 が未インストールです。`r`n今すぐ自動インストールしますか？",
+            "WSL 3.0 未検出 - hayamimi",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Warning
+        )
+        if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
+            $installed = Invoke-SetupInstallWslContainers
+            if (-not $installed) { return }
+        } else {
+            return
+        }
+    }
 
     try {
         if (Test-Path $vbsPath) {

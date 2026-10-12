@@ -133,3 +133,27 @@
      - `start.vbs` が `cmd.exe` や `start.bat` を介さず、PowerShell 実行可能ファイル（`pwsh.exe` または `powershell.exe`）を直接 `WshShell.Run(cmd, 0, False)` で起動。Windows Terminal を1ミリ秒も開かせない完全非表示起動を実現。
   3. **`start.bat` の自動リダイレクト**:
      - ユーザーがエクスプローラー等から直接 `start.bat` をダブルクリックした場合でも、`start.vbs` が存在すれば `start "" wscript.exe "%~dp0start.vbs"` を呼び出してバッチ自体を即座に終了。
+
+### 14. WSL 3.0 (WSL Containers) 未インストール環境での全自動インストール機能の実装
+- **背景・要望**:
+  - WSL3 (WSL Containers / `wslc.exe`) が導入されていないまっさらな環境で実行した際、自動で検出してワンクリックでインストールを完了させたいという要望（「wsl3なかったらインストールするようにしてよ」）。
+- **対応内容**:
+  1. **堅牢な4段階インストールパイプライン (`Invoke-InstallWslContainers` / `Invoke-SetupInstallWslContainers`)**:
+     - ① **WSL 基盤新規インストール**: `where wsl` で WSL 自体が存在しない場合、`wsl.exe --install --no-distribution` を実行して仮想化機能と基盤を有効化。
+     - ② **WSL 最新版更新**: `wsl.exe --update` を実行。
+     - ③ **WSL 3.0 (wslc) プレリリース版取得**: `wslc.exe` が未検出の場合、`wsl.exe --update --pre-release` を実行して WSL Containers を取得。
+     - ④ **GitHub 公式リリースからの MSI 直接取得 (フォールバック)**: Microsoft Store 制限環境や更新失敗時を想定し、GitHub API (`https://api.github.com/repos/microsoft/WSL/releases`) から最新の `wsl.*x64.msi` を自動ダウンロードし、`msiexec.exe /i <file> /quiet /norestart` でサイレントインストール。
+     - ⑤ **PATH 環境変数の自動登録**: `C:\Program Files\WSL` をシステム環境変数 `PATH` (`Machine`) に自動登録し、現在のプロセスの `$env:Path` も即時リロード。
+     - ヒアドキュメントをシングルクォート `@' ... '@` で生成し、PowerShell 5.1 / 7 双方で変数展開ミスやエスケープ破損が起きないよう徹底。
+  2. **ランチャー GUI (`scripts/launcher_gui.ps1`) への統合**:
+     - 起動時に WSL3 未検出を検知した場合、画面表示直後に「今すぐ全自動で WSL 3.0 をインストールしますか？」という確認ダイアログを自動表示。
+     - ステータスカードに「`⚠ WSL 3.0 (WSL Containers) がインストールされていません`」アラートバナーおよび「`📥 WSL3 を自動インストール`」ボタンを配置。
+     - 「コンテナ起動」ボタン押下時にも、未検出なら自動インストールの可否を尋ねてその場でセットアップへ誘導。
+  3. **インストーラー (`setup.ps1`) への統合**:
+     - ヘッダーに未検出時専用の「`📥 WSL3 を自動インストール`」ボタンを新設。
+     - 「📥 インストール開始」ボタン押下時にも、WSL3 が未検出であれば確認ダイアログを表示し、パッケージ配置とあわせて WSL3 の自動インストールを実行可能に。
+     - インストール完了後の「▶ hayamimi を起動する」押下時にも WSL3 存在チェックを実施。
+  4. **バッチランチャー (`start.bat`) への統合**:
+     - コンソール直接起動時、`wslc` が見つからない場合は「今すぐ全自動で WSL 3.0 をインストールしますか？ (Y/N)」プロンプトを表示し、Y で管理者権限での自動インストール処理をキック。
+  5. **文字コード・エンコーディングの厳守**:
+     - 全 PowerShell スクリプト（`scripts/launcher_gui.ps1`, `setup.ps1`）を UTF-8 with BOM (`EF BB BF`) & CRLF で保存。構文解析テスト (`[System.Management.Automation.Language.Parser]::ParseFile`) で双方の構文正常性を確認。

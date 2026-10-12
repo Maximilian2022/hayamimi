@@ -94,16 +94,50 @@ function Write-AppLog {
 
 $script:LastContainerLogLineCount = 0
 
+# WSL Containers (wslc.exe) パス解決関数 (PATH未登録環境や Program Files 直下も自動検出)
+function Get-WslcCommand {
+    try {
+        $cmd = Get-Command "wslc" -ErrorAction SilentlyContinue
+        if ($cmd) { return $cmd.Source }
+        $whereCmd = where.exe wslc 2>$null
+        if ($whereCmd) { return ($whereCmd -split "`r?`n")[0].Trim() }
+    } catch {}
+
+    $knownPaths = @(
+        "C:\Program Files\WSL\wslc.exe",
+        "$env:LOCALAPPDATA\Microsoft\WindowsApps\wslc.exe",
+        "C:\Windows\System32\wslc.exe"
+    )
+    foreach ($p in $knownPaths) {
+        if (Test-Path $p) { return $p }
+    }
+    return $null
+}
+
+$script:WslcCmd = Get-WslcCommand
+
 # コンテナログ更新関数 (logs/container.log に同期出力し、GUIにも新着行を反映)
 function Update-ContainerLogFile {
     param([bool]$EchoToGui = $true)
+    if (-not $script:WslcCmd) { return }
     try {
-        $cLogs = wslc logs $ContainerName 2>&1
-        if ($cLogs) {
+        $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $pinfo.FileName = $script:WslcCmd
+        $pinfo.Arguments = "logs $ContainerName"
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.RedirectStandardError = $true
+        $pinfo.UseShellExecute = $false
+        $pinfo.CreateNoWindow = $true
+        $proc = [System.Diagnostics.Process]::Start($pinfo)
+        $rawLogs = $proc.StandardOutput.ReadToEnd()
+        $proc.WaitForExit()
+
+        if ($rawLogs) {
+            $lines = $rawLogs -split "`r?`n"
             $validLines = [System.Collections.Generic.List[string]]::new()
-            foreach ($line in $cLogs) {
+            foreach ($line in $lines) {
                 $lStr = "$line"
-                if ($lStr -notmatch "Error: No such container" -and $lStr -notmatch "failed to find container" -and $lStr -notmatch "Error response from daemon") {
+                if ($lStr.Trim() -and $lStr -notmatch "Error: No such container" -and $lStr -notmatch "failed to find container" -and $lStr -notmatch "Error response from daemon") {
                     $validLines.Add($lStr)
                 }
             }
@@ -212,6 +246,7 @@ function Update-ContainerLogFile {
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <Grid Grid.Row="0">
                     <Grid.ColumnDefinitions>
@@ -236,7 +271,23 @@ function Update-ContainerLogFile {
                         </Border>
                     </StackPanel>
                 </Grid>
-                <Border Grid.Row="1" Margin="0,8,0,0" Padding="8,6" Background="#11151F" CornerRadius="6">
+
+                <!-- WSL Containers 未検出時のアシストバナー -->
+                <Border x:Name="WslcAlertBanner" Grid.Row="1" Margin="0,8,0,0" Padding="10,8" Background="#2A1B18" BorderBrush="#E74C3C" BorderThickness="1" CornerRadius="6" Visibility="Collapsed">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                            <TextBlock Text="⚠ WSL 3.0 (WSL Containers) がインストールされていません" FontSize="12" FontWeight="Bold" Foreground="#FF7A6B"/>
+                            <TextBlock Text="hayamimi の実行に必要な WSL 3.0 をワンクリックで自動インストールできます。" FontSize="11" Foreground="#CBD5E0" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <Button x:Name="BtnUpdateWsl" Grid.Column="1" Content="📥 WSL3 を自動インストール" Background="#2ECC71" Foreground="#0E1117" FontSize="11" FontWeight="Bold" Padding="12,6" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="2" Margin="0,8,0,0" Padding="8,6" Background="#11151F" CornerRadius="6">
                     <TextBlock Text="🌐 リアルタイム翻訳 (英語・中国語・台湾語・香港語など) は Webのマイク画面 (/mic) で自由に設定可能です。" 
                                FontSize="11" Foreground="#8C93A0"/>
                 </Border>
@@ -351,6 +402,8 @@ $btnClearLog = $window.FindName("BtnClearLog")
 $btnOpenContainerLog = $window.FindName("BtnOpenContainerLog")
 $btnOpenLauncherLog = $window.FindName("BtnOpenLauncherLog")
 $btnOpenLogsDir = $window.FindName("BtnOpenLogsDir")
+$wslcAlertBanner = $window.FindName("WslcAlertBanner")
+$btnUpdateWsl = $window.FindName("BtnUpdateWsl")
 
 # ランタイムバッジ
 $psVer = $PSVersionTable.PSVersion.Major
@@ -375,11 +428,24 @@ function Set-UIState {
 }
 
 function Test-ContainerRunning {
+    if (-not $script:WslcCmd) { return $false }
     try {
-        $output = wslc list 2>&1
-        foreach ($line in $output) {
-            if ($line -match "^[a-f0-9]+\s+$ContainerName\s+.*running") {
-                return $true
+        $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $pinfo.FileName = $script:WslcCmd
+        $pinfo.Arguments = "list"
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.UseShellExecute = $false
+        $pinfo.CreateNoWindow = $true
+        $proc = [System.Diagnostics.Process]::Start($pinfo)
+        $raw = $proc.StandardOutput.ReadToEnd()
+        $proc.WaitForExit()
+
+        if ($raw) {
+            $lines = $raw -split "`r?`n"
+            foreach ($line in $lines) {
+                if ($line -match "^[a-f0-9]+\s+$ContainerName\s+.*running") {
+                    return $true
+                }
             }
         }
     } catch {}
@@ -432,9 +498,161 @@ $healthTimer.Add_Tick({
     }
 })
 
+# WSL 3.0 (WSL Containers) 自動インストール関数
+function Invoke-InstallWslContainers {
+    try {
+        Write-AppLog "WSL 3.0 / WSL Containers の自動セットアップを開始します..."
+        $installScript = @'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
+Write-Host "===================================================" -ForegroundColor Cyan
+Write-Host "  hayamimi - WSL 3.0 / WSL Containers 自動セットアップ" -ForegroundColor Cyan
+Write-Host "===================================================" -ForegroundColor Cyan
+Write-Host ""
+
+# 1. WSL 自体の存在確認
+$hasWsl = (where.exe wsl 2>$null)
+if (-not $hasWsl) {
+    Write-Host "[ステップ 1/4] Windows Subsystem for Linux (WSL) 基盤を新規インストールしています..." -ForegroundColor Yellow
+    Write-Host "実行中: wsl.exe --install --no-distribution"
+    wsl.exe --install --no-distribution
+} else {
+    Write-Host "[ステップ 1/4] WSL 基盤は検出されました。" -ForegroundColor Green
+}
+
+# 2. WSL を最新版に更新
+Write-Host ""
+Write-Host "[ステップ 2/4] WSL パッケージを最新版に更新しています..." -ForegroundColor Yellow
+Write-Host "実行中: wsl.exe --update"
+wsl.exe --update
+
+# 3. プレリリース (WSL 3.0 / wslc) パッケージの適用チェック
+$hasWslc = (where.exe wslc 2>$null)
+if (-not $hasWslc -and -not (Test-Path "C:\Program Files\WSL\wslc.exe")) {
+    Write-Host ""
+    Write-Host "[ステップ 3/4] WSL 3.0 (wslc) プレリリース版パッケージを取得しています..." -ForegroundColor Yellow
+    Write-Host "実行中: wsl.exe --update --pre-release"
+    wsl.exe --update --pre-release
+}
+
+# 4. フォールバック: GitHub 公式リリースからの直接インストール (Store 制限等の環境向け)
+$hasWslc = (where.exe wslc 2>$null)
+if (-not $hasWslc -and -not (Test-Path "C:\Program Files\WSL\wslc.exe")) {
+    Write-Host ""
+    Write-Host "[ステップ 4/4] GitHub から最新の WSL x64 インストーラーを直接取得しています..." -ForegroundColor Yellow
+    try {
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+        $apiUrl = "https://api.github.com/repos/microsoft/WSL/releases"
+        $headers = @{ "User-Agent" = "hayamimi-installer" }
+        $releases = Invoke-RestMethod -Uri $apiUrl -Headers $headers -TimeoutSec 15
+        
+        $targetAsset = $null
+        foreach ($rel in $releases) {
+            $msiAsset = $rel.assets | Where-Object { $_.name -match "wsl.*x64.*\.msi" } | Select-Object -First 1
+            if ($msiAsset) {
+                $targetAsset = $msiAsset
+                break
+            }
+        }
+
+        if ($targetAsset) {
+            $tempMsi = [System.IO.Path]::Combine($env:TEMP, $targetAsset.name)
+            Write-Host "ダウンロード中: $($targetAsset.browser_download_url)"
+            Invoke-WebRequest -Uri $targetAsset.browser_download_url -OutFile $tempMsi
+            Write-Host "MSI パッケージをインストール中..."
+            Start-Process msiexec.exe -ArgumentList "/i `"$tempMsi`" /quiet /norestart" -Wait
+        }
+    } catch {
+        Write-Host "GitHub からの直接取得エラー: $_" -ForegroundColor Red
+    }
+}
+
+# 5. PATH 環境変数の確認と登録
+$wslDir = "C:\Program Files\WSL"
+if (Test-Path (Join-Path $wslDir "wslc.exe")) {
+    try {
+        $curSysPath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+        if ($curSysPath -notlike "*$wslDir*") {
+            [Environment]::SetEnvironmentVariable("Path", "$curSysPath;$wslDir", "Machine")
+            Write-Host "環境変数 PATH に '$wslDir' を追加しました。" -ForegroundColor Green
+        }
+    } catch {}
+}
+
+Write-Host ""
+Write-Host "===================================================" -ForegroundColor Green
+Write-Host "  WSL 3.0 のセットアップが完了しました！" -ForegroundColor Green
+Write-Host "===================================================" -ForegroundColor Green
+Write-Host "※ 新規に WSL を有効化した場合は、PC の再起動が必要になる場合があります。" -ForegroundColor Cyan
+Write-Host "このウィンドウを閉じると、ランチャーで自動認識されます。"
+Write-Host ""
+Read-Host "Enterキーを押して終了してください..."
+'@
+
+        $scriptBlockFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "install_wsl3.ps1")
+        [System.IO.File]::WriteAllText($scriptBlockFile, $installScript, [System.Text.Encoding]::UTF8)
+
+        $proc = Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptBlockFile`"" -PassThru
+        $proc.WaitForExit()
+        Remove-Item -Path $scriptBlockFile -Force -ErrorAction SilentlyContinue
+
+        # システム環境変数 PATH のリロード (現在のプロセス)
+        try {
+            $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+            $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+            $env:Path = "$machinePath;$userPath;C:\Program Files\WSL"
+        } catch {}
+
+        # 再検出
+        $script:WslcCmd = Get-WslcCommand
+        if ($script:WslcCmd) {
+            Write-AppLog "✔ WSL 3.0 (WSL Containers) が正常にインストール・検出されました: $script:WslcCmd"
+            if ($wslcAlertBanner) { $wslcAlertBanner.Visibility = "Collapsed" }
+            $runtimeBadge.Text = "WSL3 Native"
+            $runtimeBadge.Foreground = $brushGreen
+            Set-UIState "停止中" $brushGray $true $false
+            return $true
+        } else {
+            Write-AppLog "WSL更新後も wslc.exe が見つかりませんでした。PC再起動後に再度お試しください。" "WARN"
+            return $false
+        }
+    } catch {
+        Write-AppLog "管理者権限プロンプトの起動がキャンセルされたか失敗しました: $_" "WARN"
+        return $false
+    }
+}
+
+# WSL 自動インストールボタンの処理
+if ($btnUpdateWsl) {
+    $btnUpdateWsl.Add_Click({
+        Invoke-InstallWslContainers | Out-Null
+    })
+}
+
 # 起動ボタン処理
 $btnStart.Add_Click({
     try {
+        # 1. WSL Containers (wslc.exe) 存在確認
+        $script:WslcCmd = Get-WslcCommand
+        if (-not $script:WslcCmd) {
+            Set-UIState "WSL3 未検出" $brushOrange $true $false
+            Write-AppLog "【案内】WSL 3.0 / WSL Containers (wslc.exe) が未インストールです。" "WARN"
+
+            $msgRes = [System.Windows.MessageBox]::Show(
+                "hayamimi を動かすには WSL 3.0 (WSL Containers) が必要です。`r`n`r`n今すぐ自動でインストールを開始しますか？",
+                "WSL 3.0 の自動インストール - hayamimi",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Question
+            )
+            if ($msgRes -eq [System.Windows.MessageBoxResult]::Yes) {
+                $installed = Invoke-InstallWslContainers
+                if (-not $installed) { return }
+            } else {
+                return
+            }
+        }
+
         Set-UIState "起動中..." $brushOrange $false $false
         Write-AppLog "hayamimi コンテナの起動処理を開始します..."
 
@@ -445,23 +663,84 @@ $btnStart.Add_Click({
             [System.IO.File]::WriteAllText($ContainerLogFile, $initHeader, [System.Text.Encoding]::UTF8)
         } catch {}
 
-        # 既存コンテナの停止
-        wslc stop $ContainerName 2>$null | Out-Null
-        wslc remove $ContainerName 2>$null | Out-Null
+        # 2. コンテナイメージの存在確認 (未ビルド環境の場合は全自動ビルド)
+        $hasImage = $false
+        try {
+            $pinfoImages = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoImages.FileName = $script:WslcCmd
+            $pinfoImages.Arguments = "images"
+            $pinfoImages.RedirectStandardOutput = $true
+            $pinfoImages.UseShellExecute = $false
+            $pinfoImages.CreateNoWindow = $true
+            $procImg = [System.Diagnostics.Process]::Start($pinfoImages)
+            $imgRaw = $procImg.StandardOutput.ReadToEnd()
+            $procImg.WaitForExit()
+            if ($imgRaw -match "hayamimi") {
+                $hasImage = $true
+            }
+        } catch {}
 
-        # models ディレクトリ作成
+        if (-not $hasImage) {
+            Set-UIState "イメージ構築中..." $brushOrange $false $false
+            Write-AppLog "hayamimi コンテナイメージが見つかりません。初回ビルドを開始します..." "INFO"
+            Write-AppLog "※ 初回ビルドには数分かかります。完了までそのままお待ちください..." "INFO"
+
+            $pinfoBuild = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoBuild.FileName = $script:WslcCmd
+            $pinfoBuild.Arguments = "build -t $ImageName `"$ProjectRoot`""
+            $pinfoBuild.RedirectStandardOutput = $true
+            $pinfoBuild.RedirectStandardError = $true
+            $pinfoBuild.UseShellExecute = $false
+            $pinfoBuild.CreateNoWindow = $true
+
+            $procBuild = [System.Diagnostics.Process]::Start($pinfoBuild)
+            $buildOut = $procBuild.StandardOutput.ReadToEnd()
+            $buildErr = $procBuild.StandardError.ReadToEnd()
+            $procBuild.WaitForExit()
+
+            if ($procBuild.ExitCode -ne 0) {
+                Write-AppLog "コンテナイメージのビルドに失敗しました (ExitCode: $($procBuild.ExitCode))" "ERROR"
+                if ($buildOut) { Write-AppLog "標準出力: $buildOut" "ERROR" }
+                if ($buildErr) { Write-AppLog "標準エラー: $buildErr" "ERROR" }
+                Set-UIState "ビルド失敗" $brushRed $true $false
+                return
+            }
+            Write-AppLog "✔ コンテナイメージの構築が完了しました！" "INFO"
+            Set-UIState "起動中..." $brushOrange $false $false
+        }
+
+        # 3. 既存コンテナの安全な停止・削除
+        try {
+            $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoStop.FileName = $script:WslcCmd
+            $pinfoStop.Arguments = "stop $ContainerName"
+            $pinfoStop.UseShellExecute = $false
+            $pinfoStop.CreateNoWindow = $true
+            $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
+            $procStop.WaitForExit()
+
+            $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoRm.FileName = $script:WslcCmd
+            $pinfoRm.Arguments = "remove $ContainerName"
+            $pinfoRm.UseShellExecute = $false
+            $pinfoRm.CreateNoWindow = $true
+            $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
+            $procRm.WaitForExit()
+        } catch {}
+
+        # 4. models ディレクトリ作成
         $modelsDir = Join-Path $ProjectRoot "models"
         if (-not (Test-Path $modelsDir)) {
             New-Item -ItemType Directory -Path $modelsDir -Force | Out-Null
             Write-AppLog "models ディレクトリを作成しました: $modelsDir"
         }
 
-        # コンテナ起動 (wslc run -d)
+        # 5. コンテナ起動 (wslc run -d)
         Write-AppLog "wslc run を実行中 (ポート 8833, 8766)..."
         $volumeArg = "${modelsDir}:/app/models"
         
         $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
-        $pinfo.FileName = "wslc.exe"
+        $pinfo.FileName = $script:WslcCmd
         $pinfo.Arguments = "run -d --name $ContainerName -p 8833:8833 -p 8766:8766 -v `"$volumeArg`" $ImageName --translate en"
         $pinfo.RedirectStandardOutput = $true
         $pinfo.RedirectStandardError = $true
@@ -507,8 +786,23 @@ $btnStop.Add_Click({
         # 停止前に最新コンテナログを保存
         Update-ContainerLogFile
 
-        wslc stop $ContainerName 2>&1 | Out-Null
-        wslc remove $ContainerName 2>&1 | Out-Null
+        if ($script:WslcCmd) {
+            $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoStop.FileName = $script:WslcCmd
+            $pinfoStop.Arguments = "stop $ContainerName"
+            $pinfoStop.UseShellExecute = $false
+            $pinfoStop.CreateNoWindow = $true
+            $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
+            $procStop.WaitForExit()
+
+            $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoRm.FileName = $script:WslcCmd
+            $pinfoRm.Arguments = "remove $ContainerName"
+            $pinfoRm.UseShellExecute = $false
+            $pinfoRm.CreateNoWindow = $true
+            $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
+            $procRm.WaitForExit()
+        }
         Write-AppLog "コンテナを正常に終了・クリーンアップしました。ランチャーを閉じます。"
 
         $window.Close()
@@ -552,10 +846,25 @@ $window.Add_Closing({
         $script:IsClosing = $true
         Write-AppLog "ウィンドウが閉じられたため、コンテナを停止して終了します..."
         Update-ContainerLogFile -EchoToGui $false
-        try {
-            wslc stop $ContainerName 2>&1 | Out-Null
-            wslc remove $ContainerName 2>&1 | Out-Null
-        } catch {}
+        if ($script:WslcCmd) {
+            try {
+                $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
+                $pinfoStop.FileName = $script:WslcCmd
+                $pinfoStop.Arguments = "stop $ContainerName"
+                $pinfoStop.UseShellExecute = $false
+                $pinfoStop.CreateNoWindow = $true
+                $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
+                $procStop.WaitForExit()
+
+                $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
+                $pinfoRm.FileName = $script:WslcCmd
+                $pinfoRm.Arguments = "remove $ContainerName"
+                $pinfoRm.UseShellExecute = $false
+                $pinfoRm.CreateNoWindow = $true
+                $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
+                $procRm.WaitForExit()
+            } catch {}
+        }
     }
 })
 
@@ -590,13 +899,40 @@ Write-AppLog "ランチャーログ: $LogFile"
 Write-AppLog "コンテナログ:   $ContainerLogFile"
 Write-AppLog "WSL Containers (WSL3) 環境を確認中..."
 
-if (Test-ContainerRunning) {
-    Write-AppLog "既存の hayamimi コンテナが稼働中です。"
-    Update-ContainerLogFile -EchoToGui $true
-    Set-UIState "稼働中 (8833 / 8766)" $brushGreen $false $true
+$script:WslcCmd = Get-WslcCommand
+if ($script:WslcCmd) {
+    Write-AppLog "✔ WSL Containers 検出: $script:WslcCmd"
+    if ($wslcAlertBanner) { $wslcAlertBanner.Visibility = "Collapsed" }
+    
+    if (Test-ContainerRunning) {
+        Write-AppLog "既存の hayamimi コンテナが稼働中です。"
+        Update-ContainerLogFile -EchoToGui $true
+        Set-UIState "稼働中 (8833 / 8766)" $brushGreen $false $true
+    } else {
+        Write-AppLog "「コンテナ起動 & Webを開く」ボタンを押してください。"
+        Set-UIState "停止中" $brushGray $true $false
+    }
 } else {
-    Write-AppLog "翻訳言語を選択し「コンテナ起動 & Webを開く」ボタンを押してください。"
-    Set-UIState "停止中" $brushGray $true $false
+    Write-AppLog "【警告】WSL 3.0 / WSL Containers (wslc.exe) が検出されませんでした。" "WARN"
+    Write-AppLog "【案内】hayamimi の実行には WSL 3.0 (wslc) が必要です。" "WARN"
+    Write-AppLog "【解決方法】「📥 WSL3 を自動インストール」ボタンから全自動セットアップを実行できます。" "WARN"
+    if ($wslcAlertBanner) { $wslcAlertBanner.Visibility = "Visible" }
+    Set-UIState "WSL3 未検出" $brushOrange $true $false
+
+    # 画面描画完了時に自動でインストール確認ダイアログを表示
+    $window.Add_ContentRendered({
+        if (-not $script:WslcCmd) {
+            $ask = [System.Windows.MessageBox]::Show(
+                "hayamimi の実行に必要な WSL 3.0 (WSL Containers) がインストールされていません。`r`n`r`n今すぐ全自動で WSL 3.0 をインストールしますか？`r`n(管理者権限のインストール画面が開きます)",
+                "WSL 3.0 の自動インストール - hayamimi",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Question
+            )
+            if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
+                Invoke-InstallWslContainers | Out-Null
+            }
+        }
+    })
 }
 
 $pollTimer.Start()

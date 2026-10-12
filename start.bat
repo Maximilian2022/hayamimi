@@ -5,17 +5,28 @@ cd /d "%~dp0"
 :: Check wslc existence
 where wslc >nul 2>&1
 if %errorlevel% equ 0 goto check_runtime
+if exist "C:\Program Files\WSL\wslc.exe" goto check_runtime
+if exist "%LOCALAPPDATA%\Microsoft\WindowsApps\wslc.exe" goto check_runtime
 
 echo ===================================================
-echo   hayamimi - WSL3 Native Launcher
+echo   hayamimi - WSL 3.0 (WSL Containers) セットアップ
 echo ===================================================
 echo.
-echo [ERROR] wslc command not found.
-echo WSL 3.0 or WSL Containers (WSLC) is required.
-echo Please update WSL by running 'wsl --update' in PowerShell.
+echo [注意] WSL 3.0 / WSL Containers (wslc) が見つかりませんでした。
+echo hayamimi の実行には WSL 3.0 が必要です。
+echo.
+set /p "DO_INSTALL=今すぐ全自動で WSL 3.0 をインストールしますか？ (Y/N): "
+if /i "%DO_INSTALL%"=="Y" (
+    echo [*] 管理者権限で WSL 3.0 の自動インストールを開始します...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "& { Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"%~dp0scripts\launcher_gui.ps1\"' }"
+    exit /b 0
+)
+echo.
+echo WSL 3.0 のインストールをキャンセルしました。
+echo ランチャー GUI を起動して後からインストールすることも可能です。
 echo.
 pause
-exit /b 1
+goto check_runtime
 
 :check_runtime
 :: Select PowerShell Runtime: pwsh (PS7) if available, otherwise powershell (PS5.1)
