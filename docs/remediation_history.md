@@ -107,3 +107,29 @@
   - ローカルにリポジトリファイルが存在する場合は GitHub ダウンロードをスキップして高速コピーするローカル検出ロジックを導入。
   - WebClient に `User-Agent` ヘッダーを付与。
   - 各ステップの進行ログとプログレス表示をリアルタイムに更新するよう改善。
+
+### 11. Webマイク画面 (`/mic`) へのリアルタイム複数言語翻訳UIの統合
+- **背景・要望**:
+  - リアルタイム翻訳の複数言語同時選択を PowerShell ランチャー画面から Web のマイク入力画面（`http://localhost:8833/mic`）の「音声認識 & リアルタイム翻訳設定」カード内に移設。
+- **実装内容**:
+  - **フロントエンド (`scripts/mic_page.html`)**:
+    - 旧 `<select>` ドロップダウンを廃止し、8言語（🇺🇸英語 `en`, 🇨🇳中国語・簡体字 `zh`, 🇹🇼台湾語・繁体字 `zh-tw`, 🇭🇰香港語・繁体字 `zh-hk`, 🇰🇷韓国語 `ko`, 🇪🇸スペイン語 `es`, 🇫🇷フランス語 `fr`, 🇩🇪ドイツ語 `de`）を同時選択できるモダン・ピル型チェックボタングリッド（`.trans-lang-grid`, `.lang-pill-item`）を実装。
+    - 選択された言語ピルが鮮やかにハイライト（`active` クラス）され、選択言語数バッジ（`#trans-active-badge`）をリアルタイム表示。
+    - 各チェックボックスの `change` イベントで即座に `saveAllSettings()`（`POST /config`）を非同期送信し、保存ボタンを押すことなくワンクリックで即時切り替えを可能に。
+    - 画面ロード時（`loadConfigAndStyle()`）にサーバーの `GET /config` から現在の翻訳言語配列（`cfg.translate`）を読み込んでUIに同期。
+  - **ランチャー画面 (`scripts/launcher_gui.ps1`) の最適化**:
+    - ランチャー画面から翻訳選択UIを削除し、Webマイク画面への案内テキストを配置。
+    - ウィンドウの高さをコンパクト（580px）に最適化し、シンプルなコンテナ管理・ログ監視画面に集約。
+  - **コンテナイメージ更新**:
+    - `wslc build -t hayamimi:latest .` で再ビルド完了。
+
+### 12. 起動時ターミナルウィンドウ（Windows Terminal / pwsh）の完全非表示・最小化
+- **原因**:
+  - Windows 11 の既定ターミナルが「Windows ターミナル」に設定されている場合、`start.bat` 内で `start "" pwsh -WindowStyle Hidden` を実行すると、pwsh プロセス自体は非表示になっても親の Windows Terminal (wt.exe) が新しいタブ・ウィンドウ枠を生成して黒い画面が画面上に残留する。
+- **対応（3層防御体制）**:
+  1. **Win32 API による親ターミナル自動非表示 (`scripts/launcher_gui.ps1`, `setup.ps1`)**:
+     - スクリプト起動の最先頭で Win32 API (`GetConsoleWindow` / `ShowWindow(hWnd, 0)` [SW_HIDE]) を呼び出し、自身のコンソールウィンドウおよび親プロセスチェーン（`WindowsTerminal`, `wt`, `cmd`, `conhost`）のウィンドウハンドルを検出して即時に非表示化。
+  2. **`start.vbs` による完全サイレント起動**:
+     - `start.vbs` が `cmd.exe` や `start.bat` を介さず、PowerShell 実行可能ファイル（`pwsh.exe` または `powershell.exe`）を直接 `WshShell.Run(cmd, 0, False)` で起動。Windows Terminal を1ミリ秒も開かせない完全非表示起動を実現。
+  3. **`start.bat` の自動リダイレクト**:
+     - ユーザーがエクスプローラー等から直接 `start.bat` をダブルクリックした場合でも、`start.vbs` が存在すれば `start "" wscript.exe "%~dp0start.vbs"` を呼び出してバッチ自体を即座に終了。

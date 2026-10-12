@@ -1,6 +1,39 @@
 ﻿[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
+# --- コンソール & Windows Terminal の完全非表示化 (SW_HIDE) ---
+try {
+    $win32Def = @"
+using System;
+using System.Runtime.InteropServices;
+public class SetupConsoleHelper {
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@
+    Add-Type -TypeDefinition $win32Def -ErrorAction SilentlyContinue
+
+    $cWnd = [SetupConsoleHelper]::GetConsoleWindow()
+    if ($cWnd -ne [IntPtr]::Zero) {
+        [SetupConsoleHelper]::ShowWindow($cWnd, 0)
+    }
+
+    $curPid = $PID
+    for ($i = 0; $i -lt 5; $i++) {
+        $parentPid = (Get-CimInstance Win32_Process -Filter "ProcessId = $curPid" -ErrorAction SilentlyContinue).ParentProcessId
+        if (-not $parentPid) { break }
+        $parentProc = Get-Process -Id $parentPid -ErrorAction SilentlyContinue
+        if ($parentProc) {
+            if ($parentProc.ProcessName -match "WindowsTerminal|wt|cmd|conhost") {
+                if ($parentProc.MainWindowHandle -ne [IntPtr]::Zero) {
+                    [SetupConsoleHelper]::ShowWindow($parentProc.MainWindowHandle, 0)
+                }
+            }
+        }
+        $curPid = $parentPid
+    }
+} catch {}
+
 <#
 .SYNOPSIS
     hayamimi (早耳) - モダンGUI インストーラー / セットアップスクリプト

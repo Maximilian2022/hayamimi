@@ -36,7 +36,14 @@ pause
 exit /b 1
 
 :launch_gui
-:: Launch WPF GUI Launcher in background and exit CLI immediately
+:: If start.vbs exists, run via wscript silently to prevent Windows Terminal popup
+if exist "%~dp0start.vbs" (
+    start "" wscript.exe "%~dp0start.vbs"
+    endlocal
+    exit /b 0
+)
+
+:: Fallback if start.vbs is missing
 start "" %PS_CMD% -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0scripts\launcher_gui.ps1"
 
 endlocal

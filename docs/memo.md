@@ -28,3 +28,13 @@
   6. **ワンクリック配布用インストーラー (`setup.bat`, `setup.ps1`)**:
      - `setup.bat`: GitHub から最新の `setup.ps1` を取得・実行する軽量バッチ。
      - `setup.ps1`: WPF モダンGUIインストーラー。保存先選択（既定: マイドキュメント\hayamimi）、GitHub ZIP自動ダウンロード＆展開、デスクトップショートカット作成、WSL Containers環境チェック、完了後即時起動をサポート。
+  7. **Webマイク画面へのリアルタイム複数言語翻訳UI移設 (`scripts/mic_page.html`)**:
+     - ランチャー画面からWeb画面（`http://localhost:8833/mic`）へ移設。
+     - 8言語（英語、中国語・簡体、台湾語・繁体、香港語・繁体、韓国語、スペイン語、フランス語、ドイツ語）の複数同時選択可能なピル型チェックボタングリッドを実装。
+     - クリック時に自動で `POST /config` を即時非同期送信し、ワンクリックで翻訳先言語がリアルタイム反映されるように改修。
+     - `wslc build -t hayamimi:latest .` でコンテナイメージ反映完了。
+  8. **Windows Terminal (pwsh) の完全非表示・最小化**:
+     - Windows 11 の既定ターミナルが Windows Terminal に設定されている場合の空ウィンドウ残留バグを解消。
+     - `scripts/launcher_gui.ps1` / `setup.ps1`: 最先頭で Win32 API (`GetConsoleWindow` / `ShowWindow(hWnd, 0)`) により親ターミナルを自動非表示化。
+     - `start.vbs`: `pwsh.exe` または `powershell.exe` を直接 `WshShell.Run(cmd, 0, False)` で完全サイレント起動。
+     - `start.bat`: `start.vbs` が存在する場合は `wscript.exe` 経由で完全非表示起動しバッチを即終了。

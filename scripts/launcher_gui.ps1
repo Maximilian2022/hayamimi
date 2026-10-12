@@ -1,13 +1,46 @@
 ﻿[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
+# --- コンソール & Windows Terminal の完全非表示化 (SW_HIDE) ---
+try {
+    $win32Def = @"
+using System;
+using System.Runtime.InteropServices;
+public class LauncherConsoleHelper {
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@
+    Add-Type -TypeDefinition $win32Def -ErrorAction SilentlyContinue
+
+    $cWnd = [LauncherConsoleHelper]::GetConsoleWindow()
+    if ($cWnd -ne [IntPtr]::Zero) {
+        [LauncherConsoleHelper]::ShowWindow($cWnd, 0)
+    }
+
+    $curPid = $PID
+    for ($i = 0; $i -lt 5; $i++) {
+        $parentPid = (Get-CimInstance Win32_Process -Filter "ProcessId = $curPid" -ErrorAction SilentlyContinue).ParentProcessId
+        if (-not $parentPid) { break }
+        $parentProc = Get-Process -Id $parentPid -ErrorAction SilentlyContinue
+        if ($parentProc) {
+            if ($parentProc.ProcessName -match "WindowsTerminal|wt|cmd|conhost") {
+                if ($parentProc.MainWindowHandle -ne [IntPtr]::Zero) {
+                    [LauncherConsoleHelper]::ShowWindow($parentProc.MainWindowHandle, 0)
+                }
+            }
+        }
+        $curPid = $parentPid
+    }
+} catch {}
+
 <#
 .SYNOPSIS
     hayamimi (早耳) - WSL Containers (WSL3) ランチャー GUI
 .DESCRIPTION
     WPFを用いたモダンなダークUIランチャー。
     WSL Containers (wslc) を制御して hayamimi コンテナを起動・停止し、
-    複数言語リアルタイム翻訳の設定、コンテナログ同期、起動完了後のブラウザ自動表示を行います。
+    コンテナログ同期、起動完了後のブラウザ自動表示を行います。
 #>
 
 Add-Type -AssemblyName PresentationFramework
@@ -99,7 +132,7 @@ function Update-ContainerLogFile {
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="hayamimi - WSL3 ランチャー"
-        Height="670" Width="660"
+        Height="580" Width="660"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanMinimize"
         Background="#0E1117"
@@ -141,18 +174,10 @@ function Update-ContainerLogFile {
                 </Setter.Value>
             </Setter>
         </Style>
-
-        <Style TargetType="CheckBox">
-            <Setter Property="FontFamily" Value="{StaticResource MainFont}"/>
-            <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="VerticalContentAlignment" Value="Center"/>
-        </Style>
     </Window.Resources>
 
     <Grid Margin="22">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -184,54 +209,42 @@ function Update-ContainerLogFile {
         <!-- ステータスカード -->
         <Border Grid.Row="1" Background="#161B26" CornerRadius="10" Padding="16,12" Margin="0,0,0,12" BorderBrush="#262D3D" BorderThickness="1">
             <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                
-                <Ellipse x:Name="StatusLed" Grid.Column="0" Width="14" Height="14" Fill="#718096" Margin="0,0,12,0" VerticalAlignment="Center"/>
-                
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock Text="コンテナ状態" FontSize="11" Foreground="#718096"/>
-                    <TextBlock x:Name="StatusText" Text="停止中" FontSize="15" FontWeight="Bold" Foreground="#ECE5D8" Margin="0,2,0,0"/>
-                </StackPanel>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <Ellipse x:Name="StatusLed" Grid.Column="0" Width="14" Height="14" Fill="#718096" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                    
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="コンテナ状態" FontSize="11" Foreground="#718096"/>
+                        <TextBlock x:Name="StatusText" Text="停止中" FontSize="15" FontWeight="Bold" Foreground="#ECE5D8" Margin="0,2,0,0"/>
+                    </StackPanel>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Background="#1F2636" CornerRadius="6" Padding="8,4" Margin="4,0">
-                        <TextBlock Text="HTTP: 8833" FontSize="11" Foreground="#A0AEC0" FontFamily="{StaticResource MonoFont}"/>
-                    </Border>
-                    <Border Background="#1F2636" CornerRadius="6" Padding="8,4">
-                        <TextBlock Text="WS: 8766" FontSize="11" Foreground="#A0AEC0" FontFamily="{StaticResource MonoFont}"/>
-                    </Border>
-                </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Border Background="#1F2636" CornerRadius="6" Padding="8,4" Margin="4,0">
+                            <TextBlock Text="HTTP: 8833" FontSize="11" Foreground="#A0AEC0" FontFamily="{StaticResource MonoFont}"/>
+                        </Border>
+                        <Border Background="#1F2636" CornerRadius="6" Padding="8,4">
+                            <TextBlock Text="WS: 8766" FontSize="11" Foreground="#A0AEC0" FontFamily="{StaticResource MonoFont}"/>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+                <Border Grid.Row="1" Margin="0,8,0,0" Padding="8,6" Background="#11151F" CornerRadius="6">
+                    <TextBlock Text="🌐 リアルタイム翻訳 (英語・中国語・台湾語・香港語など) は Webのマイク画面 (/mic) で自由に設定可能です。" 
+                               FontSize="11" Foreground="#8C93A0"/>
+                </Border>
             </Grid>
         </Border>
 
-        <!-- リアルタイム翻訳設定カード (複数選択可能) -->
-        <Border Grid.Row="2" Background="#161B26" CornerRadius="10" Padding="16,12" Margin="0,0,0,12" BorderBrush="#262D3D" BorderThickness="1">
-            <StackPanel Orientation="Vertical">
-                <Grid Margin="0,0,0,8">
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <TextBlock Text="🌐 リアルタイム翻訳 (複数言語同時出力)" FontSize="13" FontWeight="Bold" Foreground="#ECE5D8"/>
-                        <TextBlock Text=" ※未チェック時は文字起こしのみ" FontSize="11" Foreground="#718096" Margin="6,2,0,0"/>
-                    </StackPanel>
-                </Grid>
-                <WrapPanel Orientation="Horizontal">
-                    <CheckBox x:Name="ChkEn" Content="英語 (en)" IsChecked="True" Foreground="#ECE5D8" Margin="0,0,12,6"/>
-                    <CheckBox x:Name="ChkZh" Content="中国語・簡体字 (zh)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
-                    <CheckBox x:Name="ChkZhTw" Content="台湾語・繁体字 (zh-tw)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
-                    <CheckBox x:Name="ChkZhHk" Content="香港語・繁体字 (zh-hk)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
-                    <CheckBox x:Name="ChkKo" Content="韓国語 (ko)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
-                    <CheckBox x:Name="ChkEs" Content="スペイン語 (es)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
-                    <CheckBox x:Name="ChkFr" Content="フランス語 (fr)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
-                    <CheckBox x:Name="ChkDe" Content="ドイツ語 (de)" IsChecked="False" Foreground="#ECE5D8" Margin="0,0,12,6"/>
-                </WrapPanel>
-            </StackPanel>
-        </Border>
-
         <!-- 操作ボタンエリア -->
-        <Grid Grid.Row="3" Margin="0,0,0,12">
+        <Grid Grid.Row="2" Margin="0,0,0,12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="14"/>
@@ -256,7 +269,7 @@ function Update-ContainerLogFile {
         </Grid>
 
         <!-- クイックリンクエリア -->
-        <Border Grid.Row="4" Background="#141822" CornerRadius="8" Padding="12,8" Margin="0,0,0,12" BorderBrush="#202634" BorderThickness="1">
+        <Border Grid.Row="3" Background="#141822" CornerRadius="8" Padding="12,8" Margin="0,0,0,12" BorderBrush="#202634" BorderThickness="1">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -278,7 +291,7 @@ function Update-ContainerLogFile {
         </Border>
 
         <!-- ログコンソール -->
-        <Border Grid.Row="5" Background="#090B0E" CornerRadius="8" BorderBrush="#1C222E" BorderThickness="1">
+        <Border Grid.Row="4" Background="#090B0E" CornerRadius="8" BorderBrush="#1C222E" BorderThickness="1">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -339,15 +352,6 @@ $btnOpenContainerLog = $window.FindName("BtnOpenContainerLog")
 $btnOpenLauncherLog = $window.FindName("BtnOpenLauncherLog")
 $btnOpenLogsDir = $window.FindName("BtnOpenLogsDir")
 
-$chkEn = $window.FindName("ChkEn")
-$chkZh = $window.FindName("ChkZh")
-$chkZhTw = $window.FindName("ChkZhTw")
-$chkZhHk = $window.FindName("ChkZhHk")
-$chkKo = $window.FindName("ChkKo")
-$chkEs = $window.FindName("ChkEs")
-$chkFr = $window.FindName("ChkFr")
-$chkDe = $window.FindName("ChkDe")
-
 # ランタイムバッジ
 $psVer = $PSVersionTable.PSVersion.Major
 if ($psVer -ge 7) {
@@ -368,15 +372,6 @@ function Set-UIState {
     $statusLed.Fill = $Brush
     $btnStart.IsEnabled = $CanStart
     $btnStop.IsEnabled = $CanStop
-    
-    $chkEn.IsEnabled = $CanStart
-    $chkZh.IsEnabled = $CanStart
-    $chkZhTw.IsEnabled = $CanStart
-    $chkZhHk.IsEnabled = $CanStart
-    $chkKo.IsEnabled = $CanStart
-    $chkEs.IsEnabled = $CanStart
-    $chkFr.IsEnabled = $CanStart
-    $chkDe.IsEnabled = $CanStart
 }
 
 function Test-ContainerRunning {
@@ -450,26 +445,6 @@ $btnStart.Add_Click({
             [System.IO.File]::WriteAllText($ContainerLogFile, $initHeader, [System.Text.Encoding]::UTF8)
         } catch {}
 
-        # 翻訳言語引数の組み立て
-        $selectedLangs = [System.Collections.Generic.List[string]]::new()
-        if ($chkEn.IsChecked) { $selectedLangs.Add("en") }
-        if ($chkZh.IsChecked) { $selectedLangs.Add("zh") }
-        if ($chkZhTw.IsChecked) { $selectedLangs.Add("zh-tw") }
-        if ($chkZhHk.IsChecked) { $selectedLangs.Add("zh-hk") }
-        if ($chkKo.IsChecked) { $selectedLangs.Add("ko") }
-        if ($chkEs.IsChecked) { $selectedLangs.Add("es") }
-        if ($chkFr.IsChecked) { $selectedLangs.Add("fr") }
-        if ($chkDe.IsChecked) { $selectedLangs.Add("de") }
-
-        $extraArgs = ""
-        if ($selectedLangs.Count -gt 0) {
-            $langStr = ($selectedLangs -join ",")
-            $extraArgs = "--translate $langStr"
-            Write-AppLog "リアルタイム翻訳言語: $langStr"
-        } else {
-            Write-AppLog "リアルタイム翻訳: オフ (文字起こしのみ)"
-        }
-
         # 既存コンテナの停止
         wslc stop $ContainerName 2>$null | Out-Null
         wslc remove $ContainerName 2>$null | Out-Null
@@ -487,11 +462,7 @@ $btnStart.Add_Click({
         
         $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
         $pinfo.FileName = "wslc.exe"
-        if ($extraArgs) {
-            $pinfo.Arguments = "run -d --name $ContainerName -p 8833:8833 -p 8766:8766 -v `"$volumeArg`" $ImageName $extraArgs"
-        } else {
-            $pinfo.Arguments = "run -d --name $ContainerName -p 8833:8833 -p 8766:8766 -v `"$volumeArg`" $ImageName"
-        }
+        $pinfo.Arguments = "run -d --name $ContainerName -p 8833:8833 -p 8766:8766 -v `"$volumeArg`" $ImageName --translate en"
         $pinfo.RedirectStandardOutput = $true
         $pinfo.RedirectStandardError = $true
         $pinfo.UseShellExecute = $false

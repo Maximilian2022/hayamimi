@@ -17,23 +17,28 @@
    - ポートフォワーディング: `-p 8833:8833 -p 8766:8766`
    - ボリュームマウント: `-v "<ProjectRoot>\models:/app/models"` により、Coreモデルおよび翻訳モデルをホスト側に永続化し、次回以降の高速起動を実現
 
-2. **ランタイムとエントリポイント**:
+2. **ランタイムとエントリポイント (CLI完全非表示化方針)**:
    - **ハイブリッド自動選択**:
      - `start.bat` / `start_debug.bat`: `pwsh.exe` (PowerShell 7) を最優先で使用。存在しない場合は標準の `powershell.exe` (PowerShell 5.1) に自動フォールバック。
-   - **CLIウィンドウ非表示**:
-     - `start.bat`: `-WindowStyle Hidden` でバックグラウンド起動後、即時 exit。
-     - `start.vbs`: VBScript Shellラッパーにより、黒いコマンドプロンプトを0秒表示（完全非表示）で起動可能。
+   - **Windows Terminal / CLIウィンドウ完全非表示 (3層防御)**:
+     - `start.vbs`: `wscript.exe` 経由で PowerShell を直接 `WshShell.Run(cmd, 0, False)` で完全サイレント起動し、Windows Terminal のウィンドウ発生を未然に防止。
+     - `start.bat`: `start.vbs` が存在すれば `wscript.exe` にリダイレクトしてバッチ自身を即座に exit。
+     - `scripts/launcher_gui.ps1` & `setup.ps1`: 最先頭で Win32 API (`GetConsoleWindow` / `ShowWindow(hWnd, 0)` [SW_HIDE]) を呼び出し、自身のコンソールおよび親の Windows Terminal (wt.exe) ウィンドウを即時に非表示化。
 
-3. **リアルタイム多言語同時翻訳**:
-   - GUIランチャー上で英語 (en)、中国語・簡体字 (zh)、台湾語・繁体字 (zh-tw)、香港語・繁体字 (zh-hk)、韓国語 (ko)、スペイン語 (es)、フランス語 (fr)、ドイツ語 (de) などを複数選択可能。
-   - 選択された言語群を `--translate en,zh,zh-tw,zh-hk,...` としてコンテナ引数に渡す。
+3. **リアルタイム多言語同時翻訳 (Webマイク画面集約アーキテクチャ)**:
+   - 設定UIの配置:
+     - PowerShell ランチャー画面ではなく、Webのマイク入力画面（`http://localhost:8833/mic`）の「音声認識 & リアルタイム翻訳設定」カード内に複数言語同時選択UIを配置。
+     - 8言語（英語 `en`, 中国語・簡体字 `zh`, 台湾語・繁体字 `zh-tw`, 香港語・繁体字 `zh-hk`, 韓国語 `ko`, スペイン語 `es`, フランス語 `fr`, ドイツ語 `de`）のピル型チェックボタングリッドを実装。
+   - 動的リロードパイプライン:
+     - バックエンドの `TranslatorPool` は `POST /config`（JSON `{ translate: [...] }`）による稼働中の動的モデル追加・削除に対応。
+     - フロントエンドのチェックボックス操作時に即座に `POST /config` が非同期送信され、サーバー再起動なしでワンクリックで言語の追加・解除がリアルタイム反映される。
    - 翻訳エンジン:
      - 英語 (en): FuguMT CTranslate2 (`mojicast-fugumt-ja-en-ct2`)
      - 多言語 (zh/ko/es/fr/de等100言語): M2M-100 418M CTranslate2 (`mojicast-m2m100-ct2`)
      - 台湾繁体字 (`zh-tw`) / 香港繁体字 (`zh-hk`): M2M-100 の `zh` 出力を OpenCC (`s2twp` / `s2hk`) で台湾・香港の標準表記・慣用語に高精度変換。
    - 翻訳字幕出力:
      - ダッシュボード (`/dashboard`): 確定文ごとに複数言語の翻訳行が並列カード表示される。
-     - OBSオーバーレイ (`/`): 複数言語の翻訳イベントが各言語タグ付きで改行同時表示されるよう更新。
+     - OBSオーバーレイ (`/`): 複数言語の翻訳イベントが各言語タグ付きで改行同時表示される。
 
 4. **二層ロギング仕様 (`logs/`)**:
    - プロジェクト直下に `logs/` フォルダを自動配置（`.gitignore` 済み）。

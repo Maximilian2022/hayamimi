@@ -483,6 +483,83 @@
     input:checked + .toggle-slider { background-color: var(--shu); }
     input:checked + .toggle-slider:before { transform: translateX(20px); }
 
+    /* 複数言語翻訳用ピルグリッド */
+    .trans-lang-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    .lang-pill-item {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      background: #141822;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.45rem 0.65rem;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .lang-pill-item:hover {
+      background: #1C2333;
+      border-color: #3B475F;
+      transform: translateY(-1px);
+    }
+    .lang-pill-item input[type="checkbox"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid var(--paper-dim);
+      border-radius: 3px;
+      outline: none;
+      background: transparent;
+      cursor: pointer;
+      display: inline-grid;
+      place-content: center;
+      margin: 0;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+    .lang-pill-item input[type="checkbox"]::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      transform: scale(0);
+      background-color: #fff;
+      clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+      transition: 0.12s transform ease-in-out;
+    }
+    .lang-pill-item input[type="checkbox"]:checked {
+      background-color: var(--shu);
+      border-color: var(--shu);
+    }
+    .lang-pill-item input[type="checkbox"]:checked::before {
+      transform: scale(1);
+    }
+    .lang-pill-item.active {
+      background: rgba(224, 79, 47, 0.14);
+      border-color: rgba(224, 79, 47, 0.65);
+      box-shadow: 0 0 8px rgba(224, 79, 47, 0.2);
+    }
+    .lang-pill-name {
+      font-size: 0.76rem;
+      font-weight: 500;
+      color: var(--paper);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lang-pill-code {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      color: var(--paper-dim);
+      margin-left: auto;
+    }
+
     /* ライブプレビュー画面 */
     .preview-viewport {
       height: 220px;
@@ -743,14 +820,53 @@
         </div>
 
         <div class="form-group" id="trans-lang-group" style="display: none;">
-          <label for="cfg-trans-targets">翻訳先言語:</label>
-          <select id="cfg-trans-targets">
-            <option value="en">英語 (en) - FuguMT (推奨)</option>
-            <option value="zh">中国語 (zh) - M2M-100</option>
-            <option value="ko">韓国語 (ko) - M2M-100</option>
-            <option value="es">スペイン語 (es)</option>
-            <option value="en,zh">英語 + 中国語 (en, zh)</option>
-          </select>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label>翻訳先言語 (複数同時選択可能):</label>
+            <span id="trans-active-badge" class="tag" style="background: rgba(224, 79, 47, 0.2); color: #FF7A59; display: none;">0言語選択中</span>
+          </div>
+          <div class="desc">チェックしたすべての言語へ同時にリアルタイム翻訳し、OBS字幕およびダッシュボードに出力します。</div>
+          <div class="trans-lang-grid">
+            <label class="lang-pill-item">
+              <input type="checkbox" name="trans-lang" value="en" id="trans-chk-en">
+              <span class="lang-pill-name">🇺🇸 英語</span>
+              <span class="lang-pill-code">en</span>
+            </label>
+            <label class="lang-pill-item">
+              <input type="checkbox" name="trans-lang" value="zh" id="trans-chk-zh">
+              <span class="lang-pill-name">🇨🇳 中国語・簡体</span>
+              <span class="lang-pill-code">zh</span>
+            </label>
+            <label class="lang-pill-item">
+              <input type="checkbox" name="trans-lang" value="zh-tw" id="trans-chk-zh-tw">
+              <span class="lang-pill-name">🇹🇼 台湾語・繁体</span>
+              <span class="lang-pill-code">zh-tw</span>
+            </label>
+            <label class="lang-pill-item">
+              <input type="checkbox" name="trans-lang" value="zh-hk" id="trans-chk-zh-hk">
+              <span class="lang-pill-name">🇭🇰 香港語・繁体</span>
+              <span class="lang-pill-code">zh-hk</span>
+            </label>
+            <label class="lang-pill-item">
+              <input type="checkbox" name="trans-lang" value="ko" id="trans-chk-ko">
+              <span class="lang-pill-name">🇰🇷 韓国語</span>
+              <span class="lang-pill-code">ko</span>
+            </label>
+            <label class="lang-pill-item">
+              <input type="checkbox" name="trans-lang" value="es" id="trans-chk-es">
+              <span class="lang-pill-name">🇪🇸 スペイン語</span>
+              <span class="lang-pill-code">es</span>
+            </label>
+            <label class="lang-pill-item">
+              <input type="checkbox" name="trans-lang" value="fr" id="trans-chk-fr">
+              <span class="lang-pill-name">🇫🇷 フランス語</span>
+              <span class="lang-pill-code">fr</span>
+            </label>
+            <label class="lang-pill-item">
+              <input type="checkbox" name="trans-lang" value="de" id="trans-chk-de">
+              <span class="lang-pill-name">🇩🇪 ドイツ語</span>
+              <span class="lang-pill-code">de</span>
+            </label>
+          </div>
         </div>
 
         <div class="form-row">
@@ -1263,6 +1379,27 @@
     showTrans: true
   };
 
+  function updateTransPillStates() {
+    const chks = document.querySelectorAll('input[name="trans-lang"]');
+    let activeCount = 0;
+    chks.forEach(chk => {
+      const parent = chk.closest('.lang-pill-item');
+      if (parent) {
+        if (chk.checked) {
+          parent.classList.add('active');
+          activeCount++;
+        } else {
+          parent.classList.remove('active');
+        }
+      }
+    });
+    const badge = document.getElementById("trans-active-badge");
+    if (badge) {
+      badge.textContent = `${activeCount}言語選択中`;
+      badge.style.display = activeCount > 0 ? "inline-block" : "none";
+    }
+  }
+
   async function loadConfigAndStyle() {
     // 1. ASR / 翻訳設定のロード
     try {
@@ -1273,8 +1410,17 @@
         if (cfg.translate && cfg.translate.length > 0) {
           document.getElementById("cfg-trans-enable").checked = true;
           document.getElementById("trans-lang-group").style.display = "flex";
-          document.getElementById("cfg-trans-targets").value = cfg.translate.join(",");
+          document.querySelectorAll('input[name="trans-lang"]').forEach(chk => {
+            chk.checked = cfg.translate.includes(chk.value);
+          });
+        } else {
+          document.getElementById("cfg-trans-enable").checked = false;
+          document.getElementById("trans-lang-group").style.display = "none";
+          document.querySelectorAll('input[name="trans-lang"]').forEach(chk => {
+            chk.checked = false;
+          });
         }
+        updateTransPillStates();
         if (cfg.punctuate != null) {
           document.getElementById("cfg-punct").checked = cfg.punctuate;
         }
@@ -1378,11 +1524,36 @@
 
   // 設定入力イベント
   document.querySelectorAll("#panel-settings input, #panel-settings select").forEach(el => {
-    el.addEventListener("input", updatePreview);
+    if (el.name !== "trans-lang" && el.id !== "cfg-trans-enable") {
+      el.addEventListener("input", updatePreview);
+    }
+  });
+
+  // 翻訳先ピルチェックボックスの変更イベント
+  document.querySelectorAll('input[name="trans-lang"]').forEach(chk => {
+    chk.addEventListener("change", () => {
+      updateTransPillStates();
+      const anyChecked = Array.from(document.querySelectorAll('input[name="trans-lang"]')).some(c => c.checked);
+      if (anyChecked && !document.getElementById("cfg-trans-enable").checked) {
+        document.getElementById("cfg-trans-enable").checked = true;
+        document.getElementById("trans-lang-group").style.display = "flex";
+      }
+      saveAllSettings();
+    });
   });
 
   document.getElementById("cfg-trans-enable").addEventListener("change", (e) => {
-    document.getElementById("trans-lang-group").style.display = e.target.checked ? "flex" : "none";
+    const isEnabled = e.target.checked;
+    document.getElementById("trans-lang-group").style.display = isEnabled ? "flex" : "none";
+    if (isEnabled) {
+      const anyChecked = Array.from(document.querySelectorAll('input[name="trans-lang"]')).some(c => c.checked);
+      if (!anyChecked) {
+        const enChk = document.getElementById("trans-chk-en");
+        if (enChk) enChk.checked = true;
+      }
+    }
+    updateTransPillStates();
+    saveAllSettings();
   });
 
   async function saveAllSettings() {
@@ -1391,9 +1562,12 @@
     // 1. ASR & 翻訳設定
     const lang = document.getElementById("cfg-lang").value;
     const transEnabled = document.getElementById("cfg-trans-enable").checked;
-    const transTargets = transEnabled 
-      ? document.getElementById("cfg-trans-targets").value.split(",").map(s => s.trim()).filter(Boolean)
-      : [];
+    let transTargets = [];
+    if (transEnabled) {
+      document.querySelectorAll('input[name="trans-lang"]:checked').forEach(c => {
+        transTargets.push(c.value);
+      });
+    }
     const punct = document.getElementById("cfg-punct").checked;
 
     const asrPayload = {
