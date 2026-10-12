@@ -1010,9 +1010,29 @@ function Invoke-UpdateAppCode {
         Set-UIState "停止中" $brushGray $true $false
 
         if ($updateSuccess) {
-            $askRebuild = Show-AppConfirm -Message "最新のソースコードを取得しました！`r`n`r`n更新をコンテナに反映するため、今すぐリビルドを実行しますか？" -Title "コンテナの更新反映 - hayamimi"
-            if ($askRebuild -eq [System.Windows.MessageBoxResult]::Yes) {
-                Invoke-BuildContainerImage -Force $true -AutoStart $false | Out-Null
+            $askRestart = Show-AppConfirm -Message "最新のソースコードを取得しました！`r`n`r`nランチャーGUIを最新版で再起動しますか？`r`n(※ 再起動後、必要に応じて「🔄 コンテナをリビルド」を行ってください)" -Title "本体更新の完了 - hayamimi"
+            if ($askRestart -eq [System.Windows.MessageBoxResult]::Yes) {
+                Write-AppLog "ランチャーを再起動して最新コードを適用します..." "INFO"
+                $startVbs = Join-Path $ProjectRoot "start.vbs"
+                $startBat = Join-Path $ProjectRoot "start.bat"
+                try {
+                    if (Test-Path $startVbs) {
+                        Start-Process "wscript.exe" -ArgumentList "`"$startVbs`""
+                    } elseif (Test-Path $startBat) {
+                        Start-Process "cmd.exe" -ArgumentList "/c `"$startBat`""
+                    } else {
+                        Start-Process "pwsh.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptDir\launcher_gui.ps1`""
+                    }
+                } catch {
+                    Start-Process "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptDir\launcher_gui.ps1`""
+                }
+                $window.Close()
+                return
+            } else {
+                $askRebuild = Show-AppConfirm -Message "更新をコンテナに反映するため、今すぐリビルドを実行しますか？`r`n(※ ランチャーGUI自体の変更を反映するには、後ほどランチャーを手動で再起動してください)" -Title "コンテナの更新反映 - hayamimi"
+                if ($askRebuild -eq [System.Windows.MessageBoxResult]::Yes) {
+                    Invoke-BuildContainerImage -Force $true -AutoStart $false | Out-Null
+                }
             }
         }
     } catch {
