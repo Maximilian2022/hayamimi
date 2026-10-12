@@ -407,6 +407,15 @@ function Update-ContainerLogFile {
 $reader = [System.Xml.XmlNodeReader]::new($xaml)
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
+# --- WPF UIスレッド未処理例外の安全捕捉 (プロセスクラッシュ完全防止) ---
+$window.Dispatcher.Add_UnhandledException({
+    param($sender, $e)
+    try {
+        Write-AppLog "UIエラーが発生しましたが回復しました: $($e.Exception.Message)" "ERROR"
+        $e.Handled = $true
+    } catch {}
+})
+
 # コントロール取得
 $statusLed = $window.FindName("StatusLed")
 $statusText = $window.FindName("StatusText")
@@ -448,6 +457,45 @@ function Set-UIState {
     $btnStop.IsEnabled = $CanStop
 }
 
+# 安全な確認ダイアログ表示関数 (Ownerウィンドウ明示 & 例外フォールバック)
+function Show-AppConfirm {
+    param(
+        [string]$Message,
+        [string]$Title = "確認 - hayamimi",
+        [System.Windows.MessageBoxButton]$Buttons = [System.Windows.MessageBoxButton]::YesNo,
+        [System.Windows.MessageBoxImage]$Icon = [System.Windows.MessageBoxImage]::Question
+    )
+    try {
+        if ($window -and $window.IsVisible) {
+            return [System.Windows.MessageBox]::Show($window, $Message, $Title, $Buttons, $Icon)
+        } else {
+            return [System.Windows.MessageBox]::Show($Message, $Title, $Buttons, $Icon)
+        }
+    } catch {
+        Write-AppLog "確認ダイアログの表示をスキップし、処理を続行します: $_" "WARN"
+        return [System.Windows.MessageBoxResult]::Yes
+    }
+}
+
+# ファイル共有モード (ReadWrite) での安全なログ行読み取り関数 (ロック競合ゼロ)
+function Read-FileSharedLines {
+    param([string]$FilePath)
+    $lines = @()
+    if (-not (Test-Path $FilePath)) { return $lines }
+    try {
+        $fs = [System.IO.FileStream]::new($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        $sr = [System.IO.StreamReader]::new($fs, [System.Text.Encoding]::UTF8)
+        $content = $sr.ReadToEnd()
+        $sr.Close()
+        $fs.Close()
+        if ($content) {
+            $lines = $content -split "`r?`n"
+        }
+    } catch {}
+    return $lines
+}
+
+# コンテナ稼働確認関数
 function Test-ContainerRunning {
     if (-not $script:WslcCmd) { return $false }
     try {
@@ -473,122 +521,24 @@ function Test-ContainerRunning {
     return $false
 }
 
-# ビルド監視用タイマー & 状態変数 (安全なイベント駆動方式)
-$script:BuildLogFile = Join-Path $LogsDir "build.log"
-$script:LastBuildLogLineCount = 0
-$script:ProcBuild = $null
-$script:BuildAutoStart = $false
-
-$buildTimer = [System.Windows.Threading.DispatcherTimer]::new()
-$buildTimer.Interval = [TimeSpan]::FromMilliseconds(500)
-
-$buildTimer.Add_Tick({
+# コンテナイメージ存在確認関数
+function Test-HayamimiImageExists {
+    if (-not $script:WslcCmd) { return $false }
     try {
-        # 1. ビルドログの読み込みとGUIリアルタイム反映
-        if (Test-Path $script:BuildLogFile) {
-            try {
-                $lines = [System.IO.File]::ReadAllLines($script:BuildLogFile, [System.Text.Encoding]::UTF8)
-                if ($lines.Length -gt $script:LastBuildLogLineCount) {
-                    for ($i = $script:LastBuildLogLineCount; $i -lt $lines.Length; $i++) {
-                        $line = $lines[$i]
-                        if ($line.Trim() -and $line -notmatch "^# hayamimi build log") {
-                            Write-AppLog "[ビルド] $line" "INFO"
-                        }
-                    }
-                    $script:LastBuildLogLineCount = $lines.Length
-                }
-            } catch {}
-        }
-
-        # 2. プロセス終了チェック
-        if ($script:ProcBuild -and $script:ProcBuild.HasExited) {
-            $buildTimer.Stop()
-
-            # 最後のログを読み切る
-            Start-Sleep -Milliseconds 200
-            if (Test-Path $script:BuildLogFile) {
-                try {
-                    $lines = [System.IO.File]::ReadAllLines($script:BuildLogFile, [System.Text.Encoding]::UTF8)
-                    if ($lines.Length -gt $script:LastBuildLogLineCount) {
-                        for ($i = $script:LastBuildLogLineCount; $i -lt $lines.Length; $i++) {
-                            $line = $lines[$i]
-                            if ($line.Trim() -and $line -notmatch "^# hayamimi build log") {
-                                Write-AppLog "[ビルド] $line" "INFO"
-                            }
-                        }
-                    }
-                } catch {}
-            }
-
-            $exitCode = $script:ProcBuild.ExitCode
-            if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
-
-            if ($exitCode -eq 0) {
-                Write-AppLog "✔ コンテナイメージ ($ImageName) の構築が正常に完了しました！" "INFO"
-                Write-AppLog "=========================================="
-                Set-UIState "停止中" $brushGray $true $false
-                if ($script:BuildAutoStart) {
-                    Write-AppLog "コンテナの起動処理へ自動移行します..."
-                    Start-HayamimiContainer
-                }
-            } else {
-                Write-AppLog "コンテナイメージのビルドに失敗しました (ExitCode: $exitCode)" "ERROR"
-                Set-UIState "ビルド失敗" $brushRed $true $false
-            }
-        }
+        $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $pinfo.FileName = $script:WslcCmd
+        $pinfo.Arguments = "images"
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.UseShellExecute = $false
+        $pinfo.CreateNoWindow = $true
+        $proc = [System.Diagnostics.Process]::Start($pinfo)
+        $raw = $proc.StandardOutput.ReadToEnd()
+        $proc.WaitForExit()
+        return ($raw -match "hayamimi")
     } catch {
-        $buildTimer.Stop()
-        Write-AppLog "ビルド監視中に例外が発生しました: $_" "ERROR"
-        Set-UIState "エラー" $brushRed $true $false
-        if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
+        return $false
     }
-})
-
-# ヘルスチェックタイマー
-$script:HealthCheckAttempts = 0
-$healthTimer = [System.Windows.Threading.DispatcherTimer]::new()
-$healthTimer.Interval = [TimeSpan]::FromMilliseconds(500)
-
-$healthTimer.Add_Tick({
-    $script:HealthCheckAttempts++
-    
-    # コンテナログを logs/container.log に随時反映 (毎秒同期 & GUI表示)
-    if ($script:HealthCheckAttempts % 2 -eq 0) {
-        Update-ContainerLogFile -EchoToGui $true
-    }
-
-    $ready = $false
-    try {
-        $req = [System.Net.HttpWebRequest]::Create($MicUrl)
-        $req.Timeout = 400
-        $req.Method = "GET"
-        $resp = $req.GetResponse()
-        if ($resp.StatusCode -eq [System.Net.HttpStatusCode]::OK) {
-            $ready = $true
-        }
-        $resp.Close()
-    } catch {}
-
-    if ($ready) {
-        $healthTimer.Stop()
-        Update-ContainerLogFile -EchoToGui $true
-        Set-UIState "稼働中 (8833 / 8766)" $brushGreen $false $true
-        Write-AppLog "サーバー起動完了！ブラウザを開きます: $MicUrl"
-        try {
-            Start-Process $MicUrl
-        } catch {
-            Write-AppLog "ブラウザ起動エラー: $_" "WARN"
-        }
-    } elseif ($script:HealthCheckAttempts -ge 60) {
-        $healthTimer.Stop()
-        Update-ContainerLogFile -EchoToGui $true
-        Set-UIState "稼働中 (確認中)" $brushGreen $false $true
-        Write-AppLog "応答待機がタイムアウトしましたが、コンテナは動作中です。ブラウザを開きます。" "WARN"
-        try {
-            Start-Process $MicUrl
-        } catch {}
-    }
-})
+}
 
 # WSL 3.0 (WSL Containers) 自動インストール関数
 function Invoke-InstallWslContainers {
@@ -715,102 +665,6 @@ Read-Host "Enterキーを押して終了してください..."
     }
 }
 
-# WSL 自動インストールボタンの処理
-if ($btnUpdateWsl) {
-    $btnUpdateWsl.Add_Click({
-        Invoke-InstallWslContainers | Out-Null
-    })
-}
-
-# コンテナイメージ存在確認関数
-function Test-HayamimiImageExists {
-    if (-not $script:WslcCmd) { return $false }
-    try {
-        $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
-        $pinfo.FileName = $script:WslcCmd
-        $pinfo.Arguments = "images"
-        $pinfo.RedirectStandardOutput = $true
-        $pinfo.UseShellExecute = $false
-        $pinfo.CreateNoWindow = $true
-        $proc = [System.Diagnostics.Process]::Start($pinfo)
-        $raw = $proc.StandardOutput.ReadToEnd()
-        $proc.WaitForExit()
-        return ($raw -match "hayamimi")
-    } catch {
-        return $false
-    }
-}
-
-# コンテナイメージのビルド / リビルド関数 (ファイルリダイレクト & タイマー駆動方式)
-function Invoke-BuildContainerImage {
-    param(
-        [bool]$Force = $false,
-        [bool]$AutoStart = $false
-    )
-
-    if (-not $script:WslcCmd) {
-        Write-AppLog "WSL Containers (wslc.exe) が利用できません。先に WSL 3.0 をセットアップしてください。" "ERROR"
-        return $false
-    }
-
-    if (Test-ContainerRunning) {
-        Write-AppLog "ビルドのため、稼働中のコンテナを停止・削除します..."
-        try {
-            $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
-            $pinfoStop.FileName = $script:WslcCmd
-            $pinfoStop.Arguments = "stop $ContainerName"
-            $pinfoStop.UseShellExecute = $false
-            $pinfoStop.CreateNoWindow = $true
-            $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
-            $procStop.WaitForExit()
-
-            $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
-            $pinfoRm.FileName = $script:WslcCmd
-            $pinfoRm.Arguments = "remove $ContainerName"
-            $pinfoRm.UseShellExecute = $false
-            $pinfoRm.CreateNoWindow = $true
-            $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
-            $procRm.WaitForExit()
-        } catch {}
-    }
-
-    Set-UIState "イメージ構築中..." $brushOrange $false $false
-    if ($btnRebuild) { $btnRebuild.IsEnabled = $false }
-
-    $actionName = if ($Force) { "リビルド (再構築)" } else { "初回ビルド" }
-    Write-AppLog "=========================================="
-    Write-AppLog "コンテナイメージの $actionName を開始します..." "INFO"
-    Write-AppLog "ビルドディレクトリ: $ProjectRoot" "INFO"
-    Write-AppLog "実行: wslc build -t $ImageName ." "INFO"
-    Write-AppLog "※ 環境により数分かかります。完了までそのままお待ちください..." "INFO"
-
-    $script:BuildAutoStart = $AutoStart
-    $script:LastBuildLogLineCount = 0
-
-    try {
-        if (Test-Path $script:BuildLogFile) {
-            Remove-Item -Path $script:BuildLogFile -Force -ErrorAction SilentlyContinue
-        }
-        [System.IO.File]::WriteAllText($script:BuildLogFile, "# hayamimi build log`r`n", [System.Text.Encoding]::UTF8)
-
-        $pinfoBuild = [System.Diagnostics.ProcessStartInfo]::new()
-        $pinfoBuild.FileName = "cmd.exe"
-        $pinfoBuild.Arguments = "/c `"`"$script:WslcCmd`" build -t $ImageName . > `"$script:BuildLogFile`" 2>&1`""
-        $pinfoBuild.WorkingDirectory = $ProjectRoot
-        $pinfoBuild.UseShellExecute = $false
-        $pinfoBuild.CreateNoWindow = $true
-
-        $script:ProcBuild = [System.Diagnostics.Process]::Start($pinfoBuild)
-        $buildTimer.Start()
-        return $true
-    } catch {
-        if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
-        Write-AppLog "ビルドプロセスの起動に失敗しました: $_" "ERROR"
-        Set-UIState "エラー" $brushRed $true $false
-        return $false
-    }
-}
-
 # コンテナ起動処理本体
 function Start-HayamimiContainer {
     try {
@@ -876,12 +730,7 @@ function Start-HayamimiContainer {
 
             # イメージ未検出エラーなら自動ビルドを促す
             if ($stderr -match "IMAGE_NOT_FOUND|pull access denied") {
-                $askBuild = [System.Windows.MessageBox]::Show(
-                    "コンテナイメージ ($ImageName) が見つかりませんでした。`r`n`r`n今すぐローカルでイメージをビルドしますか？",
-                    "コンテナイメージの構築 - hayamimi",
-                    [System.Windows.MessageBoxButton]::YesNo,
-                    [System.Windows.MessageBoxImage]::Question
-                )
+                $askBuild = Show-AppConfirm -Message "コンテナイメージ ($ImageName) が見つかりませんでした。`r`n`r`n今すぐローカルでイメージをビルドしますか？" -Title "コンテナイメージの構築 - hayamimi"
                 if ($askBuild -eq [System.Windows.MessageBoxResult]::Yes) {
                     Invoke-BuildContainerImage -Force $false -AutoStart $true | Out-Null
                 }
@@ -891,8 +740,9 @@ function Start-HayamimiContainer {
 
         $containerId = $stdout.Trim()
         Write-AppLog "コンテナプロセスが開始されました (ID: $containerId)"
-        Write-AppLog "サーバー初期化とポート8833の待機を確認しています..."
-        Write-AppLog "※コンテナ出力ログは logs/container.log に記録されます。"
+        Write-AppLog "※ 初回起動時はモデルのダウンロード (約1.7GB) のため、起動完了まで数分かかります。" "INFO"
+        Write-AppLog "※ 進行状況は下のログおよび logs/container.log に随時表示されます。" "INFO"
+        Write-AppLog "サーバー初期化とポート8833の待機を確認しています..." "INFO"
 
         Update-ContainerLogFile -EchoToGui $true
         $script:HealthCheckAttempts = 0
@@ -904,6 +754,207 @@ function Start-HayamimiContainer {
     }
 }
 
+# ビルド状態変数
+$script:BuildLogFile = Join-Path $LogsDir "build.log"
+$script:LastBuildLogLineCount = 0
+$script:ProcBuild = $null
+$script:BuildAutoStart = $false
+
+# コンテナイメージのビルド / リビルド関数 (ファイルリダイレクト & タイマー駆動方式)
+function Invoke-BuildContainerImage {
+    param(
+        [bool]$Force = $false,
+        [bool]$AutoStart = $false
+    )
+
+    if (-not $script:WslcCmd) {
+        Write-AppLog "WSL Containers (wslc.exe) が利用できません。先に WSL 3.0 をセットアップしてください。" "ERROR"
+        return $false
+    }
+
+    if (Test-ContainerRunning) {
+        Write-AppLog "ビルドのため、稼働中のコンテナを停止・削除します..."
+        try {
+            $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoStop.FileName = $script:WslcCmd
+            $pinfoStop.Arguments = "stop $ContainerName"
+            $pinfoStop.UseShellExecute = $false
+            $pinfoStop.CreateNoWindow = $true
+            $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
+            $procStop.WaitForExit()
+
+            $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoRm.FileName = $script:WslcCmd
+            $pinfoRm.Arguments = "remove $ContainerName"
+            $pinfoRm.UseShellExecute = $false
+            $pinfoRm.CreateNoWindow = $true
+            $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
+            $procRm.WaitForExit()
+        } catch {}
+    }
+
+    Set-UIState "イメージ構築中..." $brushOrange $false $false
+    if ($btnRebuild) { $btnRebuild.IsEnabled = $false }
+
+    $actionName = if ($Force) { "リビルド (再構築)" } else { "初回ビルド" }
+    Write-AppLog "=========================================="
+    Write-AppLog "コンテナイメージの $actionName を開始します..." "INFO"
+    Write-AppLog "ビルドディレクトリ: $ProjectRoot" "INFO"
+    Write-AppLog "実行: wslc build -t $ImageName ." "INFO"
+    Write-AppLog "※ 環境により数分かかります。完了までそのままお待ちください..." "INFO"
+
+    $script:BuildAutoStart = $AutoStart
+    $script:LastBuildLogLineCount = 0
+
+    try {
+        if (Test-Path $script:BuildLogFile) {
+            Remove-Item -Path $script:BuildLogFile -Force -ErrorAction SilentlyContinue
+        }
+        [System.IO.File]::WriteAllText($script:BuildLogFile, "# hayamimi build log`r`n", [System.Text.Encoding]::UTF8)
+
+        $pinfoBuild = [System.Diagnostics.ProcessStartInfo]::new()
+        $pinfoBuild.FileName = "cmd.exe"
+        $pinfoBuild.Arguments = "/s /c `"`"$script:WslcCmd`" build -t $ImageName . > `"$script:BuildLogFile`" 2>&1`""
+        $pinfoBuild.WorkingDirectory = $ProjectRoot
+        $pinfoBuild.UseShellExecute = $false
+        $pinfoBuild.CreateNoWindow = $true
+
+        $script:ProcBuild = [System.Diagnostics.Process]::Start($pinfoBuild)
+        $buildTimer.Start()
+        return $true
+    } catch {
+        if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
+        Write-AppLog "ビルドプロセスの起動に失敗しました: $_" "ERROR"
+        Set-UIState "エラー" $brushRed $true $false
+        return $false
+    }
+}
+
+# ビルド監視用タイマー (安全なイベント駆動方式)
+$buildTimer = [System.Windows.Threading.DispatcherTimer]::new()
+$buildTimer.Interval = [TimeSpan]::FromMilliseconds(500)
+
+$buildTimer.Add_Tick({
+    try {
+        # 1. ビルドログの読み込みとGUIリアルタイム反映 (ロック共有で安全読み取り)
+        if (Test-Path $script:BuildLogFile) {
+            $lines = Read-FileSharedLines -FilePath $script:BuildLogFile
+            if ($lines.Length -gt $script:LastBuildLogLineCount) {
+                for ($i = $script:LastBuildLogLineCount; $i -lt $lines.Length; $i++) {
+                    $line = $lines[$i]
+                    if ($line.Trim() -and $line -notmatch "^# hayamimi build log") {
+                        Write-AppLog "[ビルド] $line" "INFO"
+                    }
+                }
+                $script:LastBuildLogLineCount = $lines.Length
+            }
+        }
+
+        # 2. プロセス終了チェック
+        if ($script:ProcBuild -and $script:ProcBuild.HasExited) {
+            $buildTimer.Stop()
+
+            # 最後のログを読み切る
+            Start-Sleep -Milliseconds 200
+            if (Test-Path $script:BuildLogFile) {
+                $lines = Read-FileSharedLines -FilePath $script:BuildLogFile
+                if ($lines.Length -gt $script:LastBuildLogLineCount) {
+                    for ($i = $script:LastBuildLogLineCount; $i -lt $lines.Length; $i++) {
+                        $line = $lines[$i]
+                        if ($line.Trim() -and $line -notmatch "^# hayamimi build log") {
+                            Write-AppLog "[ビルド] $line" "INFO"
+                        }
+                    }
+                    $script:LastBuildLogLineCount = $lines.Length
+                }
+            }
+
+            $exitCode = $script:ProcBuild.ExitCode
+            if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
+
+            if ($exitCode -eq 0) {
+                Write-AppLog "✔ コンテナイメージ ($ImageName) の構築が正常に完了しました！" "INFO"
+                Write-AppLog "=========================================="
+                Set-UIState "停止中" $brushGray $true $false
+                if ($script:BuildAutoStart) {
+                    Write-AppLog "コンテナの起動処理へ自動移行します..."
+                    Start-HayamimiContainer
+                }
+            } else {
+                Write-AppLog "コンテナイメージのビルドに失敗しました (ExitCode: $exitCode)" "ERROR"
+                Set-UIState "ビルド失敗" $brushRed $true $false
+            }
+        }
+    } catch {
+        $buildTimer.Stop()
+        Write-AppLog "ビルド監視中に例外が発生しました: $_" "ERROR"
+        Set-UIState "エラー" $brushRed $true $false
+        if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
+    }
+})
+
+# ヘルスチェックタイマー (最大10分待機・コンテナ異常終了の早期検知)
+$script:HealthCheckAttempts = 0
+$healthTimer = [System.Windows.Threading.DispatcherTimer]::new()
+$healthTimer.Interval = [TimeSpan]::FromMilliseconds(500)
+
+$healthTimer.Add_Tick({
+    $script:HealthCheckAttempts++
+
+    # 1. コンテナ生存チェック & コンテナログ同期 (毎秒)
+    if ($script:HealthCheckAttempts % 2 -eq 0) {
+        Update-ContainerLogFile -EchoToGui $true
+
+        if (-not (Test-ContainerRunning)) {
+            $healthTimer.Stop()
+            Update-ContainerLogFile -EchoToGui $true
+            Set-UIState "コンテナ異常停止" $brushRed $true $false
+            Write-AppLog "エラー: コンテナが異常終了しました。ログ (logs/container.log) をご確認ください。" "ERROR"
+            return
+        }
+    }
+
+    # 2. 定期的なステータス表示更新 (10秒ごと)
+    if ($script:HealthCheckAttempts % 20 -eq 0) {
+        $elapsedSec = [int]($script:HealthCheckAttempts / 2)
+        Set-UIState "準備中 (${elapsedSec}s)..." $brushOrange $false $true
+        if ($elapsedSec % 30 -eq 0) {
+            Write-AppLog "サーバー初期化中 (${elapsedSec}秒経過)... モデルDLおよびロード完了までそのままお待ちください。" "INFO"
+        }
+    }
+
+    # 3. HTTP 応答確認 (ポート8833)
+    $ready = $false
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($MicUrl)
+        $req.Timeout = 400
+        $req.Method = "GET"
+        $resp = $req.GetResponse()
+        if ($resp.StatusCode -eq [System.Net.HttpStatusCode]::OK) {
+            $ready = $true
+        }
+        $resp.Close()
+    } catch {}
+
+    if ($ready) {
+        $healthTimer.Stop()
+        Update-ContainerLogFile -EchoToGui $true
+        Set-UIState "稼働中 (8833 / 8766)" $brushGreen $false $true
+        Write-AppLog "✔ サーバー起動完了！ブラウザを開きます: $MicUrl" "INFO"
+        try {
+            Start-Process $MicUrl
+        } catch {
+            Write-AppLog "ブラウザ起動エラー: $_" "WARN"
+        }
+    } elseif ($script:HealthCheckAttempts -ge 1200) {
+        # 10分 (1200 * 0.5s = 600s) 経過でタイムアウト
+        $healthTimer.Stop()
+        Update-ContainerLogFile -EchoToGui $true
+        Set-UIState "待機タイムアウト" $brushRed $true $true
+        Write-AppLog "サーバーの応答待機がタイムアウトしました (10分経過)。logs/container.log をご確認ください。" "ERROR"
+    }
+})
+
 # 起動ボタン処理
 $btnStart.Add_Click({
     try {
@@ -913,12 +964,7 @@ $btnStart.Add_Click({
             Set-UIState "WSL3 未検出" $brushOrange $true $false
             Write-AppLog "【案内】WSL 3.0 / WSL Containers (wslc.exe) が未インストールです。" "WARN"
 
-            $msgRes = [System.Windows.MessageBox]::Show(
-                "hayamimi を動かすには WSL 3.0 (WSL Containers) が必要です。`r`n`r`n今すぐ自動でインストールを開始しますか？",
-                "WSL 3.0 の自動インストール - hayamimi",
-                [System.Windows.MessageBoxButton]::YesNo,
-                [System.Windows.MessageBoxImage]::Question
-            )
+            $msgRes = Show-AppConfirm -Message "hayamimi を動かすには WSL 3.0 (WSL Containers) が必要です。`r`n`r`n今すぐ自動でインストールを開始しますか？" -Title "WSL 3.0 の自動インストール - hayamimi"
             if ($msgRes -eq [System.Windows.MessageBoxResult]::Yes) {
                 $installed = Invoke-InstallWslContainers
                 if (-not $installed) { return }
@@ -943,17 +989,18 @@ $btnStart.Add_Click({
     }
 })
 
-# リビルドボタン処理 (ソースコード更新時の再構築)
+# リビルドボタン処理 (ソースコード更新時の再構築・完全例外保護)
 if ($btnRebuild) {
     $btnRebuild.Add_Click({
-        $confirm = [System.Windows.MessageBox]::Show(
-            "最新のソースコードをコンテナイメージに反映（リビルド）しますか？`r`n`r`n※ 実行には数分かかる場合があります。",
-            "コンテナのリビルド - hayamimi",
-            [System.Windows.MessageBoxButton]::YesNo,
-            [System.Windows.MessageBoxImage]::Question
-        )
-        if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
-            Invoke-BuildContainerImage -Force $true -AutoStart $false | Out-Null
+        try {
+            $confirm = Show-AppConfirm -Message "最新のソースコードをコンテナイメージに反映（リビルド）しますか？`r`n`r`n※ 実行には数分かかる場合があります。" -Title "コンテナのリビルド - hayamimi"
+            if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
+                Invoke-BuildContainerImage -Force $true -AutoStart $false | Out-Null
+            }
+        } catch {
+            Write-AppLog "リビルド処理中にエラーが発生しました: $_" "ERROR"
+            Set-UIState "エラー" $brushRed $true $false
+            if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
         }
     })
 }
@@ -993,6 +1040,17 @@ $btnStop.Add_Click({
         $window.Close()
     }
 })
+
+# WSL 自動インストールボタンの処理
+if ($btnUpdateWsl) {
+    $btnUpdateWsl.Add_Click({
+        try {
+            Invoke-InstallWslContainers | Out-Null
+        } catch {
+            Write-AppLog "WSL更新処理エラー: $_" "ERROR"
+        }
+    })
+}
 
 # クイックリンク
 $btnOpenMic.Add_Click({ Start-Process $MicUrl })
@@ -1111,12 +1169,7 @@ if ($script:WslcCmd) {
     # 画面描画完了時に自動でインストール確認ダイアログを表示
     $window.Add_ContentRendered({
         if (-not $script:WslcCmd) {
-            $ask = [System.Windows.MessageBox]::Show(
-                "hayamimi の実行に必要な WSL 3.0 (WSL Containers) がインストールされていません。`r`n`r`n今すぐ全自動で WSL 3.0 をインストールしますか？`r`n(管理者権限のインストール画面が開きます)",
-                "WSL 3.0 の自動インストール - hayamimi",
-                [System.Windows.MessageBoxButton]::YesNo,
-                [System.Windows.MessageBoxImage]::Question
-            )
+            $ask = Show-AppConfirm -Message "hayamimi の実行に必要な WSL 3.0 (WSL Containers) がインストールされていません。`r`n`r`n今すぐ全自動で WSL 3.0 をインストールしますか？`r`n(管理者権限のインストール画面が開きます)" -Title "WSL 3.0 の自動インストール - hayamimi"
             if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
                 Invoke-InstallWslContainers | Out-Null
             }

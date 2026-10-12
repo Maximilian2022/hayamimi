@@ -3,25 +3,32 @@ set -e
 
 echo "=== hayamimi (早耳) 起動準備中 ==="
 
-# モデルディレクトリの確認
+# モデルディレクトリの確認とダウンロード判定
 MODELS_DIR="/app/models"
-if [ ! -d "$MODELS_DIR" ] || [ -z "$(ls -A "$MODELS_DIR" 2>/dev/null)" ]; then
-    echo "モデルファイルが見つかりません。初回セットアップとして core モデル (--minimal) をダウンロードします..."
-    python scripts/download_models.py --minimal
-    echo "モデルのダウンロードが完了しました。"
-else
-    echo "既存のモデルディレクトリを確認しました: $MODELS_DIR"
+NEED_CORE=0
+NEED_TRANSLATE=0
+
+if [ ! -d "$MODELS_DIR" ] || [ -z "$(ls -A "$MODELS_DIR" 2>/dev/null)" ] || [ ! -d "$MODELS_DIR/sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17" ]; then
+    NEED_CORE=1
 fi
 
-# 引数に --translate が指定されている場合、翻訳モデルの存在確認・自動ダウンロード
 if [[ "$*" == *"--translate"* ]]; then
     if [ ! -d "$MODELS_DIR/mojicast-fugumt-ja-en-ct2" ] || [ ! -d "$MODELS_DIR/mojicast-m2m100-ct2" ]; then
-        echo "翻訳モデルが見つかりません。ダウンロードしています (FuguMT & M2M-100: 約600MB)..."
-        python scripts/download_models.py --minimal --translators
-        echo "翻訳モデルのダウンロードが完了しました。"
-    else
-        echo "既存の翻訳モデルを確認しました。"
+        NEED_TRANSLATE=1
     fi
+fi
+
+if [ $NEED_CORE -eq 1 ] || [ $NEED_TRANSLATE -eq 1 ]; then
+    if [ $NEED_TRANSLATE -eq 1 ] || [[ "$*" == *"--translate"* ]]; then
+        echo "初回セットアップ: Coreモデル + 翻訳モデル (計約1.7GB) をダウンロードしています..."
+        python scripts/download_models.py --minimal --translators
+    else
+        echo "初回セットアップ: Coreモデル (約1.1GB) をダウンロードしています..."
+        python scripts/download_models.py --minimal
+    fi
+    echo "モデルファイルの準備が完了しました。"
+else
+    echo "既存のモデルディレクトリを確認しました: $MODELS_DIR"
 fi
 
 echo "=== hayamimi サーバーを起動します ==="

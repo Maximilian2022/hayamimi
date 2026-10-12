@@ -47,36 +47,54 @@ def _human(n: int) -> str:
     return f"{n:.1f}TB"
 
 
-def _download_to(url: str, dest: str) -> None:
+def _download_to(url: str, dest: str, max_retries: int = 3) -> None:
     """Stream url to dest with a progress print. Overwrites if dest exists."""
-    req = urllib.request.Request(url, headers={"User-Agent": "hayamimi-download-models/1.0"})
-    with urllib.request.urlopen(req) as resp:
-        total = int(resp.headers.get("Content-Length", 0))
-        os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
-        tmp = dest + ".part"
-        read = 0
-        chunk = 1 << 20
-        with open(tmp, "wb") as f:
-            while True:
-                buf = resp.read(chunk)
-                if not buf:
-                    break
-                f.write(buf)
-                read += len(buf)
-                if total:
-                    pct = 100 * read / total
-                    print(f"\r  {os.path.basename(dest)}: {pct:5.1f}% ({_human(read)}/{_human(total)})",
-                          end="", flush=True)
-                else:
-                    print(f"\r  {os.path.basename(dest)}: {_human(read)}", end="", flush=True)
-        print()
-        os.replace(tmp, dest)
+    import time
+    for attempt in range(1, max_retries + 1):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "hayamimi-download-models/1.0"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                total = int(resp.headers.get("Content-Length", 0))
+                os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+                tmp = dest + ".part"
+                read = 0
+                chunk = 1 << 20
+                with open(tmp, "wb") as f:
+                    while True:
+                        buf = resp.read(chunk)
+                        if not buf:
+                            break
+                        f.write(buf)
+                        read += len(buf)
+                        if total:
+                            pct = 100 * read / total
+                            print(f"\r  {os.path.basename(dest)}: {pct:5.1f}% ({_human(read)}/{_human(total)})",
+                                  end="", flush=True)
+                        else:
+                            print(f"\r  {os.path.basename(dest)}: {_human(read)}", end="", flush=True)
+                print()
+                os.replace(tmp, dest)
+                return
+        except Exception as e:
+            if attempt < max_retries:
+                print(f"\n  [WARN] ダウンロードが中断されました ({e})。再試行中 ({attempt}/{max_retries})...")
+                time.sleep(2)
+            else:
+                raise
 
 
-def _fetch_bytes(url: str) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": "hayamimi-download-models/1.0"})
-    with urllib.request.urlopen(req) as resp:
-        return resp.read()
+def _fetch_bytes(url: str, max_retries: int = 3) -> bytes:
+    import time
+    for attempt in range(1, max_retries + 1):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "hayamimi-download-models/1.0"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return resp.read()
+        except Exception as e:
+            if attempt < max_retries:
+                time.sleep(2)
+            else:
+                raise
 
 
 def download_file(url: str, dest_path: str, label: str) -> None:
