@@ -13,7 +13,34 @@ import threading
 from typing import Callable
 
 _MIC_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mic_page.html")
-_STYLE_PATH = "/tmp/overlay_style.json"
+_STYLE_FILENAME = "overlay_style.json"
+_CONFIG_FILENAME = "asr_config.json"
+
+def _get_storage_dir() -> str:
+    """Return a persistent storage directory.
+    Checks /app/config, /app/models, project root config/, or falls back to /tmp.
+    """
+    for candidate in ("/app/config", "/app/models"):
+        if os.path.isdir(candidate):
+            try:
+                test_file = os.path.join(candidate, ".write_test")
+                with open(test_file, "w") as f:
+                    f.write("ok")
+                os.remove(test_file)
+                return candidate
+            except Exception:
+                pass
+    local_cfg = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
+    if os.path.isdir(local_cfg):
+        try:
+            test_file = os.path.join(local_cfg, ".write_test")
+            with open(test_file, "w") as f:
+                f.write("ok")
+            os.remove(test_file)
+            return local_cfg
+        except Exception:
+            pass
+    return "/tmp"
 
 _DEFAULT_STYLE = {
     "font": "'Zen Kaku Gothic New', sans-serif",
@@ -30,9 +57,20 @@ _DEFAULT_STYLE = {
 }
 
 def _get_overlay_style() -> dict:
-    if os.path.exists(_STYLE_PATH):
+    storage_dir = _get_storage_dir()
+    path = os.path.join(storage_dir, _STYLE_FILENAME)
+    if os.path.exists(path):
         try:
-            with open(_STYLE_PATH, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+                d = dict(_DEFAULT_STYLE)
+                d.update(saved)
+                return d
+        except Exception:
+            pass
+    if os.path.exists("/tmp/overlay_style.json"):
+        try:
+            with open("/tmp/overlay_style.json", "r", encoding="utf-8") as f:
                 saved = json.load(f)
                 d = dict(_DEFAULT_STYLE)
                 d.update(saved)
@@ -42,11 +80,38 @@ def _get_overlay_style() -> dict:
     return dict(_DEFAULT_STYLE)
 
 def _save_overlay_style(style: dict) -> None:
+    storage_dir = _get_storage_dir()
+    path = os.path.join(storage_dir, _STYLE_FILENAME)
     try:
-        with open(_STYLE_PATH, "w", encoding="utf-8") as f:
-            json.dump(style, f, ensure_ascii=False)
-    except Exception:
-        pass
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(style, f, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        sys.stderr.write(f"[subtitle_server] overlay style save failed ({path}): {exc}\n")
+
+def _get_saved_asr_config() -> dict:
+    storage_dir = _get_storage_dir()
+    path = os.path.join(storage_dir, _CONFIG_FILENAME)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def _save_asr_config(cfg: dict) -> None:
+    storage_dir = _get_storage_dir()
+    path = os.path.join(storage_dir, _CONFIG_FILENAME)
+    try:
+        existing = _get_saved_asr_config()
+        save_keys = ("lang", "translate", "punctuate", "dual_confirm", "lid_switch_confirm", "min_switch_s", "vad")
+        for k in save_keys:
+            if k in cfg:
+                existing[k] = cfg[k]
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        sys.stderr.write(f"[subtitle_server] asr config save failed ({path}): {exc}\n")
 
 def _get_mic_html() -> str:
     if os.path.exists(_MIC_HTML_PATH):
@@ -458,7 +523,23 @@ class SubtitleServer:
         self.hub = hub if hub is not None else EventHub()
         self._httpd = None
         self.asr = None       # RoutedASR, attached after construction if --serve
-        self.controls = None  # RuntimeControls, attached after construction if --serve
+        self._controls = None # RuntimeControls, attached after construction if --serve
+
+    @property
+    def controls(self):
+        return self._controls
+
+    @controls.setter
+    def controls(self, val):
+        self._controls = val
+        if val is not None:
+            saved = _get_saved_asr_config()
+            if saved:
+                try:
+                    val.apply_config(saved)
+                    print(f"[subtitle_server] 永続化されたASR設定を復元しました: {saved}", file=sys.stderr)
+                except Exception as exc:
+                    print(f"[subtitle_server] 保存済みASR設定の復元に失敗: {exc}", file=sys.stderr)
 
     def publish(self, event: dict):
         self.hub.publish(event)
@@ -632,6 +713,7 @@ class SubtitleServer:
                 else:  # /config
                     try:
                         server.controls.apply_config(payload)
+                        _save_asr_config(payload)
                     except (ValueError, TypeError) as exc:
                         self._json(400, {"error": str(exc)})
                         return

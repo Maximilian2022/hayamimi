@@ -1405,11 +1405,13 @@
   }
 
   async function loadConfigAndStyle() {
+    let serverCfgLoaded = false;
     // 1. ASR / 翻訳設定のロード
     try {
       const res = await fetch("/config");
       if (res.ok) {
         const cfg = await res.json();
+        serverCfgLoaded = true;
         if (cfg.lang) document.getElementById("cfg-lang").value = cfg.lang;
         if (cfg.translate && cfg.translate.length > 0) {
           document.getElementById("cfg-trans-enable").checked = true;
@@ -1433,16 +1435,64 @@
       console.warn("config load error:", e);
     }
 
+    if (!serverCfgLoaded) {
+      try {
+        const localCfgRaw = localStorage.getItem("hayamimi_asr_config");
+        if (localCfgRaw) {
+          const cfg = JSON.parse(localCfgRaw);
+          if (cfg.lang) document.getElementById("cfg-lang").value = cfg.lang;
+          if (cfg.translate && cfg.translate.length > 0) {
+            document.getElementById("cfg-trans-enable").checked = true;
+            document.getElementById("trans-lang-group").style.display = "flex";
+            document.querySelectorAll('input[name="trans-lang"]').forEach(chk => {
+              chk.checked = cfg.translate.includes(chk.value);
+            });
+          }
+          updateTransPillStates();
+          if (cfg.punctuate != null) {
+            document.getElementById("cfg-punct").checked = cfg.punctuate;
+          }
+          fetch("/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(cfg)
+          }).catch(() => {});
+        }
+      } catch (e) {
+        console.warn("localStorage ASR restore error:", e);
+      }
+    }
+
     // 2. OBS スタイルのロード
+    let serverStyleLoaded = false;
     try {
       const res = await fetch("/overlay-style");
       if (res.ok) {
         const loaded = await res.json();
+        serverStyleLoaded = true;
         currentStyle = Object.assign(currentStyle, loaded);
         applyStyleToInputs();
       }
     } catch (e) {
       console.warn("style load error:", e);
+    }
+
+    if (!serverStyleLoaded) {
+      try {
+        const localStyleRaw = localStorage.getItem("hayamimi_overlay_style");
+        if (localStyleRaw) {
+          const loaded = JSON.parse(localStyleRaw);
+          currentStyle = Object.assign(currentStyle, loaded);
+          applyStyleToInputs();
+          fetch("/overlay-style", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(currentStyle)
+          }).catch(() => {});
+        }
+      } catch (e) {
+        console.warn("localStorage style restore error:", e);
+      }
     }
 
     updatePreview();
@@ -1675,6 +1725,14 @@
       }
     } catch (e) {
       alert("スタイルの保存に失敗しました: " + e.message);
+    }
+
+    // 3. クライアント側 localStorage への永続化バックアップ
+    try {
+      localStorage.setItem("hayamimi_asr_config", JSON.stringify(asrPayload));
+      localStorage.setItem("hayamimi_overlay_style", JSON.stringify(currentStyle));
+    } catch (e) {
+      console.warn("localStorage save error:", e);
     }
   }
 

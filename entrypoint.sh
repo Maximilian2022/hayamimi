@@ -36,6 +36,10 @@ else
     echo "[entrypoint] 検出されたモデル一覧: $(ls -1 "$MODELS_DIR" 2>/dev/null | tr '\n' ' ')"
 fi
 
+if [ -d "/app/config" ]; then
+    echo "[entrypoint] 永続化設定ディレクトリ: /app/config"
+fi
+
 echo "=== hayamimi サーバーを起動します ==="
 echo "  OBS オーバーレイ:      http://0.0.0.0:8833/"
 echo "  Webマイク入力画面:    http://0.0.0.0:8833/mic (HTTPS経由推奨: https://<HOST>:8843/mic)"

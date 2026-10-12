@@ -1,4 +1,4 @@
-﻿$version = "GUI v1.0.1"
+﻿$version = "GUI v1.0.2"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -199,7 +199,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi - WSL3 ランチャー"
+        Title="hayamimi - WSL3 ランチャー (GUI v1.0.2)"
         Height="610" Width="660"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanMinimize"
@@ -270,7 +270,7 @@ function Update-ContainerLogFile {
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Border Background="#242C3D" CornerRadius="12" Padding="10,4" Margin="0,0,8,0" BorderBrush="#3A465D" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.0.1" FontSize="11" Foreground="#F6AD55" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.0.2" FontSize="11" Foreground="#F6AD55" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#1A202C" CornerRadius="12" Padding="10,4">
                         <TextBlock x:Name="RuntimeBadge" Text="WSL3 Native" FontSize="11" Foreground="#4FD1C5" FontWeight="SemiBold"/>
@@ -777,20 +777,26 @@ function Start-HayamimiContainer {
             $procRm.WaitForExit()
         } catch {}
 
-        # models ディレクトリ作成
+        # models および config ディレクトリ作成 (モデルと設定の永続化)
         $modelsDir = Join-Path $ProjectRoot "models"
         if (-not (Test-Path $modelsDir)) {
             New-Item -ItemType Directory -Path $modelsDir -Force | Out-Null
             Write-AppLog "models ディレクトリを作成しました: $modelsDir"
         }
+        $configDir = Join-Path $ProjectRoot "config"
+        if (-not (Test-Path $configDir)) {
+            New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+            Write-AppLog "config ディレクトリを作成しました: $configDir"
+        }
 
         # コンテナ起動 (wslc run -d)
         Write-AppLog "wslc run を実行中 (ポート 8833, 8766)..."
-        $volumeArg = "${modelsDir}:/app/models"
+        $volumeModels = "${modelsDir}:/app/models"
+        $volumeConfig = "${configDir}:/app/config"
 
         $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
         $pinfo.FileName = $script:WslcCmd
-        $pinfo.Arguments = "run -d --name $ContainerName -p 8833:8833 -p 8766:8766 -v `"$volumeArg`" $ImageName --translate en"
+        $pinfo.Arguments = "run -d --name $ContainerName -p 8833:8833 -p 8766:8766 -v `"$volumeModels`" -v `"$volumeConfig`" $ImageName --translate en"
         $pinfo.RedirectStandardOutput = $true
         $pinfo.RedirectStandardError = $true
         $pinfo.UseShellExecute = $false
