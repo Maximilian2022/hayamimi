@@ -166,7 +166,7 @@ function Update-ContainerLogFile {
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="hayamimi - WSL3 ランチャー"
-        Height="580" Width="660"
+        Height="610" Width="660"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanMinimize"
         Background="#0E1117"
@@ -296,6 +296,11 @@ function Update-ContainerLogFile {
 
         <!-- 操作ボタンエリア -->
         <Grid Grid.Row="2" Margin="0,0,0,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="8"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="14"/>
@@ -303,7 +308,7 @@ function Update-ContainerLogFile {
             </Grid.ColumnDefinitions>
 
             <!-- 起動ボタン -->
-            <Button x:Name="BtnStart" Grid.Column="0" Background="#2ECC71" Foreground="#0E1117" Height="46">
+            <Button x:Name="BtnStart" Grid.Row="0" Grid.Column="0" Background="#2ECC71" Foreground="#0E1117" Height="46">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="▶" FontSize="15" Margin="0,0,8,0" VerticalAlignment="Center"/>
                     <TextBlock Text="コンテナ起動 &amp; Webを開く" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
@@ -311,12 +316,27 @@ function Update-ContainerLogFile {
             </Button>
 
             <!-- 終了ボタン -->
-            <Button x:Name="BtnStop" Grid.Column="2" Background="#E74C3C" Foreground="#FFFFFF" Height="46" IsEnabled="False">
+            <Button x:Name="BtnStop" Grid.Row="0" Grid.Column="2" Background="#E74C3C" Foreground="#FFFFFF" Height="46" IsEnabled="False">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="■" FontSize="14" Margin="0,0,8,0" VerticalAlignment="Center"/>
                     <TextBlock Text="コンテナ終了 &amp; 閉じる" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
                 </StackPanel>
             </Button>
+
+            <!-- アップデート・リビルドエリア -->
+            <Grid Grid.Row="2" Grid.ColumnSpan="3">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="※ ソース更新時はリビルドで最新コードをコンテナに即時反映できます。" FontSize="11" Foreground="#718096" VerticalAlignment="Center"/>
+                <Button x:Name="BtnRebuild" Grid.Column="1" Background="#1A202C" Foreground="#A0AEC0" Height="28" Padding="12,4" FontSize="11" ToolTip="最新のソースコードをコンテナイメージに再反映します">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🔄" FontSize="11" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="コンテナをリビルド (更新反映)" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </Grid>
         </Grid>
 
         <!-- クイックリンクエリア -->
@@ -393,6 +413,7 @@ $statusText = $window.FindName("StatusText")
 $runtimeBadge = $window.FindName("RuntimeBadge")
 $btnStart = $window.FindName("BtnStart")
 $btnStop = $window.FindName("BtnStop")
+$btnRebuild = $window.FindName("BtnRebuild")
 $btnOpenMic = $window.FindName("BtnOpenMic")
 $btnOpenObs = $window.FindName("BtnOpenObs")
 $btnOpenDashboard = $window.FindName("BtnOpenDashboard")
@@ -630,6 +651,217 @@ if ($btnUpdateWsl) {
     })
 }
 
+# コンテナイメージ存在確認関数
+function Test-HayamimiImageExists {
+    if (-not $script:WslcCmd) { return $false }
+    try {
+        $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $pinfo.FileName = $script:WslcCmd
+        $pinfo.Arguments = "images"
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.UseShellExecute = $false
+        $pinfo.CreateNoWindow = $true
+        $proc = [System.Diagnostics.Process]::Start($pinfo)
+        $raw = $proc.StandardOutput.ReadToEnd()
+        $proc.WaitForExit()
+        return ($raw -match "hayamimi")
+    } catch {
+        return $false
+    }
+}
+
+# コンテナイメージのビルド / リビルド関数 (リアルタイムログ同期対応)
+function Invoke-BuildContainerImage {
+    param(
+        [bool]$Force = $false,
+        [bool]$AutoStart = $false
+    )
+
+    if (-not $script:WslcCmd) {
+        Write-AppLog "WSL Containers (wslc.exe) が利用できません。先に WSL 3.0 をセットアップしてください。" "ERROR"
+        return $false
+    }
+
+    if (Test-ContainerRunning) {
+        Write-AppLog "ビルドのため、稼働中のコンテナを停止・削除します..."
+        try {
+            $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoStop.FileName = $script:WslcCmd
+            $pinfoStop.Arguments = "stop $ContainerName"
+            $pinfoStop.UseShellExecute = $false
+            $pinfoStop.CreateNoWindow = $true
+            $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
+            $procStop.WaitForExit()
+
+            $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoRm.FileName = $script:WslcCmd
+            $pinfoRm.Arguments = "remove $ContainerName"
+            $pinfoRm.UseShellExecute = $false
+            $pinfoRm.CreateNoWindow = $true
+            $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
+            $procRm.WaitForExit()
+        } catch {}
+    }
+
+    Set-UIState "イメージ構築中..." $brushOrange $false $false
+    if ($btnRebuild) { $btnRebuild.IsEnabled = $false }
+
+    $actionName = if ($Force) { "リビルド (再構築)" } else { "初回ビルド" }
+    Write-AppLog "=========================================="
+    Write-AppLog "コンテナイメージの $actionName を開始します..." "INFO"
+    Write-AppLog "ビルドディレクトリ: $ProjectRoot" "INFO"
+    Write-AppLog "実行: wslc build -t $ImageName ." "INFO"
+    Write-AppLog "※ 環境により数分かかります。完了までそのままお待ちください..." "INFO"
+
+    try {
+        $pinfoBuild = [System.Diagnostics.ProcessStartInfo]::new()
+        $pinfoBuild.FileName = $script:WslcCmd
+        $pinfoBuild.Arguments = "build -t $ImageName ."
+        $pinfoBuild.WorkingDirectory = $ProjectRoot
+        $pinfoBuild.RedirectStandardOutput = $true
+        $pinfoBuild.RedirectStandardError = $true
+        $pinfoBuild.UseShellExecute = $false
+        $pinfoBuild.CreateNoWindow = $true
+
+        $procBuild = [System.Diagnostics.Process]::new()
+        $procBuild.StartInfo = $pinfoBuild
+
+        $outputHandler = {
+            param($sender, $e)
+            if ($e.Data) {
+                $window.Dispatcher.Invoke([Action]{
+                    Write-AppLog "[ビルド] $($e.Data)" "INFO"
+                })
+            }
+        }
+        $procBuild.add_OutputDataReceived($outputHandler)
+        $procBuild.add_ErrorDataReceived($outputHandler)
+
+        $procBuild.Start() | Out-Null
+        $procBuild.BeginOutputReadLine()
+        $procBuild.BeginErrorReadLine()
+
+        while (-not $procBuild.WaitForExit(200)) {
+            [System.Windows.Forms.Application]::DoEvents()
+        }
+
+        if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
+
+        if ($procBuild.ExitCode -eq 0) {
+            Write-AppLog "✔ コンテナイメージ ($ImageName) の構築が正常に完了しました！" "INFO"
+            Write-AppLog "=========================================="
+            Set-UIState "停止中" $brushGray $true $false
+            if ($AutoStart) {
+                Write-AppLog "コンテナの起動処理へ自動移行します..."
+                Start-HayamimiContainer
+            }
+            return $true
+        } else {
+            Write-AppLog "コンテナイメージのビルドに失敗しました (ExitCode: $($procBuild.ExitCode))" "ERROR"
+            Set-UIState "ビルド失敗" $brushRed $true $false
+            return $false
+        }
+    } catch {
+        if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
+        Write-AppLog "ビルド実行中に例外が発生しました: $_" "ERROR"
+        Set-UIState "エラー" $brushRed $true $false
+        return $false
+    }
+}
+
+# コンテナ起動処理本体
+function Start-HayamimiContainer {
+    try {
+        Set-UIState "起動中..." $brushOrange $false $false
+        Write-AppLog "hayamimi コンテナの起動処理を開始します..."
+
+        # container.log の初期化
+        $script:LastContainerLogLineCount = 0
+        $initHeader = "# === hayamimi コンテナ起動: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===`r`n"
+        try {
+            [System.IO.File]::WriteAllText($ContainerLogFile, $initHeader, [System.Text.Encoding]::UTF8)
+        } catch {}
+
+        # 既存コンテナの安全な停止・削除
+        try {
+            $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoStop.FileName = $script:WslcCmd
+            $pinfoStop.Arguments = "stop $ContainerName"
+            $pinfoStop.UseShellExecute = $false
+            $pinfoStop.CreateNoWindow = $true
+            $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
+            $procStop.WaitForExit()
+
+            $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoRm.FileName = $script:WslcCmd
+            $pinfoRm.Arguments = "remove $ContainerName"
+            $pinfoRm.UseShellExecute = $false
+            $pinfoRm.CreateNoWindow = $true
+            $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
+            $procRm.WaitForExit()
+        } catch {}
+
+        # models ディレクトリ作成
+        $modelsDir = Join-Path $ProjectRoot "models"
+        if (-not (Test-Path $modelsDir)) {
+            New-Item -ItemType Directory -Path $modelsDir -Force | Out-Null
+            Write-AppLog "models ディレクトリを作成しました: $modelsDir"
+        }
+
+        # コンテナ起動 (wslc run -d)
+        Write-AppLog "wslc run を実行中 (ポート 8833, 8766)..."
+        $volumeArg = "${modelsDir}:/app/models"
+
+        $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $pinfo.FileName = $script:WslcCmd
+        $pinfo.Arguments = "run -d --name $ContainerName -p 8833:8833 -p 8766:8766 -v `"$volumeArg`" $ImageName --translate en"
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.RedirectStandardError = $true
+        $pinfo.UseShellExecute = $false
+        $pinfo.CreateNoWindow = $true
+
+        $proc = [System.Diagnostics.Process]::Start($pinfo)
+        $stdout = $proc.StandardOutput.ReadToEnd()
+        $stderr = $proc.StandardError.ReadToEnd()
+        $proc.WaitForExit()
+
+        if ($proc.ExitCode -ne 0) {
+            Write-AppLog "エラー: コンテナの起動に失敗しました (ExitCode: $($proc.ExitCode))" "ERROR"
+            if ($stdout) { Write-AppLog "標準出力: $stdout" "ERROR" }
+            if ($stderr) { Write-AppLog "標準エラー: $stderr" "ERROR" }
+            Update-ContainerLogFile -EchoToGui $true
+            Set-UIState "起動失敗" $brushRed $true $false
+
+            # イメージ未検出エラーなら自動ビルドを促す
+            if ($stderr -match "IMAGE_NOT_FOUND|pull access denied") {
+                $askBuild = [System.Windows.MessageBox]::Show(
+                    "コンテナイメージ ($ImageName) が見つかりませんでした。`r`n`r`n今すぐローカルでイメージをビルドしますか？",
+                    "コンテナイメージの構築 - hayamimi",
+                    [System.Windows.MessageBoxButton]::YesNo,
+                    [System.Windows.MessageBoxImage]::Question
+                )
+                if ($askBuild -eq [System.Windows.MessageBoxResult]::Yes) {
+                    Invoke-BuildContainerImage -Force $false -AutoStart $true | Out-Null
+                }
+            }
+            return
+        }
+
+        $containerId = $stdout.Trim()
+        Write-AppLog "コンテナプロセスが開始されました (ID: $containerId)"
+        Write-AppLog "サーバー初期化とポート8833の待機を確認しています..."
+        Write-AppLog "※コンテナ出力ログは logs/container.log に記録されます。"
+
+        Update-ContainerLogFile -EchoToGui $true
+        $script:HealthCheckAttempts = 0
+        $healthTimer.Start()
+
+    } catch {
+        Write-AppLog "起動処理中に例外が発生しました: $($_.Exception.ToString())" "ERROR"
+        Set-UIState "エラー" $brushRed $true $false
+    }
+}
+
 # 起動ボタン処理
 $btnStart.Add_Click({
     try {
@@ -653,128 +885,36 @@ $btnStart.Add_Click({
             }
         }
 
-        Set-UIState "起動中..." $brushOrange $false $false
-        Write-AppLog "hayamimi コンテナの起動処理を開始します..."
-
-        # container.log の初期化
-        $script:LastContainerLogLineCount = 0
-        $initHeader = "# === hayamimi コンテナ起動: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===`r`n"
-        try {
-            [System.IO.File]::WriteAllText($ContainerLogFile, $initHeader, [System.Text.Encoding]::UTF8)
-        } catch {}
-
-        # 2. コンテナイメージの存在確認 (未ビルド環境の場合は全自動ビルド)
-        $hasImage = $false
-        try {
-            $pinfoImages = [System.Diagnostics.ProcessStartInfo]::new()
-            $pinfoImages.FileName = $script:WslcCmd
-            $pinfoImages.Arguments = "images"
-            $pinfoImages.RedirectStandardOutput = $true
-            $pinfoImages.UseShellExecute = $false
-            $pinfoImages.CreateNoWindow = $true
-            $procImg = [System.Diagnostics.Process]::Start($pinfoImages)
-            $imgRaw = $procImg.StandardOutput.ReadToEnd()
-            $procImg.WaitForExit()
-            if ($imgRaw -match "hayamimi") {
-                $hasImage = $true
-            }
-        } catch {}
-
-        if (-not $hasImage) {
-            Set-UIState "イメージ構築中..." $brushOrange $false $false
-            Write-AppLog "hayamimi コンテナイメージが見つかりません。初回ビルドを開始します..." "INFO"
-            Write-AppLog "※ 初回ビルドには数分かかります。完了までそのままお待ちください..." "INFO"
-
-            $pinfoBuild = [System.Diagnostics.ProcessStartInfo]::new()
-            $pinfoBuild.FileName = $script:WslcCmd
-            $pinfoBuild.Arguments = "build -t $ImageName `"$ProjectRoot`""
-            $pinfoBuild.RedirectStandardOutput = $true
-            $pinfoBuild.RedirectStandardError = $true
-            $pinfoBuild.UseShellExecute = $false
-            $pinfoBuild.CreateNoWindow = $true
-
-            $procBuild = [System.Diagnostics.Process]::Start($pinfoBuild)
-            $buildOut = $procBuild.StandardOutput.ReadToEnd()
-            $buildErr = $procBuild.StandardError.ReadToEnd()
-            $procBuild.WaitForExit()
-
-            if ($procBuild.ExitCode -ne 0) {
-                Write-AppLog "コンテナイメージのビルドに失敗しました (ExitCode: $($procBuild.ExitCode))" "ERROR"
-                if ($buildOut) { Write-AppLog "標準出力: $buildOut" "ERROR" }
-                if ($buildErr) { Write-AppLog "標準エラー: $buildErr" "ERROR" }
-                Set-UIState "ビルド失敗" $brushRed $true $false
-                return
-            }
-            Write-AppLog "✔ コンテナイメージの構築が完了しました！" "INFO"
-            Set-UIState "起動中..." $brushOrange $false $false
-        }
-
-        # 3. 既存コンテナの安全な停止・削除
-        try {
-            $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
-            $pinfoStop.FileName = $script:WslcCmd
-            $pinfoStop.Arguments = "stop $ContainerName"
-            $pinfoStop.UseShellExecute = $false
-            $pinfoStop.CreateNoWindow = $true
-            $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
-            $procStop.WaitForExit()
-
-            $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
-            $pinfoRm.FileName = $script:WslcCmd
-            $pinfoRm.Arguments = "remove $ContainerName"
-            $pinfoRm.UseShellExecute = $false
-            $pinfoRm.CreateNoWindow = $true
-            $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
-            $procRm.WaitForExit()
-        } catch {}
-
-        # 4. models ディレクトリ作成
-        $modelsDir = Join-Path $ProjectRoot "models"
-        if (-not (Test-Path $modelsDir)) {
-            New-Item -ItemType Directory -Path $modelsDir -Force | Out-Null
-            Write-AppLog "models ディレクトリを作成しました: $modelsDir"
-        }
-
-        # 5. コンテナ起動 (wslc run -d)
-        Write-AppLog "wslc run を実行中 (ポート 8833, 8766)..."
-        $volumeArg = "${modelsDir}:/app/models"
-        
-        $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
-        $pinfo.FileName = $script:WslcCmd
-        $pinfo.Arguments = "run -d --name $ContainerName -p 8833:8833 -p 8766:8766 -v `"$volumeArg`" $ImageName --translate en"
-        $pinfo.RedirectStandardOutput = $true
-        $pinfo.RedirectStandardError = $true
-        $pinfo.UseShellExecute = $false
-        $pinfo.CreateNoWindow = $true
-
-        $proc = [System.Diagnostics.Process]::Start($pinfo)
-        $stdout = $proc.StandardOutput.ReadToEnd()
-        $stderr = $proc.StandardError.ReadToEnd()
-        $proc.WaitForExit()
-
-        if ($proc.ExitCode -ne 0) {
-            Write-AppLog "エラー: コンテナの起動に失敗しました (ExitCode: $($proc.ExitCode))" "ERROR"
-            if ($stdout) { Write-AppLog "標準出力: $stdout" "ERROR" }
-            if ($stderr) { Write-AppLog "標準エラー: $stderr" "ERROR" }
-            Update-ContainerLogFile -EchoToGui $true
-            Set-UIState "起動失敗" $brushRed $true $false
+        # 2. コンテナイメージの存在確認 (未ビルド環境の場合は全自動ビルドして起動)
+        if (-not (Test-HayamimiImageExists)) {
+            Write-AppLog "【初回検知】hayamimi コンテナイメージが未構築です。自動ビルドを開始します..." "INFO"
+            Invoke-BuildContainerImage -Force $false -AutoStart $true | Out-Null
             return
         }
 
-        $containerId = $stdout.Trim()
-        Write-AppLog "コンテナプロセスが開始されました (ID: $containerId)"
-        Write-AppLog "サーバー初期化とポート8833の待機を確認しています..."
-        Write-AppLog "※コンテナ出力ログは logs/container.log に記録されます。"
-
-        Update-ContainerLogFile -EchoToGui $true
-        $script:HealthCheckAttempts = 0
-        $healthTimer.Start()
+        # 3. 通常起動
+        Start-HayamimiContainer
 
     } catch {
-        Write-AppLog "起動処理中に例外が発生しました: $($_.Exception.ToString())" "ERROR"
+        Write-AppLog "起動ボタン処理エラー: $_" "ERROR"
         Set-UIState "エラー" $brushRed $true $false
     }
 })
+
+# リビルドボタン処理 (ソースコード更新時の再構築)
+if ($btnRebuild) {
+    $btnRebuild.Add_Click({
+        $confirm = [System.Windows.MessageBox]::Show(
+            "最新のソースコードをコンテナイメージに反映（リビルド）しますか？`r`n`r`n※ 実行には数分かかる場合があります。",
+            "コンテナのリビルド - hayamimi",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Question
+        )
+        if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
+            Invoke-BuildContainerImage -Force $true -AutoStart $false | Out-Null
+        }
+    })
+}
 
 # 終了ボタン処理
 $btnStop.Add_Click({

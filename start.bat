@@ -34,10 +34,15 @@ set "PS_CMD=powershell"
 where pwsh >nul 2>&1
 if %errorlevel% equ 0 set "PS_CMD=pwsh"
 
+:: Check for --rebuild / -r flag
+if /i "%~1"=="--rebuild" goto do_build
+if /i "%~1"=="-r" goto do_build
+
 :: Check container image existence (auto build if missing)
 wslc images 2>nul | findstr /i "hayamimi" >nul
 if %errorlevel% equ 0 goto launch_gui
 
+:do_build
 echo [*] Building hayamimi container image, please wait...
 wslc build -t hayamimi:latest .
 if %errorlevel% equ 0 goto launch_gui
