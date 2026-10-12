@@ -163,15 +163,15 @@ function Update-ContainerLogFile {
         $pinfo.CreateNoWindow = $true
         $proc = [System.Diagnostics.Process]::Start($pinfo)
         $rawLogs = $proc.StandardOutput.ReadToEnd()
-        $proc.WaitForExit()
+        $proc.WaitForExit(1500) | Out-Null
 
         if ($rawLogs) {
-            $lines = $rawLogs -split "`r?`n"
+            $lines = $rawLogs -split "[\r\n]+"
             $validLines = [System.Collections.Generic.List[string]]::new()
             foreach ($line in $lines) {
                 $lStr = "$line"
                 if ($lStr.Trim() -and $lStr -notmatch "Error: No such container" -and $lStr -notmatch "failed to find container" -and $lStr -notmatch "Error response from daemon") {
-                    $validLines.Add($lStr)
+                    $validLines.Add($lStr.Trim())
                 }
             }
             if ($validLines.Count -gt 0) {
@@ -543,24 +543,45 @@ function Read-FileSharedLines {
     return $lines
 }
 
-# コンテナ稼働確認関数
+# コンテナ稼働確認関数 (wslc inspect優先 & wslc list多言語フォールバック)
 function Test-ContainerRunning {
+    param([string]$TargetName = $ContainerName)
     if (-not $script:WslcCmd) { return $false }
     try {
-        $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
-        $pinfo.FileName = $script:WslcCmd
-        $pinfo.Arguments = "list"
-        $pinfo.RedirectStandardOutput = $true
-        $pinfo.UseShellExecute = $false
-        $pinfo.CreateNoWindow = $true
-        $proc = [System.Diagnostics.Process]::Start($pinfo)
-        $raw = $proc.StandardOutput.ReadToEnd()
-        $proc.WaitForExit()
+        # 1. wslc inspect による高精度な生存判定 (JSON の "Running": true を直接判定)
+        $pinfoInspect = [System.Diagnostics.ProcessStartInfo]::new()
+        $pinfoInspect.FileName = $script:WslcCmd
+        $pinfoInspect.Arguments = "inspect $TargetName"
+        $pinfoInspect.RedirectStandardOutput = $true
+        $pinfoInspect.RedirectStandardError = $true
+        $pinfoInspect.UseShellExecute = $false
+        $pinfoInspect.CreateNoWindow = $true
+        $procInspect = [System.Diagnostics.Process]::Start($pinfoInspect)
+        $inspectOut = $procInspect.StandardOutput.ReadToEnd()
+        $procInspect.WaitForExit(1500) | Out-Null
 
-        if ($raw) {
-            $lines = $raw -split "`r?`n"
+        if ($inspectOut) {
+            if ($inspectOut -match '"Running"\s*:\s*true' -or $inspectOut -match '"Status"\s*:\s*"running"') {
+                return $true
+            }
+        }
+
+        # 2. wslc list によるフォールバック判定 (多言語・状態柔軟マッチング)
+        $pinfoList = [System.Diagnostics.ProcessStartInfo]::new()
+        $pinfoList.FileName = $script:WslcCmd
+        $pinfoList.Arguments = "list"
+        $pinfoList.RedirectStandardOutput = $true
+        $pinfoList.RedirectStandardError = $true
+        $pinfoList.UseShellExecute = $false
+        $pinfoList.CreateNoWindow = $true
+        $procList = [System.Diagnostics.Process]::Start($pinfoList)
+        $listOut = $procList.StandardOutput.ReadToEnd()
+        $procList.WaitForExit(1500) | Out-Null
+
+        if ($listOut) {
+            $lines = $listOut -split "[\r\n]+"
             foreach ($line in $lines) {
-                if ($line -match "^[a-f0-9]+\s+$ContainerName\s+.*running") {
+                if ($line -match "\b$TargetName\b" -and ($line -match "running|Up|実行中|作成済み|created")) {
                     return $true
                 }
             }
@@ -794,6 +815,7 @@ function Start-HayamimiContainer {
 
         Update-ContainerLogFile -EchoToGui $true
         $script:HealthCheckAttempts = 0
+        $script:ContainerDeadCount = 0
         $healthTimer.Start()
 
     } catch {
@@ -1055,8 +1077,9 @@ $buildTimer.Add_Tick({
     }
 })
 
-# ヘルスチェックタイマー (最大10分待機・コンテナ異常終了の早期検知)
+# ヘルスチェックタイマー (最大10分待機・初期化猶予付きコンテナ異常終了検知)
 $script:HealthCheckAttempts = 0
+$script:ContainerDeadCount = 0
 $healthTimer = [System.Windows.Threading.DispatcherTimer]::new()
 $healthTimer.Interval = [TimeSpan]::FromMilliseconds(500)
 
@@ -1067,11 +1090,41 @@ $healthTimer.Add_Tick({
     if ($script:HealthCheckAttempts % 2 -eq 0) {
         Update-ContainerLogFile -EchoToGui $true
 
-        if (-not (Test-ContainerRunning)) {
+        $isRunning = Test-ContainerRunning
+        if ($isRunning) {
+            $script:ContainerDeadCount = 0
+        } else {
+            # 起動直後の最初の15秒間 (attempts <= 30) は状態遷移・起動ラグ猶予のため加算しない
+            if ($script:HealthCheckAttempts -gt 30) {
+                $script:ContainerDeadCount++
+            }
+        }
+
+        # 連続 5 回 (約 5 秒間連続) で非生存が確認された場合のみ異常終了と判定
+        if ($script:ContainerDeadCount -ge 5) {
             $healthTimer.Stop()
             Update-ContainerLogFile -EchoToGui $true
             Set-UIState "コンテナ異常停止" $brushRed $true $false
             Write-AppLog "エラー: コンテナが異常終了しました。ログ (logs/container.log) をご確認ください。" "ERROR"
+
+            # コンテナの最終ログを取得してGUIに表示 (原因究明を容易にする)
+            try {
+                $pinfoFinal = [System.Diagnostics.ProcessStartInfo]::new()
+                $pinfoFinal.FileName = $script:WslcCmd
+                $pinfoFinal.Arguments = "logs $ContainerName"
+                $pinfoFinal.RedirectStandardOutput = $true
+                $pinfoFinal.UseShellExecute = $false
+                $pinfoFinal.CreateNoWindow = $true
+                $procFinal = [System.Diagnostics.Process]::Start($pinfoFinal)
+                $finalRaw = $procFinal.StandardOutput.ReadToEnd()
+                $procFinal.WaitForExit(2000) | Out-Null
+                if ($finalRaw) {
+                    $tailLines = ($finalRaw -split "[\r\n]+" | Where-Object { $_.Trim() } | Select-Object -Last 10) -join "`r`n"
+                    if ($tailLines) {
+                        Write-AppLog "【コンテナ終了時の最終ログ】`r`n$tailLines" "ERROR"
+                    }
+                }
+            } catch {}
             return
         }
     }
