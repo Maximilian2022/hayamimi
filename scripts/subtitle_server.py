@@ -154,13 +154,15 @@ OVERLAY_HTML = """<!doctype html>
     } else if (ev.type === "final") {
       fin.textContent = ev.text;
       par.textContent = "";
-      trans.textContent = "";
+      trans.innerHTML = "";
     } else if (ev.type === "translation") {
-      trans.textContent = `→ [${ev.lang}] ${ev.text}`;
+      const line = document.createElement("div");
+      line.textContent = `→ [${ev.lang}] ${ev.text}`;
+      trans.appendChild(line);
     }
     clearTimer = setTimeout(() => {
       fin.textContent = "";
-      trans.textContent = "";
+      trans.innerHTML = "";
     }, 6000);
   };
 </script>

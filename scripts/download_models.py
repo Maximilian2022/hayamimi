@@ -190,6 +190,17 @@ def download_opt_ins(args) -> None:
             "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
             "Parakeet TDT 0.6B v2 (en-only, opt-in --en-tier v2)")
 
+    if getattr(args, "translators", False):
+        download_hf_repo(
+            "ishiki-emo/mojicast-m2m100-ct2",
+            "mojicast-m2m100-ct2",
+            "M2M-100 418M CTranslate2 (ja->zh/ko/es/... translation, MIT)")
+
+        download_hf_repo(
+            "ishiki-emo/mojicast-fugumt-ja-en-ct2",
+            "mojicast-fugumt-ja-en-ct2",
+            "FuguMT CTranslate2 (ja->en translation, CC BY-SA 4.0)")
+
     if args.punct_4class:
         # Same layout as the local models/punct-ja-4class-permissive/ this
         # was trained into (punct_4class.onnx, quantized_ort/*.int8.onnx,
@@ -298,6 +309,9 @@ def main():
                           "4class). Not part of --minimal or the default set -- ja "
                           "punctuation stays on the bert model unless you both "
                           "download this and pass --punct-model 4class.")
+    ap.add_argument("--translators", action="store_true",
+                     help="also download ja->en (FuguMT) and ja->multilingual (M2M-100) "
+                          "translation models (~600MB total)")
     args = ap.parse_args()
 
     os.makedirs(MODELS_DIR, exist_ok=True)

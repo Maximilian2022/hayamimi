@@ -21,8 +21,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # アプリケーションコードのコピー
 COPY . .
 
-# 起動スクリプトの実行権限を保証
-RUN chmod +x /app/entrypoint.sh
+# 起動スクリプトの改行コード正規化(CRLF対策)と実行権限を付与
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # ポートの公開 (8833: HTTP/SSE/OBS, 8766: WebSocket Ingest)
 EXPOSE 8833 8766
