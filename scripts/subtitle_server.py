@@ -6,51 +6,166 @@ events over SSE at /events. Designed to be driven by realtime_transcribe.py.
 """
 import http.server
 import json
+import os
 import queue
 import sys
 import threading
 from typing import Callable
 
+_MIC_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mic_page.html")
+_STYLE_PATH = "/tmp/overlay_style.json"
+
+_DEFAULT_STYLE = {
+    "font": "'Zen Kaku Gothic New', sans-serif",
+    "size": 42,
+    "color": "#ffffff",
+    "strokeColor": "#000000",
+    "strokeWidth": 3,
+    "bgColor": "#000000",
+    "bgOpacity": 0,
+    "radius": 8,
+    "align": "center",
+    "bottom": 4,
+    "showTrans": True,
+}
+
+def _get_overlay_style() -> dict:
+    if os.path.exists(_STYLE_PATH):
+        try:
+            with open(_STYLE_PATH, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+                d = dict(_DEFAULT_STYLE)
+                d.update(saved)
+                return d
+        except Exception:
+            pass
+    return dict(_DEFAULT_STYLE)
+
+def _save_overlay_style(style: dict) -> None:
+    try:
+        with open(_STYLE_PATH, "w", encoding="utf-8") as f:
+            json.dump(style, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+def _get_mic_html() -> str:
+    if os.path.exists(_MIC_HTML_PATH):
+        try:
+            with open(_MIC_HTML_PATH, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            pass
+    return "<!doctype html><title>Mic</title><p>mic_page.html not found</p>"
+
 OVERLAY_HTML = """<!doctype html>
+<html lang="ja">
+<head>
 <meta charset="utf-8">
+<title>早耳 - OBS 字幕オーバーレイ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Kaisei+Decol:wght@700&family=Kosugi+Maru&family=M+PLUS+1p:wght@500;700&family=M+PLUS+Rounded+1c:wght@500;700;800&family=Noto+Sans+JP:wght@500;700&family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap" rel="stylesheet">
 <style>
-  html, body { margin: 0; background: transparent; overflow: hidden; }
+  html, body { margin: 0; background: transparent; overflow: hidden; width: 100%; height: 100%; }
   #box {
     position: absolute; left: 0; right: 0; bottom: 4vh;
-    text-align: center; font-family: "Yu Gothic UI", "Meiryo", sans-serif;
+    text-align: center;
+    font-family: 'Zen Kaku Gothic New', sans-serif;
     font-size: 5vh; line-height: 1.4; color: #fff;
     text-shadow: 0 0 8px #000, 0 0 4px #000, 2px 2px 2px #000;
+    transition: all 0.2s ease;
+    box-sizing: border-box;
+    padding: 0 2vw;
   }
   #final-line, #partial-line { display: block; min-height: 1.4em; }
-  #partial-line { opacity: 0.75; font-style: italic; font-size: 0.8em; }
+  #partial-line { opacity: 0.75; font-style: italic; font-size: 0.85em; }
+  #trans-line { display: block; opacity: 0.85; font-size: 0.75em; margin-top: 0.2em; min-height: 1.2em; }
 </style>
-<div id="box"><span id="final-line"></span><span id="partial-line"></span></div>
+</head>
+<body>
+<div id="box">
+  <span id="final-line"></span>
+  <span id="partial-line"></span>
+  <span id="trans-line"></span>
+</div>
 <script>
-  // ?show=final / ?show=partial renders only that row, so OBS can place the
-  // confirmed line and the in-progress line as two independent sources.
   const mode = new URLSearchParams(location.search).get("show") || "both";
+  const box = document.getElementById("box");
   const fin = document.getElementById("final-line");
   const par = document.getElementById("partial-line");
+  const trans = document.getElementById("trans-line");
   if (mode === "final") par.style.display = "none";
-  if (mode === "partial") fin.style.display = "none";
+  if (mode === "partial") { fin.style.display = "none"; trans.style.display = "none"; }
+
+  function hexToRgba(hex, alphaPercent) {
+    hex = (hex || "#000000").replace("#", "");
+    if (hex.length === 3) hex = hex.split("").map(c => c+c).join("");
+    const r = parseInt(hex.substring(0, 2), 16) || 0;
+    const g = parseInt(hex.substring(2, 4), 16) || 0;
+    const b = parseInt(hex.substring(4, 6), 16) || 0;
+    return `rgba(${r}, ${g}, ${b}, ${(alphaPercent || 0) / 100})`;
+  }
+
+  function generateTextShadow(color, width) {
+    if (width <= 0) return "none";
+    let s = [];
+    for (let x = -width; x <= width; x++) {
+      for (let y = -width; y <= width; y++) {
+        if (x !== 0 || y !== 0) s.push(`${x}px ${y}px 0 ${color}`);
+      }
+    }
+    s.push(`0 0 ${width * 2}px ${color}`);
+    return s.join(", ");
+  }
+
+  function applyStyle(s) {
+    if (!s) return;
+    if (s.font) box.style.fontFamily = s.font;
+    if (s.size) box.style.fontSize = s.size + "px";
+    if (s.color) box.style.color = s.color;
+    if (s.align) box.style.textAlign = s.align;
+    if (s.bottom != null) box.style.bottom = s.bottom + "vh";
+    if (s.strokeColor && s.strokeWidth != null) {
+      box.style.textShadow = generateTextShadow(s.strokeColor, parseInt(s.strokeWidth));
+    }
+    if (s.bgColor && s.bgOpacity != null) {
+      box.style.backgroundColor = hexToRgba(s.bgColor, parseInt(s.bgOpacity));
+      box.style.padding = parseInt(s.bgOpacity) > 0 ? "0.6rem 1.2rem" : "0 2vw";
+    }
+    if (s.radius != null) box.style.borderRadius = s.radius + "px";
+    if (s.showTrans != null && mode !== "partial") {
+      trans.style.display = s.showTrans ? "block" : "none";
+    }
+  }
+
+  fetch("/overlay-style").then(r => r.json()).then(applyStyle).catch(() => {});
+
   let clearTimer = null;
   const es = new EventSource("/events");
   es.onmessage = (e) => {
     const ev = JSON.parse(e.data);
-    // Any message -- partial included -- means the session is still live,
-    // so postpone clearing the confirmed line: a run of partials right
-    // after a final (the speaker keeps talking) must not let the 6s timer
-    // wipe the final out from under them.
+    if (ev.type === "style_update") {
+      applyStyle(ev.style);
+      return;
+    }
     if (clearTimer) { clearTimeout(clearTimer); clearTimer = null; }
     if (ev.type === "partial") {
       par.textContent = ev.text;
     } else if (ev.type === "final") {
       fin.textContent = ev.text;
       par.textContent = "";
+      trans.textContent = "";
+    } else if (ev.type === "translation") {
+      trans.textContent = `→ [${ev.lang}] ${ev.text}`;
     }
-    clearTimer = setTimeout(() => { fin.textContent = ""; }, 6000);
+    clearTimer = setTimeout(() => {
+      fin.textContent = "";
+      trans.textContent = "";
+    }, 6000);
   };
 </script>
+</body>
+</html>
 """
 
 
@@ -335,8 +450,9 @@ class SubtitleServer:
     all 404 when no `.controls` is attached.
     """
 
-    def __init__(self, port: int = 8833, hub: "EventHub | None" = None):
+    def __init__(self, port: int = 8833, host: str = "0.0.0.0", hub: "EventHub | None" = None):
         self.port = port
+        self.host = host
         self.hub = hub if hub is not None else EventHub()
         self._httpd = None
         self.asr = None       # RoutedASR, attached after construction if --serve
@@ -397,6 +513,15 @@ class SubtitleServer:
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
+                elif self.path in ("/mic", "/settings"):
+                    body = _get_mic_html().encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                elif self.path == "/overlay-style":
+                    self._json(200, _get_overlay_style())
                 elif self.path == "/transcript":
                     body = TRANSCRIPT_HTML.encode("utf-8")
                     self.send_response(200)
@@ -447,6 +572,26 @@ class SubtitleServer:
                         # elapsed -- see RuntimeControls.reset()'s
                         # docstring) -- 202 Accepted, not a failure.
                         self._json(202, {"ok": False, "pending": True})
+                    return
+                if self.path == "/overlay-style":
+                    length = int(self.headers.get("Content-Length") or 0)
+                    if length <= 0 or length > _MAX_DICT_BODY_BYTES:
+                        self._json(400, {"error": "missing or oversized body"})
+                        return
+                    raw = self.rfile.read(length)
+                    try:
+                        payload = json.loads(raw.decode("utf-8"))
+                    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                        self._json(400, {"error": f"invalid JSON: {exc}"})
+                        return
+                    if not isinstance(payload, dict):
+                        self._json(400, {"error": "body must be a JSON object"})
+                        return
+                    cur = _get_overlay_style()
+                    cur.update(payload)
+                    _save_overlay_style(cur)
+                    server.publish({"type": "style_update", "style": cur})
+                    self._json(200, {"ok": True, "style": cur})
                     return
                 if self.path not in ("/replacements", "/itn_overrides", "/config"):
                     self._json(404, {"error": "not found"})
@@ -499,6 +644,6 @@ class SubtitleServer:
                 self.end_headers()
                 self.wfile.write(body)
 
-        self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
+        self._httpd = http.server.ThreadingHTTPServer((self.host, self.port), Handler)
         threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
         return self

@@ -1,0 +1,1445 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>早耳 - マイク入力 & 配信設定 (Web Mic & Studio)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- 配信利用・商用利用可能な Google Fonts を一括プリロード (OFL / Apache 2.0) -->
+  <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=IBM+Plex+Mono:wght@400;600&family=Kaisei+Decol:wght@700&family=Kosugi+Maru&family=M+PLUS+1p:wght@500;700&family=M+PLUS+Rounded+1c:wght@500;700;800&family=Noto+Sans+JP:wght@500;700&family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #0d0f13;
+      --ink-2: #14171d;
+      --ink-card: #1a1e26;
+      --line: #2a2f3a;
+      --paper: #ece5d8;
+      --paper-dim: #b0a898;
+      --shu: #e04f2f;
+      --shu-glow: rgba(224, 79, 47, 0.35);
+      --green: #2ecc71;
+      --green-glow: rgba(46, 204, 113, 0.35);
+      --blue: #5b7fd4;
+      --mono: "IBM Plex Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--ink);
+      color: var(--paper);
+      font-family: "Zen Kaku Gothic New", "Yu Gothic UI", sans-serif;
+      background-image:
+        radial-gradient(1200px 500px at 85% -10%, rgba(224,79,47,.08), transparent 60%),
+        repeating-linear-gradient(0deg, transparent 0 2px, rgba(255,255,255,.005) 2px 4px);
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 1.2rem;
+      padding: 0.8rem 1.6rem;
+      border-bottom: 1px solid var(--line);
+      background: var(--ink-2);
+      flex: none;
+      flex-wrap: wrap;
+    }
+    .logotype {
+      font-family: "Shippori Mincho B1", serif;
+      font-weight: 800;
+      font-size: 1.5rem;
+      letter-spacing: .12em;
+    }
+    .logotype em { font-style: normal; color: var(--shu); }
+    .romaji {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: .25em;
+      color: var(--paper-dim);
+    }
+    
+    /* タブ切り替えバー */
+    .tab-bar {
+      display: flex;
+      align-items: center;
+      background: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 3px;
+      gap: 4px;
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--paper-dim);
+      font-family: inherit;
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 0.4rem 0.9rem;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all 0.2s;
+    }
+    .tab-btn:hover {
+      color: var(--paper);
+    }
+    .tab-btn.active {
+      background: var(--ink-card);
+      color: #fff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      border: 1px solid var(--line);
+    }
+    .tab-btn svg { width: 15px; height: 15px; fill: currentColor; }
+
+    /* 分割表示トグル (PC用) */
+    .split-toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.78rem;
+      color: var(--paper-dim);
+      margin-left: 0.5rem;
+    }
+    @media (max-width: 1024px) {
+      .split-toggle-wrap { display: none; }
+    }
+
+    .spacer { flex: 1; }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+    }
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      padding: 0.3rem 0.7rem;
+      border-radius: 4px;
+      border: 1px solid var(--line);
+      background: var(--ink);
+    }
+    .status-dot {
+      width: 0.55rem;
+      height: 0.55rem;
+      border-radius: 50%;
+      background: #777;
+    }
+    .status-dot.connected { background: var(--green); box-shadow: 0 0 6px var(--green-glow); }
+    .status-dot.active { background: var(--shu); box-shadow: 0 0 8px var(--shu-glow); animation: pulse 1.5s infinite; }
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.2); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+
+    .link-obs {
+      color: var(--paper-dim);
+      text-decoration: none;
+      font-size: 0.75rem;
+      font-family: var(--mono);
+      padding: 0.3rem 0.6rem;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .link-obs:hover {
+      color: var(--paper);
+      border-color: var(--shu);
+    }
+
+    main {
+      flex: 1;
+      max-width: 1350px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1.4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.2rem;
+    }
+
+    #error-banner {
+      display: none;
+      background: rgba(224, 79, 47, 0.15);
+      border: 1px solid var(--shu);
+      color: #ff8b73;
+      padding: 0.8rem 1.2rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+    }
+
+    .save-alert {
+      display: none;
+      background: rgba(46, 204, 113, 0.2);
+      border: 1px solid var(--green);
+      color: #7bed9f;
+      padding: 0.6rem 1rem;
+      border-radius: 4px;
+      font-size: 0.82rem;
+      text-align: center;
+    }
+
+    /* パネルコンテナ (タブ式 または 2ペイン分割) */
+    .view-container {
+      display: flex;
+      gap: 1.6rem;
+      width: 100%;
+    }
+    .view-container.tab-mode .panel-view {
+      display: none;
+      width: 100%;
+    }
+    .view-container.tab-mode .panel-view.active {
+      display: flex;
+    }
+    .view-container.split-mode {
+      display: grid;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    }
+    .view-container.split-mode .panel-view {
+      display: flex !important;
+    }
+
+    .panel-view {
+      flex-direction: column;
+      gap: 1.2rem;
+    }
+
+    /* 共通カード */
+    .card {
+      background: var(--ink-card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 1.4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.1rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    .card-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 0.6rem;
+    }
+    .card-title span.tag {
+      color: var(--shu);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+    }
+
+    /* --- マイク入力コンポーネント --- */
+    .mic-control-card {
+      align-items: center;
+      padding: 1.8rem;
+    }
+    .btn-mic {
+      appearance: none;
+      border: none;
+      outline: none;
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      background: #252a35;
+      color: var(--paper);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      transition: all 0.25s ease;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+      position: relative;
+    }
+    .btn-mic:hover {
+      background: #2f3542;
+      transform: translateY(-2px);
+    }
+    .btn-mic.recording {
+      background: var(--shu);
+      color: #fff;
+      box-shadow: 0 0 30px var(--shu-glow);
+    }
+    .btn-mic svg { width: 40px; height: 40px; fill: currentColor; }
+    .btn-mic span {
+      font-weight: 700;
+      font-size: 0.82rem;
+      letter-spacing: 0.05em;
+    }
+
+    .level-container {
+      width: 100%;
+      max-width: 440px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .level-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      font-family: var(--mono);
+      color: var(--paper-dim);
+    }
+    .level-meter {
+      height: 8px;
+      width: 100%;
+      background: #111;
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+    }
+    .level-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--green) 0%, #f1c40f 70%, var(--shu) 100%);
+      transition: width 0.08s ease;
+    }
+
+    .device-selector {
+      width: 100%;
+      max-width: 440px;
+      display: flex;
+      gap: 0.8rem;
+      align-items: center;
+    }
+    .device-selector label {
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--paper-dim);
+      white-space: nowrap;
+    }
+
+    /* リアルタイム字幕プレビュー */
+    #partial-live-text {
+      font-family: "Shippori Mincho B1", serif;
+      font-size: 1.3rem;
+      line-height: 1.5;
+      min-height: 2.2rem;
+      color: var(--paper);
+      padding: 0.6rem 0;
+      border-bottom: 1px dashed var(--line);
+    }
+    #partial-live-text.idle {
+      color: var(--paper-dim);
+      opacity: 0.5;
+      font-size: 1rem;
+    }
+    .caret {
+      display: inline-block;
+      width: 0.4em;
+      height: 1em;
+      background: var(--shu);
+      vertical-align: -0.1em;
+      margin-left: 0.2em;
+      animation: blink 1s steps(2) infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .feed-list {
+      flex: 1;
+      overflow-y: auto;
+      max-height: 200px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      padding-right: 0.4rem;
+    }
+    .feed-item {
+      display: flex;
+      align-items: baseline;
+      gap: 0.7rem;
+      font-size: 0.92rem;
+      line-height: 1.4;
+      padding: 0.25rem 0;
+      border-bottom: 1px solid rgba(42,47,58,0.4);
+      animation: rise 0.2s ease both;
+    }
+    @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
+    .badge {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      padding: 0.1rem 0.35rem;
+      border-radius: 2px;
+      background: var(--line);
+      color: var(--paper);
+      flex: none;
+    }
+
+    /* OBS URL ガイド */
+    .url-row {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 0.4rem 0.7rem;
+    }
+    .url-label {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--paper-dim);
+      white-space: nowrap;
+      width: 75px;
+    }
+    .url-text {
+      flex: 1;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--paper);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      user-select: all;
+    }
+    .btn-copy {
+      background: #252a35;
+      border: 1px solid var(--line);
+      color: var(--paper);
+      padding: 0.22rem 0.55rem;
+      font-size: 0.72rem;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .btn-copy:hover { background: #323846; }
+
+    /* --- 設定パネルスタイル --- */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .form-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    label {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--paper);
+    }
+    .desc {
+      font-size: 0.68rem;
+      color: var(--paper-dim);
+    }
+    input[type="text"], select {
+      background: var(--ink);
+      color: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 0.45rem 0.7rem;
+      font-size: 0.82rem;
+      outline: none;
+      width: 100%;
+    }
+    input[type="range"] {
+      accent-color: var(--shu);
+      flex: 1;
+      cursor: pointer;
+    }
+    input[type="color"] {
+      appearance: none;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      width: 44px;
+      height: 30px;
+      cursor: pointer;
+      background: transparent;
+      padding: 2px;
+    }
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 42px;
+      height: 22px;
+    }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #333; transition: .2s; border-radius: 22px;
+    }
+    .toggle-slider:before {
+      position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px;
+      background-color: white; transition: .2s; border-radius: 50%;
+    }
+    input:checked + .toggle-slider { background-color: var(--shu); }
+    input:checked + .toggle-slider:before { transform: translateX(20px); }
+
+    /* ライブプレビュー画面 */
+    .preview-viewport {
+      height: 220px;
+      border-radius: 8px;
+      border: 1px dashed var(--line);
+      background: #000;
+      background-image: 
+        linear-gradient(45deg, #181818 25%, transparent 25%),
+        linear-gradient(-45deg, #181818 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #181818 75%),
+        linear-gradient(-45deg, transparent 75%, #181818 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .preview-box {
+      width: 100%;
+      text-align: center;
+      transition: all 0.15s ease;
+    }
+    .preview-final { display: block; }
+    .preview-partial { display: block; opacity: 0.75; font-style: italic; font-size: 0.85em; }
+    .preview-trans { display: block; opacity: 0.8; font-size: 0.8em; margin-top: 0.3em; }
+
+    .btn-primary {
+      background: var(--shu);
+      color: #fff;
+      border: none;
+      padding: 0.7rem 1.4rem;
+      border-radius: 4px;
+      font-size: 0.88rem;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 0 15px var(--shu-glow);
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      width: 100%;
+    }
+    .btn-primary:hover {
+      background: #e65c3c;
+      transform: translateY(-1px);
+    }
+    .btn-secondary {
+      background: #252a35;
+      color: var(--paper);
+      border: 1px solid var(--line);
+      padding: 0.4rem 0.8rem;
+      border-radius: 4px;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+    .btn-secondary:hover { background: #323846; }
+
+    /* 設定アコーディオン */
+    details.settings-box {
+      background: var(--ink-2);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.7rem 1rem;
+      font-size: 0.78rem;
+    }
+    details.settings-box summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--paper-dim);
+      outline: none;
+    }
+    .settings-content {
+      margin-top: 0.8rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 0.8rem 1.6rem;
+      background: var(--ink-2);
+      display: flex;
+      gap: 1.5rem;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--paper-dim);
+      flex-wrap: wrap;
+    }
+    footer a { color: var(--paper-dim); text-decoration: none; }
+    footer a:hover { color: var(--paper); text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logotype">早<em>耳</em></div>
+  <div class="romaji">WEB MIC & STUDIO</div>
+
+  <!-- タブセレクタ -->
+  <div class="tab-bar">
+    <button id="tab-btn-mic" class="tab-btn active" onclick="switchTab('mic')">
+      <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+      マイク入力
+    </button>
+    <button id="tab-btn-settings" class="tab-btn" onclick="switchTab('settings')">
+      <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+      字幕・翻訳設定
+    </button>
+  </div>
+
+  <!-- PC用 分割表示トグル -->
+  <div class="split-toggle-wrap">
+    <label class="toggle-switch" style="width: 34px; height: 18px;">
+      <input type="checkbox" id="split-mode-toggle" onchange="toggleSplitMode(this.checked)">
+      <span class="toggle-slider"></span>
+    </label>
+    <span>分割表示 (2画面並列)</span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="header-right">
+    <div class="status-badge">
+      <div id="status-dot" class="status-dot"></div>
+      <span id="status-label">待機中 (切断)</span>
+    </div>
+    <a href="/" target="_blank" class="link-obs" title="OBS用字幕画面を新しいタブで開く">OBSオーバーレイ ↗</a>
+  </div>
+</header>
+
+<main>
+  <div id="error-banner"></div>
+  <div id="save-msg" class="save-alert">設定を保存し、OBSオーバーレイに即時反映しました！</div>
+
+  <div id="view-container" class="view-container tab-mode">
+    
+    <!-- ================= パネル 1: マイク入力・文字起こし ================= -->
+    <div id="panel-mic" class="panel-view active">
+      
+      <!-- マイク操作カード -->
+      <div class="card mic-control-card">
+        <button id="btn-toggle-mic" class="btn-mic" aria-label="マイク開始/停止">
+          <svg viewBox="0 0 24 24" id="mic-icon">
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+          </svg>
+          <span id="btn-mic-text">マイク開始</span>
+        </button>
+
+        <div class="level-container">
+          <div class="level-header">
+            <span>マイク入力レベル</span>
+            <span id="level-val">0 dB</span>
+          </div>
+          <div class="level-meter">
+            <div id="level-bar" class="level-bar"></div>
+          </div>
+        </div>
+
+        <div class="device-selector">
+          <label for="audio-source">入力マイク:</label>
+          <select id="audio-source">
+            <option value="">デフォルトマイク</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- リアルタイム文字起こしプレビューカード -->
+      <div class="card" style="flex: 1; min-height: 240px;">
+        <div class="card-title">
+          リアルタイム文字起こしプレビュー
+          <div id="latency-chip" class="status-badge" style="font-size: 0.65rem; padding: 0.15rem 0.4rem;">
+            応答: <span id="lat-val">-</span> ms
+          </div>
+        </div>
+        <div id="partial-live-text" class="idle">
+          マイクを開始すると、ここに話した内容が即座に表示されます<span class="caret"></span>
+        </div>
+        <div class="feed-list" id="final-feed">
+          <!-- 確定字幕が追加されます -->
+        </div>
+      </div>
+
+      <!-- OBS URL ガイド -->
+      <div class="card">
+        <div class="card-title">
+          OBS Studio ブラウザソース設定用 URL
+          <span class="tag">OBS URL</span>
+        </div>
+        <div class="url-row">
+          <div class="url-label">通常字幕:</div>
+          <div class="url-text" id="obs-url-both"></div>
+          <button class="btn-copy" onclick="copyUrl('obs-url-both')">コピー</button>
+        </div>
+        <div class="url-row">
+          <div class="url-label">確定のみ:</div>
+          <div class="url-text" id="obs-url-final"></div>
+          <button class="btn-copy" onclick="copyUrl('obs-url-final')">コピー</button>
+        </div>
+        <div class="url-row">
+          <div class="url-label">認識中のみ:</div>
+          <div class="url-text" id="obs-url-partial"></div>
+          <button class="btn-copy" onclick="copyUrl('obs-url-partial')">コピー</button>
+        </div>
+      </div>
+
+      <!-- ネットワーク詳細設定 -->
+      <details class="settings-box">
+        <summary>ネットワーク・WebSocket 詳細設定</summary>
+        <div class="settings-content">
+          <div class="form-row">
+            <label for="ws-url-input" style="width: 140px;">WebSocket URL:</label>
+            <input type="text" id="ws-url-input" placeholder="wss://.../ingest">
+          </div>
+          <div class="desc">
+            ※ 通常は「/ingest」のままで自動接続されます。
+          </div>
+        </div>
+      </details>
+
+    </div>
+
+    <!-- ================= パネル 2: 字幕・翻訳設定 ================= -->
+    <div id="panel-settings" class="panel-view">
+      
+      <!-- 1. 音声認識 & リアルタイム翻訳設定 -->
+      <div class="card">
+        <div class="card-title">
+          音声認識 & リアルタイム翻訳設定 <span class="tag">ASR & TRANSLATE</span>
+        </div>
+
+        <div class="form-group">
+          <label for="cfg-lang">認識言語モード:</label>
+          <select id="cfg-lang">
+            <option value="">自動検出 (多言語オートルーティング)</option>
+            <option value="ja">日本語 (ja) - ReazonSpeech 固定</option>
+            <option value="en">英語 (en) - Parakeet TDT 固定</option>
+            <option value="zh">中国語 (zh) - SenseVoice 固定</option>
+            <option value="ko">韓国語 (ko) - SenseVoice 固定</option>
+          </select>
+          <div class="desc">通常は「自動検出」でOK。日本語のみ話す場合は固定すると切り替え処理が省かれます。</div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>リアルタイム翻訳 (話した音声を翻訳):</label>
+            <div class="desc">話した言葉を即座に他言語へ同時翻訳します。</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="cfg-trans-enable">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="form-group" id="trans-lang-group" style="display: none;">
+          <label for="cfg-trans-targets">翻訳先言語:</label>
+          <select id="cfg-trans-targets">
+            <option value="en">英語 (en) - FuguMT (推奨)</option>
+            <option value="zh">中国語 (zh) - M2M-100</option>
+            <option value="ko">韓国語 (ko) - M2M-100</option>
+            <option value="es">スペイン語 (es)</option>
+            <option value="en,zh">英語 + 中国語 (en, zh)</option>
+          </select>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>句読点自動付与 (Punctuator):</label>
+            <div class="desc">確定した文章に「、」「。」を自動補正します。</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="cfg-punct" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div style="display: flex; gap: 0.8rem; margin-top: 0.3rem;">
+          <button class="btn-secondary" onclick="resetSession()">セッション履歴リセット</button>
+        </div>
+      </div>
+
+      <!-- 2. OBS 字幕デザイン設定 -->
+      <div class="card">
+        <div class="card-title">
+          OBS 字幕デザイン設定 <span class="tag">SUBTITLE STYLING</span>
+        </div>
+
+        <!-- フォント選択 -->
+        <div class="form-group">
+          <label for="style-font">字幕フォント (配信・商用利用OKなGoogle Fonts):</label>
+          <select id="style-font">
+            <option value="'Noto Sans JP', sans-serif">Noto Sans JP (定番・クリアな高視認性ゴシック / OFL)</option>
+            <option value="'Zen Kaku Gothic New', sans-serif" selected>Zen Kaku Gothic New (洗練モダン角ゴシック / OFL)</option>
+            <option value="'M PLUS 1p', sans-serif">M PLUS 1p (すっきり親しみやすい / OFL)</option>
+            <option value="'M PLUS Rounded 1c', sans-serif">M PLUS Rounded 1c (丸ゴシック・VTuberや雑談配信に大人気 / OFL)</option>
+            <option value="'Shippori Mincho B1', serif">Shippori Mincho B1 (上品・和風明朝体 / OFL)</option>
+            <option value="'Dela Gothic One', sans-serif">Dela Gothic One (極太・強烈なインパクトタイトル風 / OFL)</option>
+            <option value="'Kosugi Maru', sans-serif">Kosugi Maru (優しく読みやすい丸文字 / Apache 2.0)</option>
+            <option value="'Kaisei Decol', serif">Kaisei Decol (レトロモダン装飾風 / OFL)</option>
+          </select>
+          <div class="desc">※すべて商用利用・配信利用が公式に許可された完全オープンライセンスフォントです。</div>
+        </div>
+
+        <!-- 文字サイズ -->
+        <div class="form-row">
+          <label for="style-size">文字サイズ: <span id="val-size">42</span>px</label>
+          <input type="range" id="style-size" min="20" max="90" value="42">
+        </div>
+
+        <!-- 文字色 & 縁取り -->
+        <div class="form-row">
+          <label for="style-color">文字色:</label>
+          <input type="color" id="style-color" value="#ffffff">
+        </div>
+        <div class="form-row">
+          <label for="style-stroke-color">文字の縁取り (影) 色:</label>
+          <input type="color" id="style-stroke-color" value="#000000">
+        </div>
+        <div class="form-row">
+          <label for="style-stroke-width">縁取りの太さ: <span id="val-stroke">3</span>px</label>
+          <input type="range" id="style-stroke-width" min="0" max="8" value="3">
+        </div>
+
+        <!-- 背景プレート & 不透明度 -->
+        <div class="form-row">
+          <label for="style-bg-color">背景プレート色:</label>
+          <input type="color" id="style-bg-color" value="#000000">
+        </div>
+        <div class="form-row">
+          <label for="style-bg-opacity">背景の不透明度: <span id="val-opacity">0</span>% (0%で完全透明)</label>
+          <input type="range" id="style-bg-opacity" min="0" max="100" value="0">
+        </div>
+        <div class="form-row">
+          <label for="style-radius">背景の角丸: <span id="val-radius">8</span>px</label>
+          <input type="range" id="style-radius" min="0" max="30" value="8">
+        </div>
+
+        <!-- 配置と余白 -->
+        <div class="form-row">
+          <label for="style-align">テキスト配置:</label>
+          <select id="style-align" style="width: 140px;">
+            <option value="center" selected>中央揃え</option>
+            <option value="left">左揃え</option>
+            <option value="right">右揃え</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="style-bottom">画面下部からの余白: <span id="val-bottom">4</span>vh</label>
+          <input type="range" id="style-bottom" min="0" max="30" value="4">
+        </div>
+
+        <!-- 翻訳行表示トグル -->
+        <div class="form-row">
+          <div>
+            <label>OBSオーバーレイに翻訳行を表示:</label>
+            <div class="desc">確定字幕の下に翻訳文を同時表示します。</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="style-show-trans" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <!-- 保存ボタン -->
+        <button class="btn-primary" onclick="saveAllSettings()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/>
+          </svg>
+          設定を保存して OBS に即座に反映する
+        </button>
+      </div>
+
+      <!-- 3. OBS ライブプレビュー -->
+      <div class="card">
+        <div class="card-title">
+          OBS 画面ライブプレビュー <span class="tag">LIVE PREVIEW</span>
+        </div>
+        <div class="desc">※市松模様は「透過（透明）」を表しています。OBS上では配信映像に重ね合わされます。</div>
+
+        <div class="preview-viewport">
+          <div id="preview-box" class="preview-box">
+            <span id="preview-final" class="preview-final">早耳によるリアルタイム字幕の表示例です。</span>
+            <span id="preview-partial" class="preview-partial">いま話している途中です…</span>
+            <span id="preview-trans" class="preview-trans">→ This is a real-time subtitle example.</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</main>
+
+<footer>
+  <div>早耳 (hayamimi)</div>
+  <a href="/dashboard">ダッシュボード: /dashboard</a>
+  <a href="/" target="_blank">字幕オーバーレイ: /</a>
+  <a href="/transcript">履歴: /transcript</a>
+</footer>
+
+<script>
+  // --- 画面切り替え (タブ & 分割モード) ---
+  const viewContainer = document.getElementById("view-container");
+  const tabBtnMic = document.getElementById("tab-btn-mic");
+  const tabBtnSettings = document.getElementById("tab-btn-settings");
+  const panelMic = document.getElementById("panel-mic");
+  const panelSettings = document.getElementById("panel-settings");
+  const splitToggle = document.getElementById("split-mode-toggle");
+
+  function switchTab(tab) {
+    if (viewContainer.classList.contains("split-mode")) {
+      return; // 分割表示時は両方表示
+    }
+    if (tab === "mic") {
+      tabBtnMic.classList.add("active");
+      tabBtnSettings.classList.remove("active");
+      panelMic.classList.add("active");
+      panelSettings.classList.remove("active");
+    } else {
+      tabBtnMic.classList.remove("active");
+      tabBtnSettings.classList.add("active");
+      panelMic.classList.remove("active");
+      panelSettings.classList.add("active");
+    }
+    localStorage.setItem("hayamimi_active_tab", tab);
+  }
+
+  function toggleSplitMode(isSplit) {
+    if (isSplit) {
+      viewContainer.classList.remove("tab-mode");
+      viewContainer.classList.add("split-mode");
+      tabBtnMic.classList.add("active");
+      tabBtnSettings.classList.add("active");
+    } else {
+      viewContainer.classList.remove("split-mode");
+      viewContainer.classList.add("tab-mode");
+      const savedTab = localStorage.getItem("hayamimi_active_tab") || "mic";
+      switchTab(savedTab);
+    }
+    localStorage.setItem("hayamimi_split_mode", isSplit ? "1" : "0");
+  }
+
+  // 直前のタブや分割モードの復元
+  if (localStorage.getItem("hayamimi_split_mode") === "1" && window.innerWidth > 1024) {
+    splitToggle.checked = true;
+    toggleSplitMode(true);
+  } else {
+    const savedTab = localStorage.getItem("hayamimi_active_tab") || "mic";
+    switchTab(savedTab);
+  }
+
+  // --- 初期設定と URL 計算 ---
+  const isSecure = location.protocol === "https:";
+  const defaultWsProtocol = isSecure ? "wss:" : "ws:";
+  
+  let defaultWsUrl = "";
+  if (location.port === "8833") {
+    defaultWsUrl = `${defaultWsProtocol}//${location.hostname}:8766/ingest`;
+  } else {
+    defaultWsUrl = `${defaultWsProtocol}//${location.host}/ingest`;
+  }
+
+  const wsInput = document.getElementById("ws-url-input");
+  wsInput.value = defaultWsUrl;
+
+  const baseUrl = `${location.protocol}//${location.host}/`;
+  document.getElementById("obs-url-both").textContent = baseUrl;
+  document.getElementById("obs-url-final").textContent = baseUrl + "?show=final";
+  document.getElementById("obs-url-partial").textContent = baseUrl + "?show=partial";
+
+  function copyUrl(elementId) {
+    const text = document.getElementById(elementId).textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      alert("URLをコピーしました:\n" + text);
+    }).catch(err => {
+      console.error("コピー失敗:", err);
+    });
+  }
+
+  // --- マイク処理 UI 要素 ---
+  const btnToggle = document.getElementById("btn-toggle-mic");
+  const btnText = document.getElementById("btn-mic-text");
+  const statusDot = document.getElementById("status-dot");
+  const statusLabel = document.getElementById("status-label");
+  const errorBanner = document.getElementById("error-banner");
+  const audioSourceSelect = document.getElementById("audio-source");
+  const levelBar = document.getElementById("level-bar");
+  const levelVal = document.getElementById("level-val");
+  const partialText = document.getElementById("partial-live-text");
+  const finalFeed = document.getElementById("final-feed");
+  const latVal = document.getElementById("lat-val");
+
+  let isRecording = false;
+  let audioContext = null;
+  let mediaStream = null;
+  let processorNode = null;
+  let analyserNode = null;
+  let ws = null;
+  let animFrameId = null;
+  let idleTimer = null;
+
+  const TARGET_SAMPLE_RATE = 16000;
+  const CHUNK_SIZE = 1600;
+  let pcmBuffer = new Int16Array(CHUNK_SIZE);
+  let pcmBufferIndex = 0;
+
+  function showError(msg) {
+    errorBanner.textContent = msg;
+    errorBanner.style.display = "block";
+  }
+  function clearError() {
+    errorBanner.textContent = "";
+    errorBanner.style.display = "none";
+  }
+
+  async function loadAudioDevices() {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices.filter(d => d.kind === "audioinput");
+      audioSourceSelect.innerHTML = '<option value="">デフォルトマイク</option>';
+      audioInputs.forEach((device, index) => {
+        const option = document.createElement("option");
+        option.value = device.deviceId;
+        option.textContent = device.label || `マイク ${index + 1}`;
+        audioSourceSelect.appendChild(option);
+      });
+    } catch (err) {
+      console.warn("デバイス一覧の取得に失敗:", err);
+    }
+  }
+
+  if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+    loadAudioDevices();
+  }
+
+  function resampleAndCollect(inputFloat32, inSampleRate) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const ratio = inSampleRate / TARGET_SAMPLE_RATE;
+    const outLength = Math.floor(inputFloat32.length / ratio);
+
+    for (let i = 0; i < outLength; i++) {
+      const srcPos = i * ratio;
+      const srcIndex = Math.floor(srcPos);
+      const frac = srcPos - srcIndex;
+      const s0 = inputFloat32[srcIndex] || 0;
+      const s1 = inputFloat32[srcIndex + 1] || s0;
+      const sample = s0 + (s1 - s0) * frac;
+
+      const clamped = Math.max(-1, Math.min(1, sample));
+      const s16 = clamped < 0 ? clamped * 0x8000 : clamped * 0x7FFF;
+      pcmBuffer[pcmBufferIndex++] = s16;
+
+      if (pcmBufferIndex >= CHUNK_SIZE) {
+        ws.send(pcmBuffer.buffer);
+        pcmBuffer = new Int16Array(CHUNK_SIZE);
+        pcmBufferIndex = 0;
+      }
+    }
+  }
+
+  function updateMeter() {
+    if (!analyserNode || !isRecording) return;
+    const data = new Uint8Array(analyserNode.frequencyBinCount);
+    analyserNode.getByteTimeDomainData(data);
+
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      const val = (data[i] - 128) / 128;
+      sum += val * val;
+    }
+    const rms = Math.sqrt(sum / data.length);
+    const db = 20 * Math.log10(Math.max(rms, 0.0001));
+    const percent = Math.min(100, Math.max(0, (db + 50) * 2));
+
+    levelBar.style.width = percent + "%";
+    levelVal.textContent = Math.round(db) + " dB";
+    animFrameId = requestAnimationFrame(updateMeter);
+  }
+
+  async function startRecording() {
+    clearError();
+    const wsTargetUrl = wsInput.value.trim();
+    if (!wsTargetUrl) {
+      showError("WebSocket URL が設定されていません。");
+      return;
+    }
+
+    try {
+      statusLabel.textContent = "接続中…";
+      ws = new WebSocket(wsTargetUrl);
+      ws.binaryType = "arraybuffer";
+
+      ws.onopen = async () => {
+        ws.send(JSON.stringify({ sr: TARGET_SAMPLE_RATE, format: "pcm_s16le", channels: 1 }));
+        statusDot.className = "status-dot connected";
+        statusLabel.textContent = "音声準備中…";
+
+        const constraints = {
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        };
+        const selectedDev = audioSourceSelect.value;
+        if (selectedDev) {
+          constraints.audio.deviceId = { exact: selectedDev };
+        }
+
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createMediaStreamSource(mediaStream);
+
+        analyserNode = audioContext.createAnalyser();
+        analyserNode.fftSize = 256;
+        source.connect(analyserNode);
+
+        const bufferSize = 2048;
+        processorNode = audioContext.createScriptProcessor(bufferSize, 1, 1);
+        processorNode.onaudioprocess = (e) => {
+          if (!isRecording) return;
+          const inputData = e.inputBuffer.getChannelData(0);
+          resampleAndCollect(inputData, audioContext.sampleRate);
+        };
+
+        source.connect(processorNode);
+        processorNode.connect(audioContext.destination);
+
+        isRecording = true;
+        btnToggle.classList.add("recording");
+        btnText.textContent = "マイク停止";
+        statusDot.className = "status-dot active";
+        statusLabel.textContent = "マイク配信中 (送信中)";
+
+        loadAudioDevices();
+        updateMeter();
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const ev = JSON.parse(event.data);
+          if (ev.type === "partial") {
+            partialText.classList.remove("idle");
+            partialText.textContent = ev.text;
+            const c = document.createElement("span");
+            c.className = "caret";
+            partialText.appendChild(c);
+
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+              partialText.classList.add("idle");
+            }, 4000);
+          } else if (ev.type === "final") {
+            const item = document.createElement("div");
+            item.className = "feed-item";
+
+            const badge = document.createElement("span");
+            badge.className = "badge";
+            badge.textContent = ev.lang || "ja";
+            if (ev.speaker) badge.textContent += ` · ${ev.speaker}`;
+
+            const text = document.createElement("span");
+            text.textContent = ev.text;
+
+            item.appendChild(badge);
+            item.appendChild(text);
+            finalFeed.prepend(item);
+
+            if (ev.latency_ms != null) {
+              latVal.textContent = Math.round(ev.latency_ms);
+            }
+          } else if (ev.type === "translation") {
+            const first = finalFeed.firstElementChild;
+            if (first) {
+              const tr = document.createElement("div");
+              tr.style.fontSize = "0.8rem";
+              tr.style.color = "var(--paper-dim)";
+              tr.style.marginTop = "0.2rem";
+              tr.textContent = `→ [${ev.lang}] ${ev.text}`;
+              first.appendChild(tr);
+            }
+          } else if (ev.type === "error") {
+            showError("サーバーエラー: " + ev.message);
+            stopRecording();
+          }
+        } catch (e) {
+          console.warn("メッセージパースエラー:", e);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error("WS エラー:", err);
+        showError("WebSocket 接続エラーが発生しました。接続先や証明書を確認してください。");
+        stopRecording();
+      };
+
+      ws.onclose = () => {
+        if (isRecording) {
+          showError("WebSocket 接続が切断されました。");
+        }
+        stopRecording();
+      };
+
+    } catch (err) {
+      console.error("マイク起動失敗:", err);
+      let errorMsg = "マイクの取得に失敗しました: " + err.message;
+      if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+        errorMsg = "マイクの使用がブラウザでブロックされています。アドレスバーの鍵アイコン等からマイクアクセスを許可してください。";
+      } else if (!window.isSecureContext) {
+        errorMsg = "セキュリティ制限（Secure Context）により、HTTPS 以外からのマイク利用が制限されています。HTTPS 経由でアクセスしてください。";
+      }
+      showError(errorMsg);
+      stopRecording();
+    }
+  }
+
+  function stopRecording() {
+    isRecording = false;
+    btnToggle.classList.remove("recording");
+    btnText.textContent = "マイク開始";
+    statusDot.className = "status-dot";
+    statusLabel.textContent = "待機中 (停止)";
+
+    if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = null; }
+    levelBar.style.width = "0%";
+    levelVal.textContent = "0 dB";
+
+    if (processorNode) {
+      try { processorNode.disconnect(); } catch (e) {}
+      processorNode = null;
+    }
+    if (analyserNode) {
+      try { analyserNode.disconnect(); } catch (e) {}
+      analyserNode = null;
+    }
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
+    }
+    if (audioContext && audioContext.state !== "closed") {
+      audioContext.close();
+      audioContext = null;
+    }
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      ws.close();
+      ws = null;
+    }
+  }
+
+  btnToggle.addEventListener("click", () => {
+    if (isRecording) stopRecording();
+    else startRecording();
+  });
+
+  window.addEventListener("beforeunload", () => {
+    if (isRecording) stopRecording();
+  });
+
+
+  // --- スタイル & 設定状態オブジェクト ---
+  let currentStyle = {
+    font: "'Zen Kaku Gothic New', sans-serif",
+    size: 42,
+    color: "#ffffff",
+    strokeColor: "#000000",
+    strokeWidth: 3,
+    bgColor: "#000000",
+    bgOpacity: 0,
+    radius: 8,
+    align: "center",
+    bottom: 4,
+    showTrans: true
+  };
+
+  async function loadConfigAndStyle() {
+    // 1. ASR / 翻訳設定のロード
+    try {
+      const res = await fetch("/config");
+      if (res.ok) {
+        const cfg = await res.json();
+        if (cfg.lang) document.getElementById("cfg-lang").value = cfg.lang;
+        if (cfg.translate && cfg.translate.length > 0) {
+          document.getElementById("cfg-trans-enable").checked = true;
+          document.getElementById("trans-lang-group").style.display = "flex";
+          document.getElementById("cfg-trans-targets").value = cfg.translate.join(",");
+        }
+        if (cfg.punctuate != null) {
+          document.getElementById("cfg-punct").checked = cfg.punctuate;
+        }
+      }
+    } catch (e) {
+      console.warn("config load error:", e);
+    }
+
+    // 2. OBS スタイルのロード
+    try {
+      const res = await fetch("/overlay-style");
+      if (res.ok) {
+        const loaded = await res.json();
+        currentStyle = Object.assign(currentStyle, loaded);
+        applyStyleToInputs();
+      }
+    } catch (e) {
+      console.warn("style load error:", e);
+    }
+
+    updatePreview();
+  }
+
+  function applyStyleToInputs() {
+    document.getElementById("style-font").value = currentStyle.font;
+    document.getElementById("style-size").value = currentStyle.size;
+    document.getElementById("val-size").textContent = currentStyle.size;
+    document.getElementById("style-color").value = currentStyle.color;
+    document.getElementById("style-stroke-color").value = currentStyle.strokeColor;
+    document.getElementById("style-stroke-width").value = currentStyle.strokeWidth;
+    document.getElementById("val-stroke").textContent = currentStyle.strokeWidth;
+    document.getElementById("style-bg-color").value = currentStyle.bgColor;
+    document.getElementById("style-bg-opacity").value = currentStyle.bgOpacity;
+    document.getElementById("val-opacity").textContent = currentStyle.bgOpacity;
+    document.getElementById("style-radius").value = currentStyle.radius;
+    document.getElementById("val-radius").textContent = currentStyle.radius;
+    document.getElementById("style-align").value = currentStyle.align;
+    document.getElementById("style-bottom").value = currentStyle.bottom;
+    document.getElementById("val-bottom").textContent = currentStyle.bottom;
+    document.getElementById("style-show-trans").checked = currentStyle.showTrans;
+  }
+
+  function hexToRgba(hex, alphaPercent) {
+    hex = (hex || "#000000").replace("#", "");
+    if (hex.length === 3) hex = hex.split("").map(c => c+c).join("");
+    const r = parseInt(hex.substring(0, 2), 16) || 0;
+    const g = parseInt(hex.substring(2, 4), 16) || 0;
+    const b = parseInt(hex.substring(4, 6), 16) || 0;
+    return `rgba(${r}, ${g}, ${b}, ${(alphaPercent || 0) / 100})`;
+  }
+
+  function generateTextShadow(color, width) {
+    if (width <= 0) return "none";
+    let s = [];
+    for (let x = -width; x <= width; x++) {
+      for (let y = -width; y <= width; y++) {
+        if (x !== 0 || y !== 0) {
+          s.push(`${x}px ${y}px 0 ${color}`);
+        }
+      }
+    }
+    s.push(`0 0 ${width * 2}px ${color}`);
+    return s.join(", ");
+  }
+
+  function updatePreview() {
+    const box = document.getElementById("preview-box");
+    const fin = document.getElementById("preview-final");
+    const par = document.getElementById("preview-partial");
+    const tr = document.getElementById("preview-trans");
+
+    currentStyle.font = document.getElementById("style-font").value;
+    currentStyle.size = parseInt(document.getElementById("style-size").value);
+    currentStyle.color = document.getElementById("style-color").value;
+    currentStyle.strokeColor = document.getElementById("style-stroke-color").value;
+    currentStyle.strokeWidth = parseInt(document.getElementById("style-stroke-width").value);
+    currentStyle.bgColor = document.getElementById("style-bg-color").value;
+    currentStyle.bgOpacity = parseInt(document.getElementById("style-bg-opacity").value);
+    currentStyle.radius = parseInt(document.getElementById("style-radius").value);
+    currentStyle.align = document.getElementById("style-align").value;
+    currentStyle.bottom = parseInt(document.getElementById("style-bottom").value);
+    currentStyle.showTrans = document.getElementById("style-show-trans").checked;
+
+    document.getElementById("val-size").textContent = currentStyle.size;
+    document.getElementById("val-stroke").textContent = currentStyle.strokeWidth;
+    document.getElementById("val-opacity").textContent = currentStyle.bgOpacity;
+    document.getElementById("val-radius").textContent = currentStyle.radius;
+    document.getElementById("val-bottom").textContent = currentStyle.bottom;
+
+    box.style.fontFamily = currentStyle.font;
+    box.style.fontSize = Math.min(28, currentStyle.size * 0.72) + "px";
+    box.style.color = currentStyle.color;
+    box.style.textAlign = currentStyle.align;
+    box.style.textShadow = generateTextShadow(currentStyle.strokeColor, currentStyle.strokeWidth);
+    box.style.backgroundColor = hexToRgba(currentStyle.bgColor, currentStyle.bgOpacity);
+    box.style.borderRadius = currentStyle.radius + "px";
+    box.style.padding = currentStyle.bgOpacity > 0 ? "0.6rem 1rem" : "0";
+
+    tr.style.display = currentStyle.showTrans ? "block" : "none";
+  }
+
+  // 設定入力イベント
+  document.querySelectorAll("#panel-settings input, #panel-settings select").forEach(el => {
+    el.addEventListener("input", updatePreview);
+  });
+
+  document.getElementById("cfg-trans-enable").addEventListener("change", (e) => {
+    document.getElementById("trans-lang-group").style.display = e.target.checked ? "flex" : "none";
+  });
+
+  async function saveAllSettings() {
+    const saveMsg = document.getElementById("save-msg");
+
+    // 1. ASR & 翻訳設定
+    const lang = document.getElementById("cfg-lang").value;
+    const transEnabled = document.getElementById("cfg-trans-enable").checked;
+    const transTargets = transEnabled 
+      ? document.getElementById("cfg-trans-targets").value.split(",").map(s => s.trim()).filter(Boolean)
+      : [];
+    const punct = document.getElementById("cfg-punct").checked;
+
+    const asrPayload = {
+      lang: lang || null,
+      translate: transTargets,
+      punctuate: punct
+    };
+
+    try {
+      await fetch("/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(asrPayload)
+      });
+    } catch (e) {
+      console.warn("ASR config save error:", e);
+    }
+
+    // 2. OBS スタイル設定
+    try {
+      const res = await fetch("/overlay-style", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(currentStyle)
+      });
+      if (res.ok) {
+        saveMsg.style.display = "block";
+        setTimeout(() => { saveMsg.style.display = "none"; }, 3500);
+      }
+    } catch (e) {
+      alert("スタイルの保存に失敗しました: " + e.message);
+    }
+  }
+
+  async function resetSession() {
+    if (!confirm("文字起こし履歴とセッションキャッシュをリセットしますか？")) return;
+    try {
+      const res = await fetch("/reset", { method: "POST" });
+      if (res.ok) alert("セッションをリセットしました。");
+    } catch (e) {
+      alert("リセットに失敗しました: " + e.message);
+    }
+  }
+
+  loadConfigAndStyle();
+</script>
+
+</body>
+</html>

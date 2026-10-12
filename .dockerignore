@@ -1,0 +1,13 @@
+.git
+.github
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.venv
+scratch
+logs
+testdata
+demo
+models/*.tar.bz2
+models/*.tar.gz

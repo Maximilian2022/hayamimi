@@ -1,0 +1,33 @@
+services:
+  hayamimi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hayamimi:latest
+    container_name: hayamimi_app
+    restart: unless-stopped
+    ports:
+      - "8833:8833" # OBS向けローカルHTTP / SSE
+      - "8766:8766" # WebSocket音声直接受信 (LAN内/開発用)
+    volumes:
+      - ./models:/app/models
+      - ./scripts:/app/scripts:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    # 必要に応じて追加のASR引数をcommandで指定可能
+    # 例: command: ["--minimal", "--translate", "en"]
+    command: []
+
+  proxy:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: hayamimi-proxy:latest
+    container_name: hayamimi_proxy
+    restart: unless-stopped
+    ports:
+      - "8843:8843" # 外部アクセス用 HTTPS / WSS (Chromeマイク入力 & 外部OBS)
+    volumes:
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - hayamimi

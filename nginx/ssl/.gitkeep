@@ -1,0 +1,1 @@
+# Keep nginx/ssl directory in git without tracking actual certificates/keys
