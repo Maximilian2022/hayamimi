@@ -72,6 +72,7 @@ $LogFile = Join-Path $LogsDir "launcher.log"
 $ContainerLogFile = Join-Path $LogsDir "container.log"
 
 $ContainerName = "hayamimi_app"
+$LauncherVersion = "v1.2-diag (2026-10-13 01:50)"
 $ImageName = "hayamimi:latest"
 $MicUrl = "http://localhost:8833/mic"
 $ObsUrl = "http://localhost:8833/"
@@ -813,6 +814,22 @@ function Start-HayamimiContainer {
         Write-AppLog "※ 進行状況は下のログおよび logs/container.log に随時表示されます。" "INFO"
         Write-AppLog "サーバー初期化とポート8833の待機を確認しています..." "INFO"
 
+        # 起動直後のコンテナ状態を診断ログ出力
+        try {
+            $pinfoDiag = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoDiag.FileName = $script:WslcCmd
+            $pinfoDiag.Arguments = "inspect $ContainerName"
+            $pinfoDiag.RedirectStandardOutput = $true
+            $pinfoDiag.UseShellExecute = $false
+            $pinfoDiag.CreateNoWindow = $true
+            $procDiag = [System.Diagnostics.Process]::Start($pinfoDiag)
+            $diagRaw = $procDiag.StandardOutput.ReadToEnd()
+            $procDiag.WaitForExit(1000) | Out-Null
+            if ($diagRaw -match '"Status"\s*:\s*"([^"]+)"') {
+                Write-AppLog "コンテナ初期ステータス: $($Matches[1])" "INFO"
+            }
+        } catch {}
+
         Update-ContainerLogFile -EchoToGui $true
         $script:HealthCheckAttempts = 0
         $script:ContainerDeadCount = 0
@@ -1105,26 +1122,54 @@ $healthTimer.Add_Tick({
             $healthTimer.Stop()
             Update-ContainerLogFile -EchoToGui $true
             Set-UIState "コンテナ異常停止" $brushRed $true $false
-            Write-AppLog "エラー: コンテナが異常終了しました。ログ (logs/container.log) をご確認ください。" "ERROR"
+            Write-AppLog "==========================================" "ERROR"
+            Write-AppLog "エラー: コンテナ ($ContainerName) が異常終了しました。" "ERROR"
 
-            # コンテナの最終ログを取得してGUIに表示 (原因究明を容易にする)
+            # 1. コンテナの終了状態 (ExitCode / State) を取得
+            try {
+                $pinfoInsp = [System.Diagnostics.ProcessStartInfo]::new()
+                $pinfoInsp.FileName = $script:WslcCmd
+                $pinfoInsp.Arguments = "inspect $ContainerName"
+                $pinfoInsp.RedirectStandardOutput = $true
+                $pinfoInsp.UseShellExecute = $false
+                $pinfoInsp.CreateNoWindow = $true
+                $procInsp = [System.Diagnostics.Process]::Start($pinfoInsp)
+                $inspRaw = $procInsp.StandardOutput.ReadToEnd()
+                $procInsp.WaitForExit(2000) | Out-Null
+                if ($inspRaw) {
+                    if ($inspRaw -match '"ExitCode"\s*:\s*(\d+)') {
+                        Write-AppLog "コンテナ終了コード (ExitCode): $($Matches[1])" "ERROR"
+                    }
+                    if ($inspRaw -match '"OOMKilled"\s*:\s*(true|false)') {
+                        Write-AppLog "メモリ不足強制停止 (OOMKilled): $($Matches[1])" "ERROR"
+                    }
+                }
+            } catch {}
+
+            # 2. コンテナの標準エラー・標準出力ログを取得して表示
             try {
                 $pinfoFinal = [System.Diagnostics.ProcessStartInfo]::new()
                 $pinfoFinal.FileName = $script:WslcCmd
                 $pinfoFinal.Arguments = "logs $ContainerName"
                 $pinfoFinal.RedirectStandardOutput = $true
+                $pinfoFinal.RedirectStandardError = $true
                 $pinfoFinal.UseShellExecute = $false
                 $pinfoFinal.CreateNoWindow = $true
                 $procFinal = [System.Diagnostics.Process]::Start($pinfoFinal)
                 $finalRaw = $procFinal.StandardOutput.ReadToEnd()
+                $finalErr = $procFinal.StandardError.ReadToEnd()
                 $procFinal.WaitForExit(2000) | Out-Null
-                if ($finalRaw) {
-                    $tailLines = ($finalRaw -split "[\r\n]+" | Where-Object { $_.Trim() } | Select-Object -Last 10) -join "`r`n"
+                
+                $combinedLogs = ($finalRaw + "`r`n" + $finalErr).Trim()
+                if ($combinedLogs) {
+                    $tailLines = ($combinedLogs -split "[\r\n]+" | Where-Object { $_.Trim() } | Select-Object -Last 25) -join "`r`n"
                     if ($tailLines) {
-                        Write-AppLog "【コンテナ終了時の最終ログ】`r`n$tailLines" "ERROR"
+                        Write-AppLog "【コンテナ終了時の最終出力ログ】:`r`n$tailLines" "ERROR"
                     }
                 }
             } catch {}
+            Write-AppLog "詳細ログは logs/container.log および logs/launcher.log をご確認ください。" "ERROR"
+            Write-AppLog "==========================================" "ERROR"
             return
         }
     }
@@ -1363,7 +1408,7 @@ if (-not (Test-Path $ContainerLogFile)) {
 
 # 初期化処理
 Write-AppLog "=========================================="
-Write-AppLog "hayamimi ランチャーを起動しました ($($runtimeBadge.Text))."
+Write-AppLog "hayamimi ランチャー $LauncherVersion を起動しました ($($runtimeBadge.Text))."
 Write-AppLog "ランチャーログ: $LogFile"
 Write-AppLog "コンテナログ:   $ContainerLogFile"
 Write-AppLog "WSL Containers (WSL3) 環境を確認中..."
