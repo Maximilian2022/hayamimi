@@ -1,4 +1,5 @@
-﻿[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+﻿$version = "GUI v1.0.0"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
 # --- コンソール & Windows Terminal の完全非表示化 (SW_HIDE) ---
@@ -72,7 +73,6 @@ $LogFile = Join-Path $LogsDir "launcher.log"
 $ContainerLogFile = Join-Path $LogsDir "container.log"
 
 $ContainerName = "hayamimi_app"
-$LauncherVersion = "v1.2-diag (2026-10-13 01:50)"
 $ImageName = "hayamimi:latest"
 $MicUrl = "http://localhost:8833/mic"
 $ObsUrl = "http://localhost:8833/"
@@ -268,9 +268,14 @@ function Update-ContainerLogFile {
                     <TextBlock Text="WSL Containers (WSL 3.0) リアルタイム音声認識 &amp; 多言語同時翻訳" 
                                FontSize="12" Foreground="#8C93A0" Margin="2,4,0,0"/>
                 </StackPanel>
-                <Border Grid.Column="1" Background="#1A202C" CornerRadius="12" Padding="10,4" VerticalAlignment="Center">
-                    <TextBlock x:Name="RuntimeBadge" Text="WSL3 Native" FontSize="11" Foreground="#4FD1C5" FontWeight="SemiBold"/>
-                </Border>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Background="#242C3D" CornerRadius="12" Padding="10,4" Margin="0,0,8,0" BorderBrush="#3A465D" BorderThickness="1">
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.0.0" FontSize="11" Foreground="#F6AD55" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                    </Border>
+                    <Border Background="#1A202C" CornerRadius="12" Padding="10,4">
+                        <TextBlock x:Name="RuntimeBadge" Text="WSL3 Native" FontSize="11" Foreground="#4FD1C5" FontWeight="SemiBold"/>
+                    </Border>
+                </StackPanel>
             </Grid>
         </Border>
 
@@ -468,6 +473,11 @@ $window.Dispatcher.Add_UnhandledException({
 $statusLed = $window.FindName("StatusLed")
 $statusText = $window.FindName("StatusText")
 $runtimeBadge = $window.FindName("RuntimeBadge")
+$versionBadge = $window.FindName("VersionBadge")
+if ($versionBadge) {
+    $versionBadge.Text = $version
+}
+$window.Title = "hayamimi - WSL3 ランチャー ($version)"
 $btnStart = $window.FindName("BtnStart")
 $btnStop = $window.FindName("BtnStop")
 $btnUpdateApp = $window.FindName("BtnUpdateApp")
@@ -1428,7 +1438,7 @@ if (-not (Test-Path $ContainerLogFile)) {
 
 # 初期化処理
 Write-AppLog "=========================================="
-Write-AppLog "hayamimi ランチャー $LauncherVersion を起動しました ($($runtimeBadge.Text))."
+Write-AppLog "hayamimi ランチャー $version を起動しました ($($runtimeBadge.Text))."
 Write-AppLog "ランチャーログ: $LogFile"
 Write-AppLog "コンテナログ:   $ContainerLogFile"
 Write-AppLog "WSL Containers (WSL3) 環境を確認中..."
