@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.2.1"
-$script:AppVersion = "1.2.1"
+$version = "GUI v1.2.2"
+$script:AppVersion = "1.2.2"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -8,10 +8,41 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 try {
     $win32Def = @"
 using System;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+
 public class LauncherConsoleHelper {
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+
+public class LauncherProcessPump {
+    private readonly ConcurrentQueue<string> _stdoutQueue = new ConcurrentQueue<string>();
+    private readonly ConcurrentQueue<string> _stderrQueue = new ConcurrentQueue<string>();
+
+    public LauncherProcessPump(Process proc) {
+        proc.OutputDataReceived += (s, e) => {
+            if (e.Data != null) _stdoutQueue.Enqueue(e.Data);
+        };
+        proc.ErrorDataReceived += (s, e) => {
+            if (e.Data != null) _stderrQueue.Enqueue(e.Data);
+        };
+        proc.BeginOutputReadLine();
+        proc.BeginErrorReadLine();
+    }
+
+    public bool TryDequeueStdout(out string line) {
+        return _stdoutQueue.TryDequeue(out line);
+    }
+
+    public bool TryDequeueStderr(out string line) {
+        return _stderrQueue.TryDequeue(out line);
+    }
+
+    public bool HasPending {
+        get { return !_stdoutQueue.IsEmpty || !_stderrQueue.IsEmpty; }
+    }
 }
 "@
     Add-Type -TypeDefinition $win32Def -ErrorAction SilentlyContinue
@@ -174,69 +205,38 @@ function Write-AppLogBatch {
     }
 }
 
-# UI メッセージループ維持 & 外部プロセス逐次ロギング待機関数 (Windows「応答なし」完全防止)
+# UI メッセージループ維持 & 外部プロセス非同期逐次ロギング待機関数 (パイプ詰まりデッドロック完全根絶)
 function Wait-ProcessWithUiPump {
     param(
         [System.Diagnostics.Process]$Proc,
         [string]$LogPrefix = "[処理中]"
     )
 
-    $stdOutReader = $Proc.StandardOutput
-    $stdErrReader = $Proc.StandardError
+    $pump = [LauncherProcessPump]::new($Proc)
 
-    while (-not $Proc.HasExited) {
+    while (-not $Proc.HasExited -or $pump.HasPending) {
         # WPF UI メッセージループを明示的に実行し、OSからの「応答なし」判定を根絶
         try {
             [System.Windows.Threading.Dispatcher]::CurrentDispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
         } catch {}
 
-        # 逐次出力を安全に読み取ってGUIログへリアルタイム反映
-        try {
-            if ($stdOutReader -and -not $stdOutReader.EndOfStream) {
-                $line = $stdOutReader.ReadLine()
-                if ($line -and $line.Trim()) {
-                    Write-AppLog "$LogPrefix $($line.Trim())" "INFO"
-                }
+        # 逐次出力を安全に非ブロッキングで読み取ってGUIログへリアルタイム反映
+        $line = ""
+        while ($pump.TryDequeueStdout([ref]$line)) {
+            if ($line -and $line.Trim()) {
+                Write-AppLog "$LogPrefix $($line.Trim())" "INFO"
             }
-        } catch {}
+        }
 
-        try {
-            if ($stdErrReader -and -not $stdErrReader.EndOfStream) {
-                $errLine = $stdErrReader.ReadLine()
-                if ($errLine -and $errLine.Trim()) {
-                    Write-AppLog "$LogPrefix $errLine" "INFO"
-                }
+        $errLine = ""
+        while ($pump.TryDequeueStderr([ref]$errLine)) {
+            if ($errLine -and $errLine.Trim()) {
+                Write-AppLog "$LogPrefix $($errLine.Trim())" "INFO"
             }
-        } catch {}
+        }
 
         Start-Sleep -Milliseconds 40
     }
-
-    # 終了後の未読出力を読み切る
-    try {
-        if ($stdOutReader) {
-            $remaining = $stdOutReader.ReadToEnd()
-            if ($remaining) {
-                $lines = $remaining -split "[\r\n]+"
-                foreach ($rLine in $lines) {
-                    if ($rLine.Trim()) {
-                        Write-AppLog "$LogPrefix $($rLine.Trim())" "INFO"
-                    }
-                }
-            }
-        }
-        if ($stdErrReader) {
-            $errRemaining = $stdErrReader.ReadToEnd()
-            if ($errRemaining) {
-                $errLines = $errRemaining -split "[\r\n]+"
-                foreach ($eLine in $errLines) {
-                    if ($eLine.Trim()) {
-                        Write-AppLog "$LogPrefix $($eLine.Trim())" "INFO"
-                    }
-                }
-            }
-        }
-    } catch {}
 }
 
 # --- 高精度クラウド同期検出 (レジストリ / Cloud Filter 属性 / パス名非依存) ---
@@ -307,6 +307,14 @@ function Protect-ModelFiles {
     }
 }
 
+function Test-ModelsReady {
+    $modelsDir = Join-Path $ProjectRoot "models"
+    $coreRzKey = Join-Path $modelsDir "sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17\tokens.txt"
+    $coreLidKey = Join-Path $modelsDir "sherpa-onnx-whisper-tiny\tiny-tokens.txt"
+    return (Test-Path $coreRzKey) -and ((Get-Item $coreRzKey -Force).Length -gt 0) -and `
+           (Test-Path $coreLidKey) -and ((Get-Item $coreLidKey -Force).Length -gt 0)
+}
+
 # --- 案3: 自律セルフヒーリング (モデル実体サイズ検証 & 自動修復) ---
 function Ensure-ModelsIntegrity {
     <#
@@ -321,13 +329,7 @@ function Ensure-ModelsIntegrity {
             New-Item -ItemType Directory -Path $modelsDir -Force | Out-Null
         }
 
-        $coreRzKey = Join-Path $modelsDir "sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17\tokens.txt"
-        $coreLidKey = Join-Path $modelsDir "sherpa-onnx-whisper-tiny\tiny-tokens.txt"
-
-        $isRzOk = (Test-Path $coreRzKey) -and ((Get-Item $coreRzKey -Force).Length -gt 0)
-        $isLidOk = (Test-Path $coreLidKey) -and ((Get-Item $coreLidKey -Force).Length -gt 0)
-
-        if ($isRzOk -and $isLidOk) {
+        if (Test-ModelsReady) {
             Protect-ModelFiles
             if (-not $SilentIfReady) {
                 Write-AppLog "✔ Core AI モデル実体を確認しました (完全ポータブル保持)" "INFO"
@@ -359,10 +361,16 @@ function Ensure-ModelsIntegrity {
             $procDl = [System.Diagnostics.Process]::Start($pinfoDl)
             Wait-ProcessWithUiPump -Proc $procDl -LogPrefix "[モデル自己修復]"
 
-            Protect-ModelFiles
-            Write-AppLog "✔ AIモデルの自己修復が完了しました！" "INFO"
-            Set-UIState "停止中" $brushGray $true $false
-            return $true
+            if ($procDl.ExitCode -eq 0) {
+                Protect-ModelFiles
+                Write-AppLog "✔ AIモデルの自己修復が完了しました！" "INFO"
+                Set-UIState "停止中" $brushGray $true $false
+                return $true
+            } else {
+                Write-AppLog "❌ AIモデルの自己修復が完了しませんでした (終了コード: $($procDl.ExitCode))。" "WARN"
+                Set-UIState "停止中" $brushGray $true $false
+                return $false
+            }
         } else {
             Write-AppLog "Python 環境が準備されていないため、モデル自己修復をスキップしました。" "WARN"
             return $false
@@ -2828,7 +2836,14 @@ if ($initMode -eq "Wslc") {
 }
 Set-EngineMode $initMode
 Update-GpuDeviceBadge
-Ensure-ModelsIntegrity -SilentIfReady $true | Out-Null
+$script:NeedModelRepairOnStartup = $false
+if (Test-ModelsReady) {
+    Protect-ModelFiles
+    Write-AppLog "✔ Core AI モデル実体を確認しました (完全ポータブル保持)" "INFO"
+} else {
+    Write-AppLog "⚠ Core AI モデルが未配置です。ウィンドウ描画完了後に自動修復を開始します..." "WARN"
+    $script:NeedModelRepairOnStartup = $true
+}
 
 Write-AppLog "=========================================="
 Write-AppLog "hayamimi ランチャー $version を起動しました ($($runtimeBadge.Text))."
@@ -2899,6 +2914,18 @@ $updateCheckTimer.Add_Tick({
 })
 $updateCheckTimer.Start()
 
+# 起動時モデル自己修復タイマー (ウィンドウ描画後 400ms に非同期実行)
+$modelRepairTimer = [System.Windows.Threading.DispatcherTimer]::new()
+$modelRepairTimer.Interval = [TimeSpan]::FromMilliseconds(400)
+$modelRepairTimer.Add_Tick({
+    $modelRepairTimer.Stop()
+    if ($script:NeedModelRepairOnStartup) {
+        $script:NeedModelRepairOnStartup = $false
+        Ensure-ModelsIntegrity | Out-Null
+    }
+})
+$modelRepairTimer.Start()
+
 $pollTimer.Start()
 
 # ウィンドウ表示
@@ -2908,4 +2935,7 @@ $pollTimer.Stop()
 $healthTimer.Stop()
 if ($updateCheckTimer -and $updateCheckTimer.IsEnabled) {
     $updateCheckTimer.Stop()
+}
+if ($modelRepairTimer -and $modelRepairTimer.IsEnabled) {
+    $modelRepairTimer.Stop()
 }

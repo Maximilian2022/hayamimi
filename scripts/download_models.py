@@ -66,6 +66,7 @@ def _human(n: int) -> str:
 def _download_to(url: str, dest: str, max_retries: int = 3) -> None:
     """Stream url to dest with a progress print. Overwrites if dest exists."""
     import time
+    is_tty = sys.stdout.isatty()
     for attempt in range(1, max_retries + 1):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "hayamimi-download-models/1.0"})
@@ -75,6 +76,8 @@ def _download_to(url: str, dest: str, max_retries: int = 3) -> None:
                 tmp = dest + ".part"
                 read = 0
                 chunk = 1 << 20
+                last_bucket = -10
+                last_non_pct_mb = 0
                 with open(tmp, "wb") as f:
                     while True:
                         buf = resp.read(chunk)
@@ -84,16 +87,30 @@ def _download_to(url: str, dest: str, max_retries: int = 3) -> None:
                         read += len(buf)
                         if total:
                             pct = 100 * read / total
-                            print(f"\r  {os.path.basename(dest)}: {pct:5.1f}% ({_human(read)}/{_human(total)})",
-                                  end="", flush=True)
+                            if is_tty:
+                                print(f"\r  {os.path.basename(dest)}: {pct:5.1f}% ({_human(read)}/{_human(total)})",
+                                      end="", flush=True)
+                            else:
+                                # GUIランチャー等のパイプ受け: 5%刻み、または完了時に改行付きで出力してデッドロック防止&進捗可視化
+                                bucket = int(pct // 5) * 5
+                                if bucket > last_bucket or read >= total:
+                                    last_bucket = bucket
+                                    print(f"  {os.path.basename(dest)}: {pct:5.1f}% ({_human(read)}/{_human(total)})", flush=True)
                         else:
-                            print(f"\r  {os.path.basename(dest)}: {_human(read)}", end="", flush=True)
-                print()
+                            if is_tty:
+                                print(f"\r  {os.path.basename(dest)}: {_human(read)}", end="", flush=True)
+                            else:
+                                cur_mb = read // (10 * 1024 * 1024)
+                                if cur_mb > last_non_pct_mb:
+                                    last_non_pct_mb = cur_mb
+                                    print(f"  {os.path.basename(dest)}: {_human(read)}", flush=True)
+                if is_tty:
+                    print()
                 os.replace(tmp, dest)
                 return
         except Exception as e:
             if attempt < max_retries:
-                print(f"\n  [WARN] ダウンロードが中断されました ({e})。再試行中 ({attempt}/{max_retries})...")
+                print(f"\n  [WARN] ダウンロードが中断されました ({e})。再試行中 ({attempt}/{max_retries})...", flush=True)
                 time.sleep(2)
             else:
                 raise
@@ -138,7 +155,7 @@ def download_and_extract_tarbz2(url: str, dest_dir: str, label: str) -> None:
         print(f"[warn] {label}: {target} exists but contains no valid model files. Re-fetching...")
         shutil.rmtree(target, ignore_errors=True)
     print(f"[get ] {label}")
-    tmp = os.path.join(MODELS_DIR, f".{dest_dir}.tar.bz2.part")
+    tmp = os.path.join(MODELS_DIR, f".{dest_dir}.tar.bz2")
     os.makedirs(MODELS_DIR, exist_ok=True)
     _download_to(url, tmp)
     print(f"  extracting -> {target}")
@@ -177,7 +194,7 @@ def extract_members_only(url: str, dest_dir: str, wanted_basenames: set, label: 
         print(f"  {target} is incomplete (has {sorted(have)}, "
               f"needs {sorted(wanted_basenames)}): re-fetching")
     print(f"[get ] {label}")
-    tmp = os.path.join(MODELS_DIR, f".{dest_dir}.tar.bz2.part")
+    tmp = os.path.join(MODELS_DIR, f".{dest_dir}.tar.bz2")
     os.makedirs(target, exist_ok=True)
     _download_to(url, tmp)
     print(f"  extracting (selected files) -> {target}")
