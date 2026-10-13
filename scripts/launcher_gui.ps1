@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.2.3"
-$script:AppVersion = "1.2.3"
+﻿$version = "GUI v1.2.4"
+$script:AppVersion = "1.2.4"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -1606,7 +1606,7 @@ function Start-PythonVenvApp {
     $script:LastPythonLogByteOffset = 0L
 
     $transScript = Join-Path $ProjectRoot "scripts\realtime_transcribe.py"
-    $cmdArgs = "/s /c `"set PYTHONDONTWRITEBYTECODE=1 && `"$venvPython`" -B `"$transScript`" --input ws --serve 8833 --ws-host 127.0.0.1 --ws-port 8766 > `"$script:PythonLogFile`" 2>&1`""
+    $cmdArgs = "/s /c `"set PYTHONDONTWRITEBYTECODE=1 && `"$venvPython`" -B `"$transScript`" --input ws --serve 8833 --ws-host 0.0.0.0 --ws-port 8766 > `"$script:PythonLogFile`" 2>&1`""
 
     $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
     $pinfo.FileName = "cmd.exe"
@@ -2603,34 +2603,30 @@ $healthTimer.Add_Tick({
         }
     }
 
-    # 3. サーバー疎通確認 (高速 TCP ソケット判定 + プロキシバイパス HTTP 応答確認)
+    # 3. サーバー疎通確認 (HTTP 8833 および WebSocket 8766 の双方の開放を確認)
     $ready = $false
     try {
-        # 127.0.0.1:8833 の TCP ポート疎通を直接確認 (WPADプロキシ探索・IPv6解決遅延を完全排除)
-        $tcp = [System.Net.Sockets.TcpClient]::new()
-        $asyncRes = $tcp.BeginConnect("127.0.0.1", 8833, $null, $null)
-        $connected = $asyncRes.AsyncWaitHandle.WaitOne(600, $false)
-        if ($connected) {
-            $tcp.EndConnect($asyncRes)
-            $tcp.Close()
+        # 8833 (HTTP) のソケット疎通確認
+        $tcpHttp = [System.Net.Sockets.TcpClient]::new()
+        $asyncHttp = $tcpHttp.BeginConnect("127.0.0.1", 8833, $null, $null)
+        $connectedHttp = $asyncHttp.AsyncWaitHandle.WaitOne(600, $false)
+        if ($connectedHttp) {
+            $tcpHttp.EndConnect($asyncHttp)
+            $tcpHttp.Close()
 
-            # ポート開放確認後、HTTP 応答も検証 (プロキシ自動検出をバイパス)
-            try {
-                $checkUri = "http://127.0.0.1:8833/mic"
-                $req = [System.Net.HttpWebRequest]::Create($checkUri)
-                $req.Proxy = $null              # プロキシ探索を完全バイパス
-                $req.Timeout = 800             # 0.8秒
-                $resp = $req.GetResponse()
-                if ($resp.StatusCode -eq [System.Net.HttpStatusCode]::OK) {
-                    $ready = $true
-                }
-                $resp.Close()
-            } catch {
-                # HTTP が処理中でも TCP ポートが開いていれば準備完了と判定
+            # 8766 (WebSocket: モデルロード完了時にオープン) のソケット疎通確認
+            $tcpWs = [System.Net.Sockets.TcpClient]::new()
+            $asyncWs = $tcpWs.BeginConnect("127.0.0.1", 8766, $null, $null)
+            $connectedWs = $asyncWs.AsyncWaitHandle.WaitOne(600, $false)
+            if ($connectedWs) {
+                $tcpWs.EndConnect($asyncWs)
+                $tcpWs.Close()
                 $ready = $true
+            } else {
+                $tcpWs.Close()
             }
         } else {
-            $tcp.Close()
+            $tcpHttp.Close()
         }
     } catch {}
 

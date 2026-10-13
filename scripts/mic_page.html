@@ -1064,8 +1064,13 @@
   const defaultWsProtocol = isSecure ? "wss:" : "ws:";
   
   let defaultWsUrl = "";
+  let wsHost = location.hostname;
+  if (wsHost === "localhost") {
+    // Windows 環境で localhost が ::1 (IPv6) に解決され、IPv4 127.0.0.1 への接続が拒否される問題を完全防止
+    wsHost = "127.0.0.1";
+  }
   if (location.port === "8833") {
-    defaultWsUrl = `${defaultWsProtocol}//${location.hostname}:8766/ingest`;
+    defaultWsUrl = `${defaultWsProtocol}//${wsHost}:8766/ingest`;
   } else {
     defaultWsUrl = `${defaultWsProtocol}//${location.host}/ingest`;
   }
@@ -1201,50 +1206,71 @@
       ws.binaryType = "arraybuffer";
 
       ws.onopen = async () => {
-        ws.send(JSON.stringify({ sr: TARGET_SAMPLE_RATE, format: "pcm_s16le", channels: 1 }));
-        statusDot.className = "status-dot connected";
-        statusLabel.textContent = "音声準備中…";
+        try {
+          ws.send(JSON.stringify({ sr: TARGET_SAMPLE_RATE, format: "pcm_s16le", channels: 1 }));
+          statusDot.className = "status-dot connected";
+          statusLabel.textContent = "音声準備中…";
 
-        const constraints = {
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
+          const constraints = {
+            audio: {
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+            }
+          };
+          const selectedDev = audioSourceSelect.value;
+          if (selectedDev) {
+            constraints.audio.deviceId = { ideal: selectedDev };
           }
-        };
-        const selectedDev = audioSourceSelect.value;
-        if (selectedDev) {
-          constraints.audio.deviceId = { exact: selectedDev };
+
+          try {
+            mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+          } catch (e1) {
+            console.warn("詳細制約でのマイク取得に失敗、基本マイクで再試行します:", e1);
+            // exact/制約起因の失敗防止: 制約なしで再試行
+            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          }
+
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          const source = audioContext.createMediaStreamSource(mediaStream);
+
+          analyserNode = audioContext.createAnalyser();
+          analyserNode.fftSize = 256;
+          source.connect(analyserNode);
+
+          const bufferSize = 2048;
+          processorNode = audioContext.createScriptProcessor(bufferSize, 1, 1);
+          processorNode.onaudioprocess = (e) => {
+            if (!isRecording) return;
+            const inputData = e.inputBuffer.getChannelData(0);
+            resampleAndCollect(inputData, audioContext.sampleRate);
+          };
+
+          source.connect(processorNode);
+          processorNode.connect(audioContext.destination);
+
+          isRecording = true;
+          btnToggle.classList.add("recording");
+          btnText.textContent = "マイク停止";
+          statusDot.className = "status-dot active";
+          statusLabel.textContent = "マイク配信中 (送信中)";
+
+          loadAudioDevices();
+          updateMeter();
+        } catch (mediaErr) {
+          console.error("マイク取得例外:", mediaErr);
+          let errorMsg = "マイクの取得に失敗しました: " + mediaErr.message;
+          if (mediaErr.name === "NotFoundError" || mediaErr.name === "DevicesNotFoundError") {
+            errorMsg = "🎤 マイク（入力デバイス）が見つかりません。マイクやヘッドセットがPCに接続されているか、Windowsの「設定 > プライバシー > マイク」へのアクセスが許可されているか確認してください。";
+          } else if (mediaErr.name === "NotAllowedError" || mediaErr.name === "PermissionDeniedError") {
+            errorMsg = "🚫 マイクの使用がブラウザまたはWindowsでブロックされています。アドレスバーの鍵アイコン等からマイクアクセスを許可してください。";
+          } else if (mediaErr.name === "NotReadableError") {
+            errorMsg = "⚠️ マイクが別のアプリ（Zoom、Teams、Discordなど）で排他使用されている可能性があります。";
+          }
+          showError(errorMsg);
+          stopRecording();
         }
-
-        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const source = audioContext.createMediaStreamSource(mediaStream);
-
-        analyserNode = audioContext.createAnalyser();
-        analyserNode.fftSize = 256;
-        source.connect(analyserNode);
-
-        const bufferSize = 2048;
-        processorNode = audioContext.createScriptProcessor(bufferSize, 1, 1);
-        processorNode.onaudioprocess = (e) => {
-          if (!isRecording) return;
-          const inputData = e.inputBuffer.getChannelData(0);
-          resampleAndCollect(inputData, audioContext.sampleRate);
-        };
-
-        source.connect(processorNode);
-        processorNode.connect(audioContext.destination);
-
-        isRecording = true;
-        btnToggle.classList.add("recording");
-        btnText.textContent = "マイク停止";
-        statusDot.className = "status-dot active";
-        statusLabel.textContent = "マイク配信中 (送信中)";
-
-        loadAudioDevices();
-        updateMeter();
       };
 
       ws.onmessage = (event) => {
@@ -1313,7 +1339,17 @@
 
       ws.onerror = (err) => {
         console.error("WS エラー:", err);
-        showError("WebSocket 接続エラーが発生しました。接続先や証明書を確認してください。");
+        const curTarget = wsInput.value.trim();
+        if (curTarget.includes("localhost:8766") && !window._wsTriedFallback) {
+          window._wsTriedFallback = true;
+          console.warn("localhost 接続失敗のため 127.0.0.1 へ自動フォールバック再試行します...");
+          wsInput.value = curTarget.replace("localhost:8766", "127.0.0.1:8766");
+          stopRecording();
+          setTimeout(() => { startRecording(); }, 150);
+          return;
+        }
+        window._wsTriedFallback = false;
+        showError("WebSocket 接続エラーが発生しました。接続先 (" + curTarget + ") やポート8766の待機状態を確認してください。");
         stopRecording();
       };
 
