@@ -136,14 +136,17 @@ $DefaultInstallPath = [System.IO.Path]::Combine([System.Environment]::GetFolderP
                         <TextBlock Text="hayamimi" FontSize="26" FontWeight="Bold" Foreground="#ECE5D8" FontFamily="{StaticResource MainFont}"/>
                         <TextBlock Text=" (早耳) セットアップ" FontSize="22" FontWeight="Bold" Foreground="#E04F2F" FontFamily="{StaticResource MainFont}" Margin="6,2,0,0"/>
                     </StackPanel>
-                    <TextBlock Text="WSL Containers (WSL3) リアルタイム音声認識 &amp; 翻訳システム" 
+                    <TextBlock Text="リアルタイム音声認識 &amp; 多言語同時翻訳 (Python venv / WSL3 ハイブリッド)" 
                                FontSize="12" Foreground="#8C93A0" Margin="2,4,0,0"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Background="#1A202C" CornerRadius="12" Padding="10,4" VerticalAlignment="Center">
-                        <TextBlock x:Name="WslcBadge" Text="環境チェック中..." FontSize="11" Foreground="#4FD1C5" FontWeight="SemiBold"/>
+                    <Border Background="#141E1B" CornerRadius="12" Padding="10,4" Margin="0,0,8,0" BorderBrush="#2ECC71" BorderThickness="1">
+                        <TextBlock Text="🐍 Python venv (ネイティブ推奨)" FontSize="11" Foreground="#2ECC71" FontWeight="SemiBold"/>
                     </Border>
-                    <Button x:Name="BtnInstallWsl" Content="📥 WSL3 を自動インストール" Background="#2ECC71" Foreground="#0E1117" FontSize="11" FontWeight="Bold" Padding="10,4" Margin="8,0,0,0" Visibility="Collapsed"/>
+                    <Border Background="#1A202C" CornerRadius="12" Padding="10,4" VerticalAlignment="Center">
+                        <TextBlock x:Name="WslcBadge" Text="WSL3 チェック中..." FontSize="11" Foreground="#A0AEC0" FontWeight="SemiBold"/>
+                    </Border>
+                    <Button x:Name="BtnInstallWsl" Content="📦 WSL3 を追加セットアップ" Background="#242C3D" Foreground="#ECE5D8" FontSize="11" FontWeight="SemiBold" Padding="10,4" Margin="8,0,0,0" Visibility="Visible"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -284,17 +287,10 @@ function Get-SetupVirtualizationDiagnostic {
         CpuVendor = "Unknown"
         IsReady = $false
         Reason = ""
+        Details = ""
     }
 
-    try {
-        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
-        if ($cs -and $cs.HypervisorPresent) {
-            $diag.HypervisorPresent = $true
-            $diag.IsReady = $true
-            return $diag
-        }
-    } catch {}
-
+    # 1. CPU ハードウェア仮想化支援 (BIOS: VT-x / AMD-V) チェック
     try {
         $proc = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($proc) {
@@ -310,10 +306,50 @@ function Get-SetupVirtualizationDiagnostic {
 
     if ($diag.FirmwareVirtualization -eq $false) {
         $diag.Reason = "BiosDisabled"
-    } else {
-        $diag.Reason = "WindowsFeatureDisabled"
+        return $diag
     }
 
+    # 2. Hypervisor 稼働確認
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+        if ($cs) {
+            $diag.HypervisorPresent = [bool]$cs.HypervisorPresent
+        }
+    } catch {}
+
+    # 3. vmcompute サービス (Hyper-V Host Compute Service / VirtualMachinePlatform) の存在確認
+    $hasVmCompute = (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\vmcompute")
+    if (-not $hasVmCompute) {
+        $diag.Reason = "WindowsFeatureDisabled"
+        return $diag
+    }
+
+    # 4. WSL / HCS スモークテスト (wslc コマンドが存在する場合)
+    $testWslc = Get-SetupWslcCommand
+    if ($testWslc) {
+        try {
+            $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfo.FileName = $testWslc
+            $pinfo.Arguments = "images"
+            $pinfo.RedirectStandardOutput = $true
+            $pinfo.RedirectStandardError = $true
+            $pinfo.UseShellExecute = $false
+            $pinfo.CreateNoWindow = $true
+            $proc = [System.Diagnostics.Process]::Start($pinfo)
+            $stdout = $proc.StandardOutput.ReadToEnd()
+            $stderr = $proc.StandardError.ReadToEnd()
+            $proc.WaitForExit(2000) | Out-Null
+
+            $combined = "$stdout $stderr"
+            if ($combined -match "HCS_E_SERVICE_NOT_AVAILABLE|0x80370102|必要な機能がインストールされていない|service is not available") {
+                $diag.Reason = "HcsServiceUnavailable"
+                $diag.Details = "HCS_E_SERVICE_NOT_AVAILABLE"
+                return $diag
+            }
+        } catch {}
+    }
+
+    $diag.IsReady = $true
     return $diag
 }
 
@@ -481,38 +517,48 @@ function Update-SetupRequirementsState {
     $script:setupDiag = Get-SetupVirtualizationDiagnostic
 
     if ($script:wslcCmd -and $script:setupDiag.IsReady) {
-        $wslcBadge.Text = "✔ WSL Containers & 仮想化 検出済み"
+        $wslcBadge.Text = "✔ WSL3 検出済み"
         $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2ECC71")
-        if ($btnInstallWsl) { $btnInstallWsl.Visibility = [System.Windows.Visibility]::Collapsed }
+        if ($btnInstallWsl) {
+            $btnInstallWsl.Content = "📦 WSL3 を再設定"
+            $btnInstallWsl.Visibility = [System.Windows.Visibility]::Visible
+        }
         Write-SetupLog "✔ WSL Containers (wslc.exe) & Hypervisor 仮想化基盤が正常に検出されました。"
         return $true
     }
 
     if (-not $script:setupDiag.IsReady -and $script:setupDiag.Reason -eq "BiosDisabled") {
-        $wslcBadge.Text = "⚠ BIOS 仮想化 (VT-x/AMD-V) 無効"
+        $wslcBadge.Text = "ℹ WSL3: BIOS仮想化無効"
         $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#E74C3C")
         if ($btnInstallWsl) {
             $btnInstallWsl.Content = "📖 BIOS 設定手順を確認"
             $btnInstallWsl.Visibility = [System.Windows.Visibility]::Visible
         }
-        Write-SetupLog "【警告】CPU ハードウェア仮想化 ($($script:setupDiag.CpuVendor): VT-x / AMD-V) が BIOS で無効です。"
-        Write-SetupLog "【案内】BIOS/UEFI 設定で仮想化支援機能を有効化してください。"
+        Write-SetupLog "【案内】WSL3 用の BIOS 仮想化は無効ですが、Python venv (ネイティブ実行) で今すぐご利用可能です。"
+    } elseif (-not $script:setupDiag.IsReady -and $script:setupDiag.Reason -eq "HcsServiceUnavailable") {
+        $wslcBadge.Text = "ℹ WSL3: PC再起動待ち"
+        $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F39C12")
+        if ($btnInstallWsl) {
+            $btnInstallWsl.Content = "📥 仮想化基盤 & WSL3 を修復"
+            $btnInstallWsl.Visibility = [System.Windows.Visibility]::Visible
+        }
+        Write-SetupLog "【案内】WSL3 はPC再起動待ちですが、Python venv (ネイティブ実行) で今すぐご利用可能です。"
     } elseif (-not $script:setupDiag.IsReady) {
-        $wslcBadge.Text = "⚠ 仮想マシンプラットフォーム無効"
+        $wslcBadge.Text = "ℹ WSL3: 仮想マシンプラットフォーム無効"
         $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F39C12")
         if ($btnInstallWsl) {
-            $btnInstallWsl.Content = "📥 仮想化基盤 & WSL3 を自動設定"
+            $btnInstallWsl.Content = "📥 WSL3 を自動セットアップ"
             $btnInstallWsl.Visibility = [System.Windows.Visibility]::Visible
         }
-        Write-SetupLog "【警告】Windows 仮想化機能 (VirtualMachinePlatform) が無効、または再起動待ちです。"
+        Write-SetupLog "【案内】WSL3 仮想化機能は無効ですが、Python venv (ネイティブ実行) で今すぐご利用可能です。"
     } else {
-        $wslcBadge.Text = "⚠ WSL Containers 未検出"
-        $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F39C12")
+        $wslcBadge.Text = "ℹ WSL3: 未検出 (任意)"
+        $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A0AEC0")
         if ($btnInstallWsl) {
-            $btnInstallWsl.Content = "📥 WSL3 を自動インストール"
+            $btnInstallWsl.Content = "📦 WSL3 を追加セットアップ"
             $btnInstallWsl.Visibility = [System.Windows.Visibility]::Visible
         }
-        Write-SetupLog "注意: WSL Containers (wslc.exe) が見つかりません。"
+        Write-SetupLog "【案内】WSL3 は未検出ですが、Python venv (ネイティブ実行) により再起動なしでそのままご利用いただけます。"
     }
     return $false
 }
@@ -792,19 +838,6 @@ $stepTimer.Add_Tick({
 
 # インストールボタン
 $btnInstall.Add_Click({
-    # もし WSL 3.0 (WSL Containers) が未検出の場合、自動インストールを提案
-    if (-not $script:wslcCmd) {
-        $ask = [System.Windows.MessageBox]::Show(
-            "hayamimi の実行には WSL 3.0 (WSL Containers) が必要です。`r`n`r`n今すぐ全自動で WSL 3.0 をインストールしますか？`r`n(管理者権限のインストール画面が開きます)",
-            "WSL 3.0 の自動インストール - hayamimi",
-            [System.Windows.MessageBoxButton]::YesNo,
-            [System.Windows.MessageBoxImage]::Question
-        )
-        if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
-            Invoke-SetupInstallWslContainers | Out-Null
-        }
-    }
-
     $btnInstall.IsEnabled = $false
     $txtStatus.Text = "セットアップを開始しています..."
     Write-SetupLog "セットアップ処理を開始します..."
@@ -817,25 +850,6 @@ $btnLaunch.Add_Click({
     $targetDir = $txtInstallPath.Text.Trim()
     $vbsPath = Join-Path $targetDir "start.vbs"
     $batPath = Join-Path $targetDir "start.bat"
-
-    # 起動前に WSL3 の存在を最終確認
-    if (-not $script:wslcCmd) {
-        $script:wslcCmd = Get-SetupWslcCommand
-    }
-    if (-not $script:wslcCmd) {
-        $ask = [System.Windows.MessageBox]::Show(
-            "hayamimi の実行に必要な WSL 3.0 が未インストールです。`r`n今すぐ自動インストールしますか？",
-            "WSL 3.0 未検出 - hayamimi",
-            [System.Windows.MessageBoxButton]::YesNo,
-            [System.Windows.MessageBoxImage]::Warning
-        )
-        if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
-            $installed = Invoke-SetupInstallWslContainers
-            if (-not $installed) { return }
-        } else {
-            return
-        }
-    }
 
     try {
         if (Test-Path $vbsPath) {

@@ -1,4 +1,4 @@
-﻿$version = "GUI v1.0.4"
+﻿$version = "GUI v1.1.1"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -284,15 +284,18 @@ function Update-ContainerLogFile {
                         <TextBlock Text="hayamimi" FontSize="26" FontWeight="Bold" Foreground="#ECE5D8" FontFamily="{StaticResource MainFont}"/>
                         <TextBlock Text=" (早耳)" FontSize="22" FontWeight="Bold" Foreground="#E04F2F" FontFamily="{StaticResource MainFont}" Margin="6,2,0,0"/>
                     </StackPanel>
-                    <TextBlock Text="WSL Containers (WSL 3.0) リアルタイム音声認識 &amp; 多言語同時翻訳" 
+                    <TextBlock Text="リアルタイム音声認識 &amp; 多言語同時翻訳 (Python venv / WSL3)" 
                                FontSize="12" Foreground="#8C93A0" Margin="2,4,0,0"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border x:Name="GpuBadgeBorder" Background="#141E1B" CornerRadius="12" Padding="10,4" Margin="0,0,8,0" BorderBrush="#2ECC71" BorderThickness="1">
+                        <TextBlock x:Name="GpuBadge" Text="⚡ GPU: 検出中..." FontSize="11" Foreground="#2ECC71" FontWeight="SemiBold"/>
+                    </Border>
                     <Border Background="#242C3D" CornerRadius="12" Padding="10,4" Margin="0,0,8,0" BorderBrush="#3A465D" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.0.4" FontSize="11" Foreground="#F6AD55" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.1.1" FontSize="11" Foreground="#F6AD55" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#1A202C" CornerRadius="12" Padding="10,4">
-                        <TextBlock x:Name="RuntimeBadge" Text="WSL3 Native" FontSize="11" Foreground="#4FD1C5" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="RuntimeBadge" Text="Python venv" FontSize="11" Foreground="#4FD1C5" FontWeight="SemiBold"/>
                     </Border>
                 </StackPanel>
             </Grid>
@@ -305,8 +308,28 @@ function Update-ContainerLogFile {
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <Grid Grid.Row="0">
+
+                <!-- 実行基盤セレクター -->
+                <Border Grid.Row="0" Margin="0,0,0,10" Background="#10141D" CornerRadius="8" Padding="12,8" BorderBrush="#252A36" BorderThickness="1">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="実行基盤:" FontSize="12" FontWeight="SemiBold" Foreground="#A0AEC0" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <RadioButton x:Name="RbModeVenv" Content="🐍 Python venv (ネイティブ / 再起動不要)" GroupName="EngineMode" Foreground="#ECE5D8" FontSize="12" Margin="0,0,18,0" VerticalAlignment="Center" Cursor="Hand" IsChecked="True"/>
+                            <RadioButton x:Name="RbModeWslc" Content="📦 WSL Containers (WSL3 コンテナ)" GroupName="EngineMode" Foreground="#ECE5D8" FontSize="12" VerticalAlignment="Center" Cursor="Hand"/>
+                        </StackPanel>
+                        <Button x:Name="BtnSetupEnv" Grid.Column="2" Content="📥 Python環境を自動構築" Background="#3182CE" Foreground="#FFFFFF" FontSize="11" FontWeight="Bold" Padding="12,5" Visibility="Collapsed"/>
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Row="1">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
@@ -316,7 +339,7 @@ function Update-ContainerLogFile {
                     <Ellipse x:Name="StatusLed" Grid.Column="0" Width="14" Height="14" Fill="#718096" Margin="0,0,12,0" VerticalAlignment="Center"/>
                     
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Text="コンテナ状態" FontSize="11" Foreground="#718096"/>
+                        <TextBlock x:Name="StatusLabel" Text="実行状態" FontSize="11" Foreground="#718096"/>
                         <TextBlock x:Name="StatusText" Text="停止中" FontSize="15" FontWeight="Bold" Foreground="#ECE5D8" Margin="0,2,0,0"/>
                     </StackPanel>
 
@@ -330,8 +353,11 @@ function Update-ContainerLogFile {
                     </StackPanel>
                 </Grid>
 
-                <!-- WSL Containers / 仮想化 (Hypervisor) 診断・アシストバナー -->
-                <Border x:Name="WslcAlertBanner" Grid.Row="1" Margin="0,8,0,0" Padding="10,8" Background="#2A1B18" BorderBrush="#E74C3C" BorderThickness="1" CornerRadius="6" Visibility="Collapsed">
+                <!-- 初期化・モデルダウンロード プログレスバー -->
+                <ProgressBar x:Name="InitProgressBar" Grid.Row="2" Height="3" Margin="0,8,0,2" Foreground="#2ECC71" Background="#10141D" BorderThickness="0" IsIndeterminate="True" Visibility="Collapsed"/>
+
+                <!-- アシスト・診断バナー (WSL または Python 未セットアップ警告) -->
+                <Border x:Name="WslcAlertBanner" Grid.Row="3" Margin="0,8,0,0" Padding="10,8" Background="#2A1B18" BorderBrush="#E74C3C" BorderThickness="1" CornerRadius="6" Visibility="Collapsed">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -348,9 +374,17 @@ function Update-ContainerLogFile {
                     </Grid>
                 </Border>
 
-                <Border Grid.Row="2" Margin="0,8,0,0" Padding="8,6" Background="#11151F" CornerRadius="6">
-                    <TextBlock Text="🌐 リアルタイム翻訳 (英語・中国語・台湾語・香港語など) は Webのマイク画面 (/mic) で自由に設定可能です。" 
-                               FontSize="11" Foreground="#8C93A0"/>
+                <!-- フッター & WSL3 追加セットアップボタン (常時アクセス可能) -->
+                <Border Grid.Row="4" Margin="0,8,0,0" Padding="8,6" Background="#11151F" CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="🌐 リアルタイム翻訳は Webのマイク画面 (/mic) で自由に設定可能です。" 
+                                   FontSize="11" Foreground="#8C93A0" VerticalAlignment="Center"/>
+                        <Button x:Name="BtnInstallWslAlways" Grid.Column="1" Content="📦 WSL 3.0 を追加セットアップ" Background="#1F2636" Foreground="#CBD5E0" FontSize="11" Padding="10,4" Margin="8,0,0,0" ToolTip="WSL Containers 環境の有効化・インストールを行います"/>
+                    </Grid>
                 </Border>
             </Grid>
         </Border>
@@ -372,7 +406,7 @@ function Update-ContainerLogFile {
             <Button x:Name="BtnStart" Grid.Row="0" Grid.Column="0" Background="#2ECC71" Foreground="#0E1117" Height="46">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="▶" FontSize="15" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock Text="コンテナ起動 &amp; Webを開く" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="BtnStartText" Text="アプリ起動 &amp; Webを開く" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
                 </StackPanel>
             </Button>
 
@@ -380,7 +414,7 @@ function Update-ContainerLogFile {
             <Button x:Name="BtnStop" Grid.Row="0" Grid.Column="2" Background="#E74C3C" Foreground="#FFFFFF" Height="46" IsEnabled="False">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="■" FontSize="14" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock Text="コンテナ終了 &amp; 閉じる" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="BtnStopText" Text="アプリ終了 &amp; 閉じる" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
                 </StackPanel>
             </Button>
 
@@ -392,17 +426,17 @@ function Update-ContainerLogFile {
                     <ColumnDefinition Width="8"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="※ GitHubの最新コード取得とコンテナ更新を行えます。" FontSize="11" Foreground="#718096" VerticalAlignment="Center"/>
+                <TextBlock x:Name="UpdateDescText" Grid.Column="0" Text="※ GitHubの最新コード取得と環境更新を行えます。" FontSize="11" Foreground="#718096" VerticalAlignment="Center"/>
                 <Button x:Name="BtnUpdateApp" Grid.Column="1" Background="#1A202C" Foreground="#4FD1C5" Height="28" Padding="10,4" FontSize="11" ToolTip="GitHubから最新のソースコードを取得します">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="📥" FontSize="11" Margin="0,0,5,0" VerticalAlignment="Center"/>
                         <TextBlock Text="本体を最新版に更新" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
-                <Button x:Name="BtnRebuild" Grid.Column="3" Background="#1A202C" Foreground="#A0AEC0" Height="28" Padding="10,4" FontSize="11" ToolTip="最新のソースコードをコンテナイメージに再反映します">
+                <Button x:Name="BtnRebuild" Grid.Column="3" Background="#1A202C" Foreground="#A0AEC0" Height="28" Padding="10,4" FontSize="11" ToolTip="最新のソースコードを反映します">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="🔄" FontSize="11" Margin="0,0,5,0" VerticalAlignment="Center"/>
-                        <TextBlock Text="コンテナをリビルド" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBlock Text="環境を再構築" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
             </Grid>
@@ -439,8 +473,11 @@ function Update-ContainerLogFile {
                 </Grid.RowDefinitions>
                 <Border Grid.Row="0" Background="#11151C" Padding="10,6" CornerRadius="8,8,0,0" BorderBrush="#1C222E" BorderThickness="0,0,0,1">
                     <Grid>
-                        <TextBlock Text="実行ログ (logs/launcher.log &amp; logs/container.log)" FontSize="11" Foreground="#718096" FontFamily="{StaticResource MonoFont}" VerticalAlignment="Center"/>
+                        <TextBlock Text="実行ログ (logs/launcher.log, logs/python.log, logs/container.log)" FontSize="11" Foreground="#718096" FontFamily="{StaticResource MonoFont}" VerticalAlignment="Center"/>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button x:Name="BtnOpenPythonLog" Background="Transparent" Foreground="#63B3ED" Padding="4,0" Margin="0,0,6,0" FontSize="11">
+                                <TextBlock Text="📄 python.log"/>
+                            </Button>
                             <Button x:Name="BtnOpenContainerLog" Background="Transparent" Foreground="#63B3ED" Padding="4,0" Margin="0,0,6,0" FontSize="11">
                                 <TextBlock Text="📄 container.log"/>
                             </Button>
@@ -492,6 +529,10 @@ $window.Dispatcher.Add_UnhandledException({
 })
 
 # コントロール取得
+$rbModeVenv = $window.FindName("RbModeVenv")
+$rbModeWslc = $window.FindName("RbModeWslc")
+$btnSetupEnv = $window.FindName("BtnSetupEnv")
+$statusLabel = $window.FindName("StatusLabel")
 $statusLed = $window.FindName("StatusLed")
 $statusText = $window.FindName("StatusText")
 $runtimeBadge = $window.FindName("RuntimeBadge")
@@ -499,9 +540,11 @@ $versionBadge = $window.FindName("VersionBadge")
 if ($versionBadge) {
     $versionBadge.Text = $version
 }
-$window.Title = "hayamimi - WSL3 ランチャー ($version)"
+$window.Title = "hayamimi (早耳) ランチャー ($version)"
 $btnStart = $window.FindName("BtnStart")
+$btnStartText = $window.FindName("BtnStartText")
 $btnStop = $window.FindName("BtnStop")
+$btnStopText = $window.FindName("BtnStopText")
 $btnUpdateApp = $window.FindName("BtnUpdateApp")
 $btnRebuild = $window.FindName("BtnRebuild")
 $btnOpenMic = $window.FindName("BtnOpenMic")
@@ -510,6 +553,7 @@ $btnOpenDashboard = $window.FindName("BtnOpenDashboard")
 $logTextBox = $window.FindName("LogTextBox")
 $logScrollViewer = $window.FindName("LogScrollViewer")
 $btnClearLog = $window.FindName("BtnClearLog")
+$btnOpenPythonLog = $window.FindName("BtnOpenPythonLog")
 $btnOpenContainerLog = $window.FindName("BtnOpenContainerLog")
 $btnOpenLauncherLog = $window.FindName("BtnOpenLauncherLog")
 $btnOpenLogsDir = $window.FindName("BtnOpenLogsDir")
@@ -518,6 +562,18 @@ $wslcAlertTitle = $window.FindName("WslcAlertTitle")
 $wslcAlertDesc = $window.FindName("WslcAlertDesc")
 $btnUpdateWsl = $window.FindName("BtnUpdateWsl")
 $btnBiosGuide = $window.FindName("BtnBiosGuide")
+$gpuBadge = $window.FindName("GpuBadge")
+$gpuBadgeBorder = $window.FindName("GpuBadgeBorder")
+$initProgressBar = $window.FindName("InitProgressBar")
+$btnInstallWslAlways = $window.FindName("BtnInstallWslAlways")
+$updateDescText = $window.FindName("UpdateDescText")
+
+# 実行基盤状態変数
+$script:CurrentEngineMode = "Venv" # "Venv" または "Wslc"
+$script:ConfigFile = Join-Path $ProjectRoot "config\launcher_config.json"
+$script:ProcPython = $null
+$script:PythonLogFile = Join-Path $LogsDir "python.log"
+$script:LastPythonLogLineCount = 0
 
 # ランタイムバッジ
 $psVer = $PSVersionTable.PSVersion.Major
@@ -532,6 +588,52 @@ $brushGray   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#
 $brushGreen  = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2ECC71")
 $brushOrange = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F39C12")
 $brushRed    = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#E74C3C")
+
+# GPU / ハードウェアアクセラレーション状態の検出とバッジ更新
+function Update-GpuDeviceBadge {
+    try {
+        $gpus = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue
+        $nvidiaGpu = $gpus | Where-Object { $_.Name -match "NVIDIA|GeForce|RTX|GTX|Quadro|Tesla" } | Select-Object -First 1
+        if ($nvidiaGpu) {
+            $gpuShortName = $nvidiaGpu.Name -replace "NVIDIA\s*", ""
+            if ($gpuBadge) {
+                $gpuBadge.Text = "⚡ GPU: $gpuShortName (CUDA)"
+                $gpuBadge.Foreground = $brushGreen
+            }
+            if ($gpuBadgeBorder) {
+                $gpuBadgeBorder.BorderBrush = $brushGreen
+                $gpuBadgeBorder.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#141E1B")
+            }
+            Write-AppLog "✔ NVIDIA GPU 検出: $($nvidiaGpu.Name) (CUDA 推論対応)" "INFO"
+            return
+        }
+
+        # NVIDIA GPU が無い場合は CPU 推論として表示
+        if ($gpuBadge) {
+            $gpuBadge.Text = "⚙ CPU 推論 (AVX2)"
+            $gpuBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#63B3ED")
+        }
+        if ($gpuBadgeBorder) {
+            $gpuBadgeBorder.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#3182CE")
+            $gpuBadgeBorder.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#15202B")
+        }
+    } catch {
+        if ($gpuBadge) { $gpuBadge.Text = "⚙ CPU 推論" }
+    }
+}
+
+# ポート使用状況チェック関数 (競合事前検知)
+function Test-PortInUse {
+    param([int]$Port)
+    try {
+        $tcp = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+        $tcp.Start()
+        $tcp.Stop()
+        return $false
+    } catch {
+        return $true
+    }
+}
 
 function Set-UIState {
     param([string]$State, [System.Windows.Media.Brush]$Brush, [bool]$CanStart, [bool]$CanStop)
@@ -570,17 +672,10 @@ function Get-VirtualizationDiagnostic {
         CpuVendor = "Unknown"
         IsReady = $false
         Reason = ""
+        Details = ""
     }
 
-    try {
-        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
-        if ($cs -and $cs.HypervisorPresent) {
-            $diag.HypervisorPresent = $true
-            $diag.IsReady = $true
-            return $diag
-        }
-    } catch {}
-
+    # 1. CPU ハードウェア仮想化支援 (BIOS: VT-x / AMD-V) チェック
     try {
         $proc = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($proc) {
@@ -596,10 +691,50 @@ function Get-VirtualizationDiagnostic {
 
     if ($diag.FirmwareVirtualization -eq $false) {
         $diag.Reason = "BiosDisabled"
-    } else {
-        $diag.Reason = "WindowsFeatureDisabled"
+        return $diag
     }
 
+    # 2. Hypervisor の稼働確認
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+        if ($cs) {
+            $diag.HypervisorPresent = [bool]$cs.HypervisorPresent
+        }
+    } catch {}
+
+    # 3. vmcompute サービス (Hyper-V Host Compute Service / VirtualMachinePlatform) の存在確認
+    $hasVmCompute = (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\vmcompute")
+    if (-not $hasVmCompute) {
+        $diag.Reason = "WindowsFeatureDisabled"
+        return $diag
+    }
+
+    # 4. WSL / HCS スモークテスト (wslc コマンドが存在する場合)
+    $testWslc = Get-WslcCommand
+    if ($testWslc) {
+        try {
+            $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfo.FileName = $testWslc
+            $pinfo.Arguments = "images"
+            $pinfo.RedirectStandardOutput = $true
+            $pinfo.RedirectStandardError = $true
+            $pinfo.UseShellExecute = $false
+            $pinfo.CreateNoWindow = $true
+            $proc = [System.Diagnostics.Process]::Start($pinfo)
+            $stdout = $proc.StandardOutput.ReadToEnd()
+            $stderr = $proc.StandardError.ReadToEnd()
+            $proc.WaitForExit(2000) | Out-Null
+
+            $combined = "$stdout $stderr"
+            if ($combined -match "HCS_E_SERVICE_NOT_AVAILABLE|0x80370102|必要な機能がインストールされていない|service is not available") {
+                $diag.Reason = "HcsServiceUnavailable"
+                $diag.Details = "HCS_E_SERVICE_NOT_AVAILABLE"
+                return $diag
+            }
+        } catch {}
+    }
+
+    $diag.IsReady = $true
     return $diag
 }
 
@@ -647,6 +782,11 @@ function Update-WslcBannerState {
             if ($wslcAlertDesc) { $wslcAlertDesc.Text = "BIOS/UEFI で $($script:VirtDiag.CpuVendor) 仮想化設定を有効化してください。未設定のままではコンテナを起動できません。" }
             if ($btnBiosGuide) { $btnBiosGuide.Visibility = "Visible" }
             if ($btnUpdateWsl) { $btnUpdateWsl.Content = "📥 仮想化 & WSL3 を自動設定" }
+        } elseif (-not $script:VirtDiag.IsReady -and $script:VirtDiag.Reason -eq "HcsServiceUnavailable") {
+            if ($wslcAlertTitle) { $wslcAlertTitle.Text = "⚠ 仮想化基盤 (HCS) が未準備です (PC再起動が必要です)" }
+            if ($wslcAlertDesc) { $wslcAlertDesc.Text = "仮想化機能のインストール後に「PCの再起動」が行われていません。PCを再起動するか、修復を実行してください。" }
+            if ($btnBiosGuide) { $btnBiosGuide.Visibility = "Visible" }
+            if ($btnUpdateWsl) { $btnUpdateWsl.Content = "📥 仮想化基盤 & WSL3 を修復" }
         } elseif (-not $script:VirtDiag.IsReady -and $script:VirtDiag.Reason -eq "WindowsFeatureDisabled") {
             if ($wslcAlertTitle) { $wslcAlertTitle.Text = "⚠ Windows の仮想化基盤 (VirtualMachinePlatform) が無効です" }
             if ($wslcAlertDesc) { $wslcAlertDesc.Text = "WSL Containers の実行には Windows の仮想マシンプラットフォームが必要です。ワンクリックで自動有効化できます。" }
@@ -660,6 +800,164 @@ function Update-WslcBannerState {
         }
     }
     return $false
+}
+
+# 実行基盤設定の読み込み
+function Get-SavedEngineMode {
+    if (Test-Path $script:ConfigFile) {
+        try {
+            $json = Get-Content -Path $script:ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($json.engine_mode -in @("Venv", "Wslc")) {
+                return $json.engine_mode
+            }
+        } catch {}
+    }
+    return $null
+}
+
+# 実行基盤設定の保存
+function Save-EngineMode {
+    param([string]$Mode)
+    try {
+        $configDir = Join-Path $ProjectRoot "config"
+        if (-not (Test-Path $configDir)) {
+            New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+        }
+        $obj = @{ engine_mode = $Mode }
+        $json = $obj | ConvertTo-Json
+        [System.IO.File]::WriteAllText($script:ConfigFile, $json, [System.Text.Encoding]::UTF8)
+    } catch {}
+}
+
+# 実行基盤の初期モード判定 (保存設定優先 & 自動診断フォールバック)
+function Get-InitialEngineMode {
+    $saved = Get-SavedEngineMode
+    if ($saved) { return $saved }
+
+    # 自動診断: WSL3 が正常に動く環境なら Wslc、そうでなければ Venv
+    $wslcCmd = Get-WslcCommand
+    $diag = Get-VirtualizationDiagnostic
+    if ($wslcCmd -and $diag.IsReady) {
+        return "Wslc"
+    }
+    return "Venv"
+}
+
+# 実行基盤に応じたアラートバナー状態更新関数
+function Update-EngineBannerState {
+    if ($script:CurrentEngineMode -eq "Venv") {
+        # Python venv モード
+        $venvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+        $hasVenv = (Test-Path $venvPython)
+
+        if ($hasVenv) {
+            if ($wslcAlertBanner) { $wslcAlertBanner.Visibility = "Collapsed" }
+            if ($btnSetupEnv) { $btnSetupEnv.Visibility = "Collapsed" }
+            $runtimeBadge.Text = "Python venv"
+            $runtimeBadge.Foreground = $brushGreen
+            return $true
+        } else {
+            if ($wslcAlertBanner) {
+                $wslcAlertBanner.Visibility = "Visible"
+                $wslcAlertTitle.Text = "⚠ Python 仮想環境 (.venv) が未構築です"
+                $wslcAlertDesc.Text = "hayamimi の実行に必要な Python 仮想環境をワンクリックで自動構築できます (PC再起動不要)。"
+                if ($btnBiosGuide) { $btnBiosGuide.Visibility = "Collapsed" }
+                if ($btnUpdateWsl) {
+                    $btnUpdateWsl.Content = "📥 Python 環境を自動構築"
+                    $btnUpdateWsl.Visibility = "Visible"
+                }
+            }
+            if ($btnSetupEnv) {
+                $btnSetupEnv.Content = "📥 Python環境を自動構築"
+                $btnSetupEnv.Visibility = "Visible"
+            }
+            $runtimeBadge.Text = "Python (未構築)"
+            $runtimeBadge.Foreground = $brushOrange
+            return $false
+        }
+    } else {
+        # WSL Containers モード
+        $isReady = Update-WslcBannerState
+        if ($isReady) {
+            $runtimeBadge.Text = "WSL3 Native"
+            $runtimeBadge.Foreground = $brushGreen
+        }
+        if ($btnSetupEnv) { $btnSetupEnv.Visibility = "Collapsed" }
+        return $isReady
+    }
+}
+
+# 実行基盤モードの切り替え関数
+function Set-EngineMode {
+    param([string]$NewMode)
+    $script:CurrentEngineMode = $NewMode
+    Save-EngineMode -Mode $NewMode
+
+    if ($NewMode -eq "Venv") {
+        Write-AppLog "実行基盤を「Python venv (ネイティブ)」に切り替えました。" "INFO"
+        if ($statusLabel) { $statusLabel.Text = "Python状態" }
+        if ($btnStartText) { $btnStartText.Text = "アプリ起動 & Webを開く" }
+        if ($btnStopText) { $btnStopText.Text = "アプリ終了 & 閉じる" }
+        if ($btnRebuild) { $btnRebuild.Content = "🔄 依存パッケージ再導入" }
+        if ($updateDescText) { $updateDescText.Text = "※ GitHubの最新コード取得と依存パッケージ更新を行えます。" }
+    } else {
+        Write-AppLog "実行基盤を「WSL Containers (WSL3)」に切り替えました。" "INFO"
+        if ($statusLabel) { $statusLabel.Text = "コンテナ状態" }
+        if ($btnStartText) { $btnStartText.Text = "コンテナ起動 & Webを開く" }
+        if ($btnStopText) { $btnStopText.Text = "コンテナ終了 & 閉じる" }
+        if ($btnRebuild) { $btnRebuild.Content = "🔄 コンテナをリビルド" }
+        if ($updateDescText) { $updateDescText.Text = "※ GitHubの最新コード取得とコンテナ更新を行えます。" }
+    }
+
+    # 稼働状態の反映
+    $isRunning = Test-AppRunning
+    if ($isRunning) {
+        Set-UIState "稼働中 (8833 / 8766)" $brushGreen $false $true
+    } else {
+        Set-UIState "停止中" $brushGray $true $false
+    }
+    Update-EngineBannerState | Out-Null
+}
+
+# 実行基盤切り替え時の安全ハンドラ (稼働中プロセス停止確認付き)
+$script:IsSwitchingMode = $false
+function Handle-EngineModeSwitch {
+    param(
+        [string]$TargetMode,
+        [System.Windows.Controls.RadioButton]$TargetRb,
+        [System.Windows.Controls.RadioButton]$OtherRb
+    )
+    if ($script:IsSwitchingMode) { return }
+    if ($script:CurrentEngineMode -eq $TargetMode) { return }
+
+    if (Test-AppRunning) {
+        $curModeName = if ($script:CurrentEngineMode -eq "Venv") { "Python venv" } else { "WSL Containers" }
+        $targetModeName = if ($TargetMode -eq "Venv") { "Python venv" } else { "WSL Containers" }
+        $ask = Show-AppConfirm -Message "現在 $curModeName が稼働中です。`r`n`r`n実行基盤を $targetModeName に切り替えるには、現在のプロセスを停止する必要があります。`r`n`r`n稼働中のプロセスを停止して切り替えますか？" -Title "実行基盤の切り替え確認 - hayamimi"
+        if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
+            $script:IsSwitchingMode = $true
+            if ($script:CurrentEngineMode -eq "Venv") {
+                Stop-PythonVenvApp
+            } else {
+                if ($script:WslcCmd) {
+                    try {
+                        Start-Process $script:WslcCmd -ArgumentList "stop $ContainerName" -Wait -NoNewWindow
+                        Start-Process $script:WslcCmd -ArgumentList "remove $ContainerName" -Wait -NoNewWindow
+                    } catch {}
+                }
+            }
+            Set-EngineMode $TargetMode
+            $script:IsSwitchingMode = $false
+        } else {
+            # キャンセル時は元の選択に戻す
+            $script:IsSwitchingMode = $true
+            $OtherRb.IsChecked = $true
+            $script:IsSwitchingMode = $false
+            return
+        }
+    } else {
+        Set-EngineMode $TargetMode
+    }
 }
 
 # ファイル共有モード (ReadWrite) での安全なログ行読み取り関数 (ロック競合ゼロ)
@@ -678,6 +976,30 @@ function Read-FileSharedLines {
         }
     } catch {}
     return $lines
+}
+
+# Python ログ更新関数 (logs/python.log から新着ログを GUI コンソールに反映)
+function Update-PythonLogFile {
+    param([bool]$EchoToGui = $true)
+    if (-not (Test-Path $script:PythonLogFile)) { return }
+    try {
+        $lines = Read-FileSharedLines -FilePath $script:PythonLogFile
+        if ($lines.Count -gt $script:LastPythonLogLineCount) {
+            if ($EchoToGui -and $logTextBox) {
+                $newLines = [System.Collections.Generic.List[string]]::new()
+                for ($i = $script:LastPythonLogLineCount; $i -lt $lines.Count; $i++) {
+                    $item = $lines[$i]
+                    if ($item -and $item.Trim() -and $item -notmatch "^#") {
+                        $newLines.Add("[Python] $($item.Trim())")
+                    }
+                }
+                if ($newLines.Count -gt 0) {
+                    Write-AppLogBatch -Messages $newLines -Level "PYTHON"
+                }
+            }
+            $script:LastPythonLogLineCount = $lines.Count
+        }
+    } catch {}
 }
 
 # コンテナ稼働確認関数 (wslc inspect優先 & wslc list多言語フォールバック)
@@ -743,6 +1065,241 @@ function Test-HayamimiImageExists {
         return ($raw -match "hayamimi")
     } catch {
         return $false
+    }
+}
+
+# Python プロセス稼働確認関数
+function Test-PythonRunning {
+    try {
+        $procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*realtime_transcribe.py*" }
+        return ($procs -ne $null -and $procs.Count -gt 0)
+    } catch {
+        return $false
+    }
+}
+
+# 統合アプリアプリ稼働確認関数 (モード連動)
+function Test-AppRunning {
+    if ($script:CurrentEngineMode -eq "Venv") {
+        return (Test-PythonRunning)
+    } else {
+        return (Test-ContainerRunning)
+    }
+}
+
+# Python venv (ネイティブ実行環境) 自動セットアップ関数
+function Invoke-SetupPythonVenv {
+    param([bool]$ForceRecreate = $false)
+
+    Write-AppLog "=========================================="
+    Write-AppLog "Python venv (ネイティブ実行環境) のセットアップを開始します..." "INFO"
+    Set-UIState "Python環境構築中..." $brushOrange $false $false
+    if ($initProgressBar) { $initProgressBar.Visibility = "Visible" }
+    if ($btnSetupEnv) { $btnSetupEnv.IsEnabled = $false }
+
+    # 1. uv の準備 (既存の uv または tools\uv\uv.exe)
+    $uvCmd = (where.exe uv 2>$null | Select-Object -First 1)
+    $localUvDir = Join-Path $ProjectRoot "tools\uv"
+    $localUvExe = Join-Path $localUvDir "uv.exe"
+
+    if (-not $uvCmd -and (Test-Path $localUvExe)) {
+        $uvCmd = $localUvExe
+    }
+
+    if (-not $uvCmd) {
+        Write-AppLog "高速パッケージツール (uv) を取得中 (GitHub Releases)..." "INFO"
+        try {
+            if (-not (Test-Path $localUvDir)) {
+                New-Item -ItemType Directory -Path $localUvDir -Force | Out-Null
+            }
+            $uvZip = Join-Path $env:TEMP "uv-windows-x64.zip"
+            $uvUrl = "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
+            
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $uvUrl -OutFile $uvZip -TimeoutSec 30
+            
+            Expand-Archive -Path $uvZip -DestinationPath $localUvDir -Force
+            Remove-Item -Path $uvZip -Force -ErrorAction SilentlyContinue
+
+            if (Test-Path $localUvExe) {
+                $uvCmd = $localUvExe
+                Write-AppLog "✔ uv ツールの配置が完了しました: $uvCmd" "INFO"
+            }
+        } catch {
+            Write-AppLog "uv のダウンロードに失敗しました: $_" "ERROR"
+        }
+    }
+
+    # 2. 仮想環境 .venv の作成
+    $venvDir = Join-Path $ProjectRoot ".venv"
+    $venvPython = Join-Path $venvDir "Scripts\python.exe"
+
+    if ($ForceRecreate -or -not (Test-Path $venvPython)) {
+        Write-AppLog "Python 3.11 仮想環境 (.venv) を作成しています..." "INFO"
+        if ($uvCmd) {
+            $pinfoVenv = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoVenv.FileName = $uvCmd
+            $pinfoVenv.Arguments = "venv .venv --python 3.11"
+            $pinfoVenv.WorkingDirectory = $ProjectRoot
+            $pinfoVenv.RedirectStandardOutput = $true
+            $pinfoVenv.RedirectStandardError = $true
+            $pinfoVenv.UseShellExecute = $false
+            $pinfoVenv.CreateNoWindow = $true
+            $procVenv = [System.Diagnostics.Process]::Start($pinfoVenv)
+            $vOut = $procVenv.StandardOutput.ReadToEnd()
+            $vErr = $procVenv.StandardError.ReadToEnd()
+            $procVenv.WaitForExit()
+            if ($procVenv.ExitCode -ne 0) {
+                Write-AppLog "仮想環境の作成に失敗しました: $vErr" "ERROR"
+                Set-UIState "セットアップ失敗" $brushRed $true $false
+                if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
+                if ($btnSetupEnv) { $btnSetupEnv.IsEnabled = $true }
+                return $false
+            }
+            Write-AppLog "✔ Python 3.11 仮想環境 (.venv) を作成しました。" "INFO"
+        } else {
+            $sysPython = (where.exe python 2>$null | Select-Object -First 1)
+            if ($sysPython) {
+                Start-Process $sysPython -ArgumentList "-m venv .venv" -WorkingDirectory $ProjectRoot -Wait -NoNewWindow
+            } else {
+                Write-AppLog "Python または uv が見つかりません。" "ERROR"
+                Set-UIState "Python未検出" $brushRed $true $false
+                if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
+                if ($btnSetupEnv) { $btnSetupEnv.IsEnabled = $true }
+                return $false
+            }
+        }
+    }
+
+    # 3. 依存ライブラリのインストール
+    Write-AppLog "依存パッケージ (requirements.txt) をインストールしています (十数秒)..." "INFO"
+    $reqFile = Join-Path $ProjectRoot "requirements.txt"
+    if (Test-Path $reqFile) {
+        $installSuccess = $false
+        if ($uvCmd) {
+            $pinfoPip = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoPip.FileName = $uvCmd
+            $pinfoPip.Arguments = "pip install -r `"$reqFile`" --python `"$venvPython`""
+            $pinfoPip.WorkingDirectory = $ProjectRoot
+            $pinfoPip.RedirectStandardOutput = $true
+            $pinfoPip.RedirectStandardError = $true
+            $pinfoPip.UseShellExecute = $false
+            $pinfoPip.CreateNoWindow = $true
+            $procPip = [System.Diagnostics.Process]::Start($pinfoPip)
+            $pOut = $procPip.StandardOutput.ReadToEnd()
+            $pErr = $procPip.StandardError.ReadToEnd()
+            $procPip.WaitForExit()
+            if ($procPip.ExitCode -eq 0) { $installSuccess = $true }
+        } else {
+            $procPip = Start-Process $venvPython -ArgumentList "-m pip install -r `"$reqFile`"" -WorkingDirectory $ProjectRoot -Wait -PassThru -NoNewWindow
+            if ($procPip.ExitCode -eq 0) { $installSuccess = $true }
+        }
+
+        if (-not $installSuccess) {
+            Write-AppLog "パッケージのインストールに失敗しました。" "ERROR"
+            Set-UIState "インストール失敗" $brushRed $true $false
+            if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
+            if ($btnSetupEnv) { $btnSetupEnv.IsEnabled = $true }
+            return $false
+        }
+        Write-AppLog "✔ 依存パッケージのインストールが完了しました！" "INFO"
+    }
+
+    # 4. モデルダウンロードの確認
+    $coreModelDir = Join-Path $ProjectRoot "models\sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17"
+    if (-not (Test-Path $coreModelDir)) {
+        Set-UIState "モデルDL中 (約1.5GB)..." $brushOrange $false $false
+        Write-AppLog "Coreモデルおよび翻訳モデルをダウンロードしています (初回のみ数分)..." "INFO"
+        $dlScript = Join-Path $ProjectRoot "scripts\download_models.py"
+        Start-Process $venvPython -ArgumentList "`"$dlScript`" --minimal --translators" -WorkingDirectory $ProjectRoot -Wait -NoNewWindow
+    }
+
+    Write-AppLog "✔ Python venv 環境のセットアップがすべて完了しました！" "INFO"
+    Write-AppLog "=========================================="
+    Set-UIState "停止中" $brushGray $true $false
+    if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
+    if ($btnSetupEnv) { $btnSetupEnv.IsEnabled = $true }
+    Update-EngineBannerState | Out-Null
+    return $true
+}
+
+# Python venv アプリの起動処理
+function Start-PythonVenvApp {
+    $venvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+    if (-not (Test-Path $venvPython)) {
+        Write-AppLog "Python 仮想環境 (.venv) が見つかりません。先にセットアップを行ってください。" "WARN"
+        $ask = Show-AppConfirm -Message "Python 仮想環境 (.venv) がまだ構築されていません。`r`n`r`n今すぐ自動でセットアップを開始しますか？`r`n(PC再起動・管理者権限は不要です)" -Title "Python環境セットアップ - hayamimi"
+        if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
+            Invoke-SetupPythonVenv | Out-Null
+        }
+        return
+    }
+
+    # 既存プロセス停止確認
+    Stop-PythonVenvApp -Silent $true
+
+    # ポート競合事前チェック
+    if (Test-PortInUse 8833) {
+        Write-AppLog "【警告】HTTPポート 8833 が既に使用されています。既存プロセスまたはコンテナが稼働していないか確認してください。" "WARN"
+        $askPort = Show-AppConfirm -Message "HTTPポート 8833 が別プロセスで使用されています。`r`n`r`nポート競合により起動に失敗する可能性があります。そのまま起動を試みますか？" -Title "ポート競合の確認 - hayamimi"
+        if ($askPort -ne [System.Windows.MessageBoxResult]::Yes) {
+            Set-UIState "停止中" $brushGray $true $false
+            return
+        }
+    }
+
+    Set-UIState "起動中..." $brushOrange $false $false
+    if ($initProgressBar) { $initProgressBar.Visibility = "Visible" }
+    Write-AppLog "=========================================="
+    Write-AppLog "Python venv モードで hayamimi を起動しています..." "INFO"
+
+    # ログファイルの初期化
+    if (Test-Path $script:PythonLogFile) {
+        Remove-Item -Path $script:PythonLogFile -Force -ErrorAction SilentlyContinue
+    }
+    [System.IO.File]::WriteAllText($script:PythonLogFile, "# hayamimi python log`r`n", [System.Text.Encoding]::UTF8)
+    $script:LastPythonLogLineCount = 0
+
+    $transScript = Join-Path $ProjectRoot "scripts\realtime_transcribe.py"
+    $cmdArgs = "/s /c `"`"$venvPython`" `"$transScript`" --input ws --serve 8833 --ws-host 127.0.0.1 --ws-port 8766 > `"$script:PythonLogFile`" 2>&1`""
+
+    $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $pinfo.FileName = "cmd.exe"
+    $pinfo.Arguments = $cmdArgs
+    $pinfo.WorkingDirectory = $ProjectRoot
+    $pinfo.UseShellExecute = $false
+    $pinfo.CreateNoWindow = $true
+
+    $script:ProcPython = [System.Diagnostics.Process]::Start($pinfo)
+    $script:HealthCheckAttempts = 0
+    $healthTimer.Start()
+}
+
+# Python venv アプリの停止処理
+function Stop-PythonVenvApp {
+    param([bool]$Silent = $false)
+    if (-not $Silent) {
+        Set-UIState "停止処理中..." $brushOrange $false $false
+        Write-AppLog "Python プロセスを停止しています..." "INFO"
+    }
+
+    if ($script:ProcPython -and -not $script:ProcPython.HasExited) {
+        try {
+            Start-Process taskkill.exe -ArgumentList "/PID $($script:ProcPython.Id) /T /F" -Wait -NoNewWindow
+        } catch {}
+    }
+
+    try {
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*realtime_transcribe.py*" } | ForEach-Object {
+            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
+
+    $script:ProcPython = $null
+    if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
+    if (-not $Silent) {
+        Write-AppLog "Python プロセスを停止しました。" "INFO"
+        Set-UIState "停止中" $brushGray $true $false
     }
 }
 
@@ -1294,6 +1851,38 @@ $buildTimer.Add_Tick({
             } else {
                 Write-AppLog "コンテナイメージのビルドに失敗しました (ExitCode: $exitCode)" "ERROR"
                 Set-UIState "ビルド失敗" $brushRed $true $false
+
+                # ビルドログの内容から原因を自動診断
+                $buildLogContent = ""
+                if (Test-Path $script:BuildLogFile) {
+                    try {
+                        $buildLogContent = [System.IO.File]::ReadAllText($script:BuildLogFile, [System.Text.Encoding]::UTF8)
+                    } catch {}
+                }
+
+                if ($buildLogContent -match "HCS_E_SERVICE_NOT_AVAILABLE|0x80370102|必要な機能がインストールされていない") {
+                    Write-AppLog "==========================================" "ERROR"
+                    Write-AppLog "【エラー原因】Windows 仮想化基盤サービス (HCS: Host Compute Service) が未起動です。" "ERROR"
+                    Write-AppLog "【最も多い原因】WSL や仮想化機能をインストールした直後で、PC の再起動が行われていません。" "WARN"
+                    Write-AppLog "【対処手順 1】PC を再起動してください。再起動後に自動的に本エラーは解消されます。" "WARN"
+                    Write-AppLog "【対処手順 2】PC 再起動後も同じ場合は、BIOS で CPU 仮想化支援 (VT-x / AMD-V) を有効化してください。" "WARN"
+                    Write-AppLog "==========================================" "ERROR"
+                    Set-UIState "仮想化サービス未起動 (再起動が必要)" $brushRed $true $false
+
+                    $hcsMsg = "【WSL 仮想化基盤エラー (HCS_E_SERVICE_NOT_AVAILABLE)】`r`n`r`n" +
+                              "必要な仮想化機能が Windows 上で動作していないため、コンテナのビルドを開始できませんでした。`r`n`r`n" +
+                              "■ 最も多い原因:`r`n" +
+                              "WSL や仮想マシンプラットフォームを有効化した後、【PC の再起動】が行われていません。`r`n`r`n" +
+                              "■ 解決手順:`r`n" +
+                              "1. PC を再起動してください。`r`n" +
+                              "2. 再起動後も改善しない場合は、BIOS/UEFI で CPU の仮想化支援機能（Intel VT-x または AMD SVM）が有効になっているかご確認ください。`r`n`r`n" +
+                              "今すぐ管理者権限で仮想化機能 (VirtualMachinePlatform) の再適用を実行しますか？"
+
+                    $askFix = Show-AppConfirm -Message $hcsMsg -Title "仮想化基盤エラーの解決案内 - hayamimi"
+                    if ($askFix -eq [System.Windows.MessageBoxResult]::Yes) {
+                        Invoke-InstallWslContainers | Out-Null
+                    }
+                }
             }
         }
     } catch {
@@ -1304,7 +1893,7 @@ $buildTimer.Add_Tick({
     }
 })
 
-# ヘルスチェックタイマー (最大10分待機・初期化猶予付きコンテナ異常終了検知)
+# ヘルスチェックタイマー (最大10分待機・初期化猶予付き異常終了検知)
 $script:HealthCheckAttempts = 0
 $script:ContainerDeadCount = 0
 $healthTimer = [System.Windows.Threading.DispatcherTimer]::new()
@@ -1313,74 +1902,104 @@ $healthTimer.Interval = [TimeSpan]::FromMilliseconds(500)
 $healthTimer.Add_Tick({
     $script:HealthCheckAttempts++
 
-    # 1. コンテナ生存チェック & コンテナログ同期 (毎秒)
+    # 1. 生存チェック & ログ同期 (毎秒)
     if ($script:HealthCheckAttempts % 2 -eq 0) {
-        Update-ContainerLogFile -EchoToGui $true
+        if ($script:CurrentEngineMode -eq "Venv") {
+            Update-PythonLogFile -EchoToGui $true
 
-        $isRunning = Test-ContainerRunning
-        if ($isRunning) {
-            $script:ContainerDeadCount = 0
-        } else {
-            # 起動直後の最初の15秒間 (attempts <= 30) は状態遷移・起動ラグ猶予のため加算しない
-            if ($script:HealthCheckAttempts -gt 30) {
-                $script:ContainerDeadCount++
+            # Python プロセス生存チェック
+            $isPythonAlive = Test-PythonRunning
+            if ($script:ProcPython -and $script:ProcPython.HasExited) {
+                $isPythonAlive = $false
             }
-        }
 
-        # 連続 5 回 (約 5 秒間連続) で非生存が確認された場合のみ異常終了と判定
-        if ($script:ContainerDeadCount -ge 5) {
-            $healthTimer.Stop()
+            if (-not $isPythonAlive -and $script:HealthCheckAttempts -gt 10) {
+                $healthTimer.Stop()
+                if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
+                Update-PythonLogFile -EchoToGui $true
+                Set-UIState "Python異常停止" $brushRed $true $false
+                Write-AppLog "==========================================" "ERROR"
+                Write-AppLog "エラー: Python プロセスが異常終了しました。" "ERROR"
+                if (Test-Path $script:PythonLogFile) {
+                    $pLines = Read-FileSharedLines -FilePath $script:PythonLogFile
+                    $tailPLines = ($pLines | Where-Object { $_.Trim() } | Select-Object -Last 20) -join "`r`n"
+                    if ($tailPLines) {
+                        Write-AppLog "【Python 最終出力ログ】:`r`n$tailPLines" "ERROR"
+                    }
+                }
+                Write-AppLog "詳細ログは logs/python.log および logs/launcher.log をご確認ください。" "ERROR"
+                Write-AppLog "==========================================" "ERROR"
+                return
+            }
+        } else {
             Update-ContainerLogFile -EchoToGui $true
-            Set-UIState "コンテナ異常停止" $brushRed $true $false
-            Write-AppLog "==========================================" "ERROR"
-            Write-AppLog "エラー: コンテナ ($ContainerName) が異常終了しました。" "ERROR"
 
-            # 1. コンテナの終了状態 (ExitCode / State) を取得
-            try {
-                $pinfoInsp = [System.Diagnostics.ProcessStartInfo]::new()
-                $pinfoInsp.FileName = $script:WslcCmd
-                $pinfoInsp.Arguments = "inspect $ContainerName"
-                $pinfoInsp.RedirectStandardOutput = $true
-                $pinfoInsp.UseShellExecute = $false
-                $pinfoInsp.CreateNoWindow = $true
-                $procInsp = [System.Diagnostics.Process]::Start($pinfoInsp)
-                $inspRaw = $procInsp.StandardOutput.ReadToEnd()
-                $procInsp.WaitForExit(2000) | Out-Null
-                if ($inspRaw) {
-                    if ($inspRaw -match '"ExitCode"\s*:\s*(\d+)') {
-                        Write-AppLog "コンテナ終了コード (ExitCode): $($Matches[1])" "ERROR"
-                    }
-                    if ($inspRaw -match '"OOMKilled"\s*:\s*(true|false)') {
-                        Write-AppLog "メモリ不足強制停止 (OOMKilled): $($Matches[1])" "ERROR"
-                    }
+            $isRunning = Test-ContainerRunning
+            if ($isRunning) {
+                $script:ContainerDeadCount = 0
+            } else {
+                # 起動直後の最初の15秒間 (attempts <= 30) は状態遷移・起動ラグ猶予のため加算しない
+                if ($script:HealthCheckAttempts -gt 30) {
+                    $script:ContainerDeadCount++
                 }
-            } catch {}
+            }
 
-            # 2. コンテナの標準エラー・標準出力ログを取得して表示
-            try {
-                $pinfoFinal = [System.Diagnostics.ProcessStartInfo]::new()
-                $pinfoFinal.FileName = $script:WslcCmd
-                $pinfoFinal.Arguments = "logs $ContainerName"
-                $pinfoFinal.RedirectStandardOutput = $true
-                $pinfoFinal.RedirectStandardError = $true
-                $pinfoFinal.UseShellExecute = $false
-                $pinfoFinal.CreateNoWindow = $true
-                $procFinal = [System.Diagnostics.Process]::Start($pinfoFinal)
-                $finalRaw = $procFinal.StandardOutput.ReadToEnd()
-                $finalErr = $procFinal.StandardError.ReadToEnd()
-                $procFinal.WaitForExit(2000) | Out-Null
-                
-                $combinedLogs = ($finalRaw + "`r`n" + $finalErr).Trim()
-                if ($combinedLogs) {
-                    $tailLines = ($combinedLogs -split "[\r\n]+" | Where-Object { $_.Trim() } | Select-Object -Last 25) -join "`r`n"
-                    if ($tailLines) {
-                        Write-AppLog "【コンテナ終了時の最終出力ログ】:`r`n$tailLines" "ERROR"
+            # 連続 5 回 (約 5 秒間連続) で非生存が確認された場合のみ異常終了と判定
+            if ($script:ContainerDeadCount -ge 5) {
+                $healthTimer.Stop()
+                if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
+                Update-ContainerLogFile -EchoToGui $true
+                Set-UIState "コンテナ異常停止" $brushRed $true $false
+                Write-AppLog "==========================================" "ERROR"
+                Write-AppLog "エラー: コンテナ ($ContainerName) が異常終了しました。" "ERROR"
+
+                # 1. コンテナの終了状態 (ExitCode / State) を取得
+                try {
+                    $pinfoInsp = [System.Diagnostics.ProcessStartInfo]::new()
+                    $pinfoInsp.FileName = $script:WslcCmd
+                    $pinfoInsp.Arguments = "inspect $ContainerName"
+                    $pinfoInsp.RedirectStandardOutput = $true
+                    $pinfoInsp.UseShellExecute = $false
+                    $pinfoInsp.CreateNoWindow = $true
+                    $procInsp = [System.Diagnostics.Process]::Start($pinfoInsp)
+                    $inspRaw = $procInsp.StandardOutput.ReadToEnd()
+                    $procInsp.WaitForExit(2000) | Out-Null
+                    if ($inspRaw) {
+                        if ($inspRaw -match '"ExitCode"\s*:\s*(\d+)') {
+                            Write-AppLog "コンテナ終了コード (ExitCode): $($Matches[1])" "ERROR"
+                        }
+                        if ($inspRaw -match '"OOMKilled"\s*:\s*(true|false)') {
+                            Write-AppLog "メモリ不足強制停止 (OOMKilled): $($Matches[1])" "ERROR"
+                        }
                     }
-                }
-            } catch {}
-            Write-AppLog "詳細ログは logs/container.log および logs/launcher.log をご確認ください。" "ERROR"
-            Write-AppLog "==========================================" "ERROR"
-            return
+                } catch {}
+
+                # 2. コンテナの標準エラー・標準出力ログを取得して表示
+                try {
+                    $pinfoFinal = [System.Diagnostics.ProcessStartInfo]::new()
+                    $pinfoFinal.FileName = $script:WslcCmd
+                    $pinfoFinal.Arguments = "logs $ContainerName"
+                    $pinfoFinal.RedirectStandardOutput = $true
+                    $pinfoFinal.RedirectStandardError = $true
+                    $pinfoFinal.UseShellExecute = $false
+                    $pinfoFinal.CreateNoWindow = $true
+                    $procFinal = [System.Diagnostics.Process]::Start($pinfoFinal)
+                    $finalRaw = $procFinal.StandardOutput.ReadToEnd()
+                    $finalErr = $procFinal.StandardError.ReadToEnd()
+                    $procFinal.WaitForExit(2000) | Out-Null
+                    
+                    $combinedLogs = ($finalRaw + "`r`n" + $finalErr).Trim()
+                    if ($combinedLogs) {
+                        $tailLines = ($combinedLogs -split "[\r\n]+" | Where-Object { $_.Trim() } | Select-Object -Last 25) -join "`r`n"
+                        if ($tailLines) {
+                            Write-AppLog "【コンテナ終了時の最終出力ログ】:`r`n$tailLines" "ERROR"
+                        }
+                    }
+                } catch {}
+                Write-AppLog "詳細ログは logs/container.log および logs/launcher.log をご確認ください。" "ERROR"
+                Write-AppLog "==========================================" "ERROR"
+                return
+            }
         }
     }
 
@@ -1389,7 +2008,7 @@ $healthTimer.Add_Tick({
         $elapsedSec = [int]($script:HealthCheckAttempts / 2)
         Set-UIState "準備中 (${elapsedSec}s)..." $brushOrange $false $true
         if ($elapsedSec % 30 -eq 0) {
-            Write-AppLog "サーバー初期化中 (${elapsedSec}秒経過)... モデルDLおよびロード完了までそのままお待ちください。" "INFO"
+            Write-AppLog "サーバー初期化中 (${elapsedSec}秒経過)... モデルロード完了までそのままお待ちください。" "INFO"
         }
     }
 
@@ -1408,7 +2027,12 @@ $healthTimer.Add_Tick({
 
     if ($ready) {
         $healthTimer.Stop()
-        Update-ContainerLogFile -EchoToGui $true
+        if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
+        if ($script:CurrentEngineMode -eq "Venv") {
+            Update-PythonLogFile -EchoToGui $true
+        } else {
+            Update-ContainerLogFile -EchoToGui $true
+        }
         Set-UIState "稼働中 (8833 / 8766)" $brushGreen $false $true
         Write-AppLog "✔ サーバー起動完了！ブラウザを開きます: $MicUrl" "INFO"
         try {
@@ -1419,57 +2043,79 @@ $healthTimer.Add_Tick({
     } elseif ($script:HealthCheckAttempts -ge 1200) {
         # 10分 (1200 * 0.5s = 600s) 経過でタイムアウト
         $healthTimer.Stop()
-        Update-ContainerLogFile -EchoToGui $true
+        if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
+        if ($script:CurrentEngineMode -eq "Venv") {
+            Update-PythonLogFile -EchoToGui $true
+        } else {
+            Update-ContainerLogFile -EchoToGui $true
+        }
         Set-UIState "待機タイムアウト" $brushRed $true $true
-        Write-AppLog "サーバーの応答待機がタイムアウトしました (10分経過)。logs/container.log をご確認ください。" "ERROR"
+        Write-AppLog "サーバーの応答待機がタイムアウトしました (10分経過)。logs フォルダ内のログをご確認ください。" "ERROR"
     }
 })
 
 # 起動ボタン処理
 $btnStart.Add_Click({
     try {
-        # 1. 仮想化基盤 (Hypervisor / BIOS VT-x) チェック
-        $diag = Get-VirtualizationDiagnostic
-        if (-not $diag.IsReady) {
-            Update-WslcBannerState | Out-Null
-            if ($diag.Reason -eq "BiosDisabled") {
-                Show-BiosVirtualizationGuide -Diag $diag
-                return
-            } else {
-                $askVmp = Show-AppConfirm -Message "Windows の仮想化基盤 (VirtualMachinePlatform) が無効、またはPCの再起動待ちです。`r`n`r`n今すぐ全自動で仮想化基盤と WSL 3.0 を有効化しますか？`r`n(管理者権限の設定画面が開きます)" -Title "仮想化基盤の有効化 - hayamimi"
-                if ($askVmp -eq [System.Windows.MessageBoxResult]::Yes) {
-                    Invoke-InstallWslContainers | Out-Null
+        if ($script:CurrentEngineMode -eq "Venv") {
+            # Python venv モード
+            $venvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+            if (-not (Test-Path $venvPython)) {
+                Write-AppLog "【初回検知】Python 仮想環境 (.venv) が未構築です。自動セットアップを開始します..." "INFO"
+                $ok = Invoke-SetupPythonVenv
+                if (-not $ok) { return }
+            }
+            Start-PythonVenvApp
+        } else {
+            # WSL Containers モード
+            # 1. 仮想化基盤 (Hypervisor / BIOS VT-x / HCS) チェック
+            $diag = Get-VirtualizationDiagnostic
+            if (-not $diag.IsReady) {
+                Update-EngineBannerState | Out-Null
+                if ($diag.Reason -eq "BiosDisabled") {
+                    Show-BiosVirtualizationGuide -Diag $diag
+                    return
+                } elseif ($diag.Reason -eq "HcsServiceUnavailable") {
+                    $askHcs = Show-AppConfirm -Message "仮想化基盤サービス (HCS) が未準備です。`r`n`r`n【最も多い原因】`r`nWSL や仮想化機能のインストール後に【PCの再起動】が行われていません。`r`n`r`nPCを再起動してから再度お試しください。`r`n`r`n今すぐ仮想化機能の修復を実行しますか？" -Title "仮想化基盤の確認 - hayamimi"
+                    if ($askHcs -eq [System.Windows.MessageBoxResult]::Yes) {
+                        Invoke-InstallWslContainers | Out-Null
+                    }
+                    return
+                } else {
+                    $askVmp = Show-AppConfirm -Message "Windows の仮想化基盤 (VirtualMachinePlatform) が無効、またはPCの再起動待ちです。`r`n`r`n今すぐ全自動で仮想化基盤と WSL 3.0 を有効化しますか？`r`n(管理者権限の設定画面が開きます)" -Title "仮想化基盤の有効化 - hayamimi"
+                    if ($askVmp -eq [System.Windows.MessageBoxResult]::Yes) {
+                        Invoke-InstallWslContainers | Out-Null
+                    }
+                    return
                 }
+            }
+
+            # 2. WSL Containers (wslc.exe) 存在確認
+            $script:WslcCmd = Get-WslcCommand
+            if (-not $script:WslcCmd) {
+                Update-EngineBannerState | Out-Null
+                Set-UIState "WSL3 未検出" $brushOrange $true $false
+                Write-AppLog "【案内】WSL 3.0 / WSL Containers (wslc.exe) が未インストールです。" "WARN"
+
+                $msgRes = Show-AppConfirm -Message "hayamimi を動かすには WSL 3.0 (WSL Containers) が必要です。`r`n`r`n今すぐ自動でインストールを開始しますか？" -Title "WSL 3.0 の自動インストール - hayamimi"
+                if ($msgRes -eq [System.Windows.MessageBoxResult]::Yes) {
+                    $installed = Invoke-InstallWslContainers
+                    if (-not $installed) { return }
+                } else {
+                    return
+                }
+            }
+
+            # 3. コンテナイメージの存在確認 (未ビルド環境の場合は全自動ビルドして起動)
+            if (-not (Test-HayamimiImageExists)) {
+                Write-AppLog "【初回検知】hayamimi コンテナイメージが未構築です。自動ビルドを開始します..." "INFO"
+                Invoke-BuildContainerImage -Force $false -AutoStart $true | Out-Null
                 return
             }
+
+            # 4. 通常起動
+            Start-HayamimiContainer
         }
-
-        # 2. WSL Containers (wslc.exe) 存在確認
-        $script:WslcCmd = Get-WslcCommand
-        if (-not $script:WslcCmd) {
-            Update-WslcBannerState | Out-Null
-            Set-UIState "WSL3 未検出" $brushOrange $true $false
-            Write-AppLog "【案内】WSL 3.0 / WSL Containers (wslc.exe) が未インストールです。" "WARN"
-
-            $msgRes = Show-AppConfirm -Message "hayamimi を動かすには WSL 3.0 (WSL Containers) が必要です。`r`n`r`n今すぐ自動でインストールを開始しますか？" -Title "WSL 3.0 の自動インストール - hayamimi"
-            if ($msgRes -eq [System.Windows.MessageBoxResult]::Yes) {
-                $installed = Invoke-InstallWslContainers
-                if (-not $installed) { return }
-            } else {
-                return
-            }
-        }
-
-        # 2. コンテナイメージの存在確認 (未ビルド環境の場合は全自動ビルドして起動)
-        if (-not (Test-HayamimiImageExists)) {
-            Write-AppLog "【初回検知】hayamimi コンテナイメージが未構築です。自動ビルドを開始します..." "INFO"
-            Invoke-BuildContainerImage -Force $false -AutoStart $true | Out-Null
-            return
-        }
-
-        # 3. 通常起動
-        Start-HayamimiContainer
-
     } catch {
         Write-AppLog "起動ボタン処理エラー: $_" "ERROR"
         Set-UIState "エラー" $brushRed $true $false
@@ -1483,16 +2129,23 @@ if ($btnUpdateApp) {
     })
 }
 
-# リビルドボタン処理 (ソースコード更新時の再構築・完全例外保護)
+# 再構築・リビルドボタン処理
 if ($btnRebuild) {
     $btnRebuild.Add_Click({
         try {
-            $confirm = Show-AppConfirm -Message "最新のソースコードをコンテナイメージに反映（リビルド）しますか？`r`n`r`n※ 実行には数分かかる場合があります。" -Title "コンテナのリビルド - hayamimi"
-            if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
-                Invoke-BuildContainerImage -Force $true -AutoStart $false | Out-Null
+            if ($script:CurrentEngineMode -eq "Venv") {
+                $confirm = Show-AppConfirm -Message "Python venv 環境の依存パッケージ (requirements.txt) を再セットアップしますか？" -Title "環境セットアップ - hayamimi"
+                if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
+                    Invoke-SetupPythonVenv -ForceRecreate $false | Out-Null
+                }
+            } else {
+                $confirm = Show-AppConfirm -Message "最新のソースコードをコンテナイメージに反映（リビルド）しますか？`r`n`r`n※ 実行には数分かかる場合があります。" -Title "コンテナのリビルド - hayamimi"
+                if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
+                    Invoke-BuildContainerImage -Force $true -AutoStart $false | Out-Null
+                }
             }
         } catch {
-            Write-AppLog "リビルド処理中にエラーが発生しました: $_" "ERROR"
+            Write-AppLog "再構築処理中にエラーが発生しました: $_" "ERROR"
             Set-UIState "エラー" $brushRed $true $false
             if ($btnRebuild) { $btnRebuild.IsEnabled = $true }
         }
@@ -1504,29 +2157,31 @@ $btnStop.Add_Click({
     try {
         $healthTimer.Stop()
         Set-UIState "停止処理中..." $brushOrange $false $false
-        Write-AppLog "hayamimi コンテナを停止しています..."
 
-        # 停止前に最新コンテナログを保存
-        Update-ContainerLogFile
+        if ($script:CurrentEngineMode -eq "Venv") {
+            Stop-PythonVenvApp
+        } else {
+            Write-AppLog "hayamimi コンテナを停止しています..."
+            Update-ContainerLogFile
+            if ($script:WslcCmd) {
+                $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
+                $pinfoStop.FileName = $script:WslcCmd
+                $pinfoStop.Arguments = "stop $ContainerName"
+                $pinfoStop.UseShellExecute = $false
+                $pinfoStop.CreateNoWindow = $true
+                $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
+                $procStop.WaitForExit()
 
-        if ($script:WslcCmd) {
-            $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
-            $pinfoStop.FileName = $script:WslcCmd
-            $pinfoStop.Arguments = "stop $ContainerName"
-            $pinfoStop.UseShellExecute = $false
-            $pinfoStop.CreateNoWindow = $true
-            $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
-            $procStop.WaitForExit()
-
-            $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
-            $pinfoRm.FileName = $script:WslcCmd
-            $pinfoRm.Arguments = "remove $ContainerName"
-            $pinfoRm.UseShellExecute = $false
-            $pinfoRm.CreateNoWindow = $true
-            $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
-            $procRm.WaitForExit()
+                $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
+                $pinfoRm.FileName = $script:WslcCmd
+                $pinfoRm.Arguments = "remove $ContainerName"
+                $pinfoRm.UseShellExecute = $false
+                $pinfoRm.CreateNoWindow = $true
+                $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
+                $procRm.WaitForExit()
+            }
+            Write-AppLog "コンテナを正常に終了・クリーンアップしました。"
         }
-        Write-AppLog "コンテナを正常に終了・クリーンアップしました。ランチャーを閉じます。"
 
         $window.Close()
     } catch {
@@ -1534,6 +2189,37 @@ $btnStop.Add_Click({
         $window.Close()
     }
 })
+
+# 実行基盤ラジオボタン処理 (稼働中安全停止確認付き)
+if ($rbModeVenv) {
+    $rbModeVenv.Add_Checked({
+        Handle-EngineModeSwitch -TargetMode "Venv" -TargetRb $rbModeVenv -OtherRb $rbModeWslc
+    })
+}
+if ($rbModeWslc) {
+    $rbModeWslc.Add_Checked({
+        Handle-EngineModeSwitch -TargetMode "Wslc" -TargetRb $rbModeWslc -OtherRb $rbModeVenv
+    })
+}
+
+# 常設 WSL 3.0 セットアップボタンの処理
+if ($btnInstallWslAlways) {
+    $btnInstallWslAlways.Add_Click({
+        try {
+            Invoke-InstallWslContainers | Out-Null
+            Update-EngineBannerState | Out-Null
+        } catch {
+            Write-AppLog "WSL3 セットアップ処理エラー: $_" "ERROR"
+        }
+    })
+}
+
+# Python 環境セットアップボタンの処理
+if ($btnSetupEnv) {
+    $btnSetupEnv.Add_Click({
+        Invoke-SetupPythonVenv | Out-Null
+    })
+}
 
 # BIOS 設定ガイドボタンの処理
 if ($btnBiosGuide) {
@@ -1546,14 +2232,18 @@ if ($btnBiosGuide) {
     })
 }
 
-# WSL & 仮想化 自動セットアップボタンの処理
+# WSL & 仮想化 自動セットアップ / Python セットアップ ボタンの処理
 if ($btnUpdateWsl) {
     $btnUpdateWsl.Add_Click({
         try {
-            Invoke-InstallWslContainers | Out-Null
-            Update-WslcBannerState | Out-Null
+            if ($script:CurrentEngineMode -eq "Venv") {
+                Invoke-SetupPythonVenv | Out-Null
+            } else {
+                Invoke-InstallWslContainers | Out-Null
+                Update-EngineBannerState | Out-Null
+            }
         } catch {
-            Write-AppLog "WSL/仮想化セットアップ処理エラー: $_" "ERROR"
+            Write-AppLog "セットアップ処理エラー: $_" "ERROR"
         }
     })
 }
@@ -1564,6 +2254,15 @@ $btnOpenObs.Add_Click({ Start-Process $ObsUrl })
 $btnOpenDashboard.Add_Click({ Start-Process $DashboardUrl })
 $btnClearLog.Add_Click({ $logTextBox.Clear() })
 
+if ($btnOpenPythonLog) {
+    $btnOpenPythonLog.Add_Click({
+        if (Test-Path $script:PythonLogFile) {
+            Start-Process $script:PythonLogFile
+        } else {
+            Write-AppLog "python.log はまだ生成されていません。" "WARN"
+        }
+    })
+}
 $btnOpenContainerLog.Add_Click({
     if (Test-Path $ContainerLogFile) {
         Start-Process $ContainerLogFile
@@ -1595,6 +2294,12 @@ $window.Add_Closing({
         try { $script:ProcBuild.Kill() } catch {}
     }
 
+    if (Test-PythonRunning) {
+        $script:IsClosing = $true
+        Write-AppLog "ウィンドウが閉じられたため、Python プロセスを停止します..."
+        Stop-PythonVenvApp -Silent $true
+    }
+
     if (Test-ContainerRunning) {
         $script:IsClosing = $true
         Write-AppLog "ウィンドウが閉じられたため、コンテナを停止して終了します..."
@@ -1621,14 +2326,18 @@ $window.Add_Closing({
     }
 })
 
-# 定期ポーリングタイマー (コンテナログも同期)
+# 定期ポーリングタイマー (ログ同期 & 稼働チェック)
 $pollTimer = [System.Windows.Threading.DispatcherTimer]::new()
 $pollTimer.Interval = [TimeSpan]::FromSeconds(3)
 $pollTimer.Add_Tick({
     if (-not $healthTimer.IsEnabled -and -not $script:IsClosing) {
-        $isRunning = Test-ContainerRunning
+        $isRunning = Test-AppRunning
         if ($isRunning) {
-            Update-ContainerLogFile -EchoToGui $true
+            if ($script:CurrentEngineMode -eq "Venv") {
+                Update-PythonLogFile -EchoToGui $true
+            } else {
+                Update-ContainerLogFile -EchoToGui $true
+            }
             if ($statusText.Text -notmatch "稼働中") {
                 Set-UIState "稼働中 (8833 / 8766)" $brushGreen $false $true
             }
@@ -1638,67 +2347,87 @@ $pollTimer.Add_Tick({
     }
 })
 
-# logs/container.log の事前初期化
+# ログファイルの事前初期化
 if (-not (Test-Path $ContainerLogFile)) {
     try {
         [System.IO.File]::WriteAllText($ContainerLogFile, "# hayamimi コンテナログ`r`n# コンテナ起動時に自動記録されます。`r`n", [System.Text.Encoding]::UTF8)
     } catch {}
 }
+if (-not (Test-Path $script:PythonLogFile)) {
+    try {
+        [System.IO.File]::WriteAllText($script:PythonLogFile, "# hayamimi Pythonログ`r`n# Python venv 起動時に自動記録されます。`r`n", [System.Text.Encoding]::UTF8)
+    } catch {}
+}
 
 # 初期化処理
+$initMode = Get-InitialEngineMode
+if ($initMode -eq "Wslc") {
+    if ($rbModeWslc) { $rbModeWslc.IsChecked = $true }
+} else {
+    if ($rbModeVenv) { $rbModeVenv.IsChecked = $true }
+}
+Set-EngineMode $initMode
+Update-GpuDeviceBadge
+
 Write-AppLog "=========================================="
 Write-AppLog "hayamimi ランチャー $version を起動しました ($($runtimeBadge.Text))."
+Write-AppLog "現在の実行基盤モード: $script:CurrentEngineMode"
 Write-AppLog "ランチャーログ: $LogFile"
+Write-AppLog "Pythonログ:     $script:PythonLogFile"
 Write-AppLog "コンテナログ:   $ContainerLogFile"
-Write-AppLog "WSL Containers (WSL3) および仮想化環境を確認中..."
 
-$isEnvReady = Update-WslcBannerState
-
-if ($isEnvReady) {
-    Write-AppLog "✔ WSL Containers 検出: $script:WslcCmd"
-    Write-AppLog "✔ Hypervisor 仮想化基盤: 正常稼働中"
-    
-    if (Test-ContainerRunning) {
-        Write-AppLog "既存の hayamimi コンテナが稼働中です。"
-        Update-ContainerLogFile -EchoToGui $true
-        Set-UIState "稼働中 (8833 / 8766)" $brushGreen $false $true
+if ($script:CurrentEngineMode -eq "Venv") {
+    $venvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+    if (Test-Path $venvPython) {
+        Write-AppLog "✔ Python 仮想環境 (.venv) 検出: 準備完了"
     } else {
-        Write-AppLog "「コンテナ起動 & Webを開く」ボタンを押してください。"
-        Set-UIState "停止中" $brushGray $true $false
+        Write-AppLog "【案内】Python 仮想環境 (.venv) が未構築です。「📥 Python環境を自動構築」または起動ボタンを押してください。" "WARN"
     }
 } else {
-    $diag = Get-VirtualizationDiagnostic
-    if (-not $diag.IsReady) {
-        if ($diag.Reason -eq "BiosDisabled") {
-            Write-AppLog "【警告】CPU ハードウェア仮想化 ($($diag.CpuVendor): VT-x / AMD-V) が BIOS で無効です。" "WARN"
-            Write-AppLog "【案内】hayamimi を動かすには BIOS/UEFI で仮想化を有効にする必要があります。" "WARN"
-            Write-AppLog "【解決方法】「📖 BIOS 設定ガイド」ボタンから有効化手順をご確認ください。" "WARN"
-            Set-UIState "BIOS 仮想化無効" $brushOrange $true $false
-        } else {
-            Write-AppLog "【警告】Windows 仮想化機能 (VirtualMachinePlatform) が無効、または再起動待ちです。" "WARN"
-            Write-AppLog "【解決方法】「📥 仮想化基盤 & WSL3 自動設定」ボタンを押してください。" "WARN"
-            Set-UIState "仮想化基盤無効" $brushOrange $true $false
+    Write-AppLog "WSL Containers (WSL3) および仮想化環境を確認中..."
+    $isEnvReady = Update-EngineBannerState
+    if ($isEnvReady) {
+        Write-AppLog "✔ WSL Containers 検出: $script:WslcCmd"
+        Write-AppLog "✔ Hypervisor 仮想化基盤: 正常稼働中"
+    } else {
+        $diag = Get-VirtualizationDiagnostic
+        if (-not $diag.IsReady) {
+            if ($diag.Reason -eq "BiosDisabled") {
+                Write-AppLog "【警告】CPU ハードウェア仮想化 ($($diag.CpuVendor): VT-x / AMD-V) が BIOS で無効です。" "WARN"
+            } elseif ($diag.Reason -eq "HcsServiceUnavailable") {
+                Write-AppLog "【警告】仮想化基盤サービス (HCS) が未準備です (エラー: HCS_E_SERVICE_NOT_AVAILABLE)。" "WARN"
+            } else {
+                Write-AppLog "【警告】Windows 仮想化機能 (VirtualMachinePlatform) が無効、または再起動待ちです。" "WARN"
+            }
+        } elseif (-not $script:WslcCmd) {
+            Write-AppLog "【警告】WSL 3.0 / WSL Containers (wslc.exe) が検出されませんでした。" "WARN"
         }
-    } elseif (-not $script:WslcCmd) {
-        Write-AppLog "【警告】WSL 3.0 / WSL Containers (wslc.exe) が検出されませんでした。" "WARN"
-        Write-AppLog "【解決方法】「📥 仮想化 & WSL3 自動設定」ボタンから全自動セットアップを実行できます。" "WARN"
-        Set-UIState "WSL3 未検出" $brushOrange $true $false
     }
+}
 
-    # 画面描画完了時に自動でガイドまたはインストール確認ダイアログを表示
-    $window.Add_ContentRendered({
+# 稼働中の既存プロセス検出
+if (Test-AppRunning) {
+    Write-AppLog "既存の hayamimi ($script:CurrentEngineMode) が稼働中です。"
+    Set-UIState "稼働中 (8833 / 8766)" $brushGreen $false $true
+} else {
+    Set-UIState "停止中" $brushGray $true $false
+}
+
+# 画面描画完了時のダイアログガイダンス (Wslc モード選択時のみ)
+$window.Add_ContentRendered({
+    if ($script:CurrentEngineMode -eq "Wslc") {
         $curDiag = Get-VirtualizationDiagnostic
         if (-not $curDiag.IsReady -and $curDiag.Reason -eq "BiosDisabled") {
             Show-BiosVirtualizationGuide -Diag $curDiag
         } elseif (-not $script:WslcCmd -or -not $curDiag.IsReady) {
-            $ask = Show-AppConfirm -Message "hayamimi の実行に必要な仮想化機能または WSL 3.0 がセットアップされていません。`r`n`r`n今すぐ全自動で仮想化基盤と WSL 3.0 のセットアップを開始しますか？`r`n(管理者権限のインストール画面が開きます)" -Title "環境セットアップ - hayamimi"
+            $ask = Show-AppConfirm -Message "hayamimi の実行に必要な仮想化機能または WSL 3.0 がセットアップされていません。`r`n`r`n※ Python venv モードを選択すれば、仮想化の設定なしで今すぐ動かせます。`r`n`r`nWSL 3.0 のセットアップを開始しますか？`r`n(管理者権限のインストール画面が開きます)" -Title "環境セットアップ - hayamimi"
             if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
                 Invoke-InstallWslContainers | Out-Null
-                Update-WslcBannerState | Out-Null
+                Update-EngineBannerState | Out-Null
             }
         }
-    })
-}
+    }
+})
 
 $pollTimer.Start()
 
