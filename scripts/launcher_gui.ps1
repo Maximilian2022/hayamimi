@@ -1,4 +1,4 @@
-﻿$version = "GUI v1.1.1"
+﻿$version = "GUI v1.1.2"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -218,7 +218,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi - WSL3 ランチャー (GUI v1.0.2)"
+        Title="hayamimi ランチャー (GUI v1.1.2)"
         Height="610" Width="660"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanMinimize"
@@ -292,7 +292,7 @@ function Update-ContainerLogFile {
                         <TextBlock x:Name="GpuBadge" Text="⚡ GPU: 検出中..." FontSize="11" Foreground="#2ECC71" FontWeight="SemiBold"/>
                     </Border>
                     <Border Background="#242C3D" CornerRadius="12" Padding="10,4" Margin="0,0,8,0" BorderBrush="#3A465D" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.1.1" FontSize="11" Foreground="#F6AD55" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.1.2" FontSize="11" Foreground="#F6AD55" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#1A202C" CornerRadius="12" Padding="10,4">
                         <TextBlock x:Name="RuntimeBadge" Text="Python venv" FontSize="11" Foreground="#4FD1C5" FontWeight="SemiBold"/>
@@ -589,12 +589,15 @@ $brushGreen  = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#
 $brushOrange = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F39C12")
 $brushRed    = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#E74C3C")
 
+$script:HasNvidiaGpu = $false
+
 # GPU / ハードウェアアクセラレーション状態の検出とバッジ更新
 function Update-GpuDeviceBadge {
     try {
         $gpus = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue
         $nvidiaGpu = $gpus | Where-Object { $_.Name -match "NVIDIA|GeForce|RTX|GTX|Quadro|Tesla" } | Select-Object -First 1
         if ($nvidiaGpu) {
+            $script:HasNvidiaGpu = $true
             $gpuShortName = $nvidiaGpu.Name -replace "NVIDIA\s*", ""
             if ($gpuBadge) {
                 $gpuBadge.Text = "⚡ GPU: $gpuShortName (CUDA)"
@@ -608,6 +611,7 @@ function Update-GpuDeviceBadge {
             return
         }
 
+        $script:HasNvidiaGpu = $false
         # NVIDIA GPU が無い場合は CPU 推論として表示
         if ($gpuBadge) {
             $gpuBadge.Text = "⚙ CPU 推論 (AVX2)"
@@ -618,6 +622,7 @@ function Update-GpuDeviceBadge {
             $gpuBadgeBorder.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#15202B")
         }
     } catch {
+        $script:HasNvidiaGpu = $false
         if ($gpuBadge) { $gpuBadge.Text = "⚙ CPU 推論" }
     }
 }
@@ -1495,6 +1500,13 @@ function Start-HayamimiContainer {
             Write-AppLog "config ディレクトリを作成しました: $configDir"
         }
 
+        # NVIDIA GPU パススルー オプション (--gpus all)
+        $gpuArg = ""
+        if ($script:HasNvidiaGpu) {
+            $gpuArg = "--gpus all "
+            Write-AppLog "NVIDIA GPU を検出しました。GPU パススルー (--gpus all) を有効にしてコンテナを起動します..." "INFO"
+        }
+
         # コンテナ起動 (wslc run -d)
         Write-AppLog "wslc run を実行中 (ポート 8833, 8766)..."
         $volumeModels = "${modelsDir}:/app/models"
@@ -1502,7 +1514,7 @@ function Start-HayamimiContainer {
 
         $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
         $pinfo.FileName = $script:WslcCmd
-        $pinfo.Arguments = "run -d --name $ContainerName -p 8833:8833 -p 8766:8766 -v `"$volumeModels`" -v `"$volumeConfig`" $ImageName --translate en"
+        $pinfo.Arguments = "run -d --name $ContainerName $gpuArg-p 8833:8833 -p 8766:8766 -v `"$volumeModels`" -v `"$volumeConfig`" $ImageName --translate en"
         $pinfo.RedirectStandardOutput = $true
         $pinfo.RedirectStandardError = $true
         $pinfo.UseShellExecute = $false
@@ -1512,6 +1524,16 @@ function Start-HayamimiContainer {
         $stdout = $proc.StandardOutput.ReadToEnd()
         $stderr = $proc.StandardError.ReadToEnd()
         $proc.WaitForExit()
+
+        # 万一 --gpus all による起動が失敗した場合、GPUなしでフォールバック再試行
+        if ($proc.ExitCode -ne 0 -and $gpuArg -ne "") {
+            Write-AppLog "GPU パススルー起動で問題が発生したため、CPU モードで再試行します..." "WARN"
+            $pinfo.Arguments = "run -d --name $ContainerName -p 8833:8833 -p 8766:8766 -v `"$volumeModels`" -v `"$volumeConfig`" $ImageName --translate en"
+            $proc = [System.Diagnostics.Process]::Start($pinfo)
+            $stdout = $proc.StandardOutput.ReadToEnd()
+            $stderr = $proc.StandardError.ReadToEnd()
+            $proc.WaitForExit()
+        }
 
         if ($proc.ExitCode -ne 0) {
             Write-AppLog "エラー: コンテナの起動に失敗しました (ExitCode: $($proc.ExitCode))" "ERROR"

@@ -1047,11 +1047,14 @@
     localStorage.setItem("hayamimi_split_mode", isSplit ? "1" : "0");
   }
 
-  // 直前のタブや分割モードの復元
-  if (localStorage.getItem("hayamimi_split_mode") === "1" && window.innerWidth > 1024) {
+  // 直前のタブや分割モードの復元 (PC環境ではデフォルトで分割表示)
+  const savedSplitMode = localStorage.getItem("hayamimi_split_mode");
+  const isDefaultSplit = savedSplitMode === null ? true : savedSplitMode === "1";
+  if (isDefaultSplit && window.innerWidth > 1024) {
     splitToggle.checked = true;
     toggleSplitMode(true);
   } else {
+    splitToggle.checked = false;
     const savedTab = localStorage.getItem("hayamimi_active_tab") || "mic";
     switchTab(savedTab);
   }

@@ -1100,7 +1100,22 @@ def translate_by_sentence(translator, text: str) -> str:
     return " ".join(out)
 
 
-def _build_translator(lang: str):
+def _detect_translator_device() -> str:
+    """Detect preferred compute device for translation (cuda if available, else cpu)."""
+    env_device = os.environ.get("HAYAMIMI_DEVICE", "").strip().lower()
+    if env_device in ("cuda", "cpu"):
+        return env_device
+    try:
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() > 0:
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
+def _build_translator(lang: str, device: str | None = None):
     """One target language code -> a constructed translator instance.
 
     en uses the dedicated FuguMT module; any other target is accepted if
@@ -1110,15 +1125,32 @@ def _build_translator(lang: str):
     VALIDATED_TARGETS); TranslatorM2M itself prints a note to stderr for
     an unvalidated one but still constructs it.
     """
+    if device is None:
+        device = _detect_translator_device()
+
     if lang == "en":
         from translate_ja_en import TranslatorJaEn
 
-        return TranslatorJaEn()
+        try:
+            return TranslatorJaEn(device=device)
+        except Exception as exc:
+            if device != "cpu":
+                print(f"[warning] failed to load ja-en translator on {device} ({exc}), falling back to cpu", file=sys.stderr)
+                return TranslatorJaEn(device="cpu")
+            raise
+
     from translate_m2m import TranslatorM2M, is_supported_target
 
     if not is_supported_target(lang):
         raise ValueError(f"unsupported translation target: {lang}")
-    return TranslatorM2M(lang)
+
+    try:
+        return TranslatorM2M(lang, device=device)
+    except Exception as exc:
+        if device != "cpu":
+            print(f"[warning] failed to load ja-{lang} translator on {device} ({exc}), falling back to cpu", file=sys.stderr)
+            return TranslatorM2M(lang, device="cpu")
+        raise
 
 
 class TranslatorPool:
