@@ -1426,11 +1426,37 @@
             chk.checked = cfg.translate.includes(chk.value);
           });
         } else {
-          document.getElementById("cfg-trans-enable").checked = false;
-          document.getElementById("trans-lang-group").style.display = "none";
-          document.querySelectorAll('input[name="trans-lang"]').forEach(chk => {
-            chk.checked = false;
-          });
+          // サーバー側に翻訳設定が未設定の場合、クライアントの localStorage から自動復元を試みる
+          let restoredFromLocal = false;
+          try {
+            const localCfgRaw = localStorage.getItem("hayamimi_asr_config");
+            if (localCfgRaw) {
+              const localCfg = JSON.parse(localCfgRaw);
+              if (localCfg.translate && localCfg.translate.length > 0) {
+                document.getElementById("cfg-trans-enable").checked = true;
+                document.getElementById("trans-lang-group").style.display = "flex";
+                document.querySelectorAll('input[name="trans-lang"]').forEach(chk => {
+                  chk.checked = localCfg.translate.includes(chk.value);
+                });
+                restoredFromLocal = true;
+                // サーバー側へ同期
+                fetch("/config", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ translate: localCfg.translate })
+                }).catch(() => {});
+              }
+            }
+          } catch (e) {
+            console.warn("localStorage translate restore error:", e);
+          }
+          if (!restoredFromLocal) {
+            document.getElementById("cfg-trans-enable").checked = false;
+            document.getElementById("trans-lang-group").style.display = "none";
+            document.querySelectorAll('input[name="trans-lang"]').forEach(chk => {
+              chk.checked = false;
+            });
+          }
         }
         updateTransPillStates();
         if (cfg.punctuate != null) {

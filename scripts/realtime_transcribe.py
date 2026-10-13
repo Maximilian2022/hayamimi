@@ -1117,17 +1117,13 @@ def translate_by_sentence(translator, text: str) -> str:
 
 
 def _detect_translator_device() -> str:
-    """Detect preferred compute device for translation (cuda if available, else cpu)."""
+    """Detect preferred compute device for translation (cpu by default for rock-solid stability, or cuda if explicitly set)."""
     env_device = os.environ.get("HAYAMIMI_DEVICE", "").strip().lower()
     if env_device in ("cuda", "cpu"):
         return env_device
-    try:
-        import ctranslate2
-
-        if ctranslate2.get_cuda_device_count() > 0:
-            return "cuda"
-    except Exception:
-        pass
+    # CTranslate2 on Windows frequently suffers from missing cublas64_12.dll when using CUDA.
+    # CPU int8 translation executes in ~20-80ms (far faster than speech cadence),
+    # so CPU is the safe and dependable default unless HAYAMIMI_DEVICE=cuda is explicitly requested.
     return "cpu"
 
 
@@ -1148,7 +1144,13 @@ def _build_translator(lang: str, device: str | None = None):
         from translate_ja_en import TranslatorJaEn
 
         try:
-            return TranslatorJaEn(device=device)
+            tr = TranslatorJaEn(device=device)
+            if device != "cpu":
+                # Warm-up / smoke test to ensure CUDA runtime libraries actually work
+                _test = tr.translate("テスト")
+                if _test == "テスト" and tr.device == "cpu":
+                    device = "cpu"
+            return tr
         except Exception as exc:
             if device != "cpu":
                 print(f"[warning] failed to load ja-en translator on {device} ({exc}), falling back to cpu", file=sys.stderr)
@@ -1161,7 +1163,13 @@ def _build_translator(lang: str, device: str | None = None):
         raise ValueError(f"unsupported translation target: {lang}")
 
     try:
-        return TranslatorM2M(lang, device=device)
+        tr = TranslatorM2M(lang, device=device)
+        if device != "cpu":
+            # Warm-up / smoke test to ensure CUDA runtime libraries actually work
+            _test = tr.translate("テスト")
+            if _test == "テスト" and tr.device == "cpu":
+                device = "cpu"
+        return tr
     except Exception as exc:
         if device != "cpu":
             print(f"[warning] failed to load ja-{lang} translator on {device} ({exc}), falling back to cpu", file=sys.stderr)
@@ -1345,10 +1353,16 @@ class TranslationWorker:
             if text is _WORKER_STOP:
                 return
             for lang, tr in self._pool.items():
-                out = safe_translate(tr, text)
-                if out != text:  # fallback returns the source: nothing worth showing
-                    print(f"[→{lang}] {out}", flush=True)
-                    self._hub.publish({"type": "translation", "lang": lang, "text": out})
+                try:
+                    out = safe_translate(tr, text)
+                    if out != text:  # fallback returns the source: nothing worth showing
+                        try:
+                            print(f"[→{lang}] {out}", flush=True)
+                        except Exception:
+                            pass
+                        self._hub.publish({"type": "translation", "lang": lang, "text": out})
+                except Exception as exc:
+                    print(f"[TranslationWorker] error translating to {lang}: {exc}", file=sys.stderr)
 
 
 from asr_engine import (  # shared with the engine's live correction / refine dual-LID confirm

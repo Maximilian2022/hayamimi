@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.2.0"
-$script:AppVersion = "1.2.0"
+﻿$version = "GUI v1.2.1"
+$script:AppVersion = "1.2.1"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8

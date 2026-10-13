@@ -190,6 +190,7 @@ class TranslatorM2M:
         import ctranslate2
         import sentencepiece as spm
 
+        self._warned_fallback = False
         with _cache_lock:
             sp_path = os.path.join(model_dir, "sentencepiece.model")
             if sp_path not in _sp_cache:
@@ -198,9 +199,22 @@ class TranslatorM2M:
 
             cache_key = (model_dir, device, compute_type, intra_threads)
             if cache_key not in _translator_cache:
-                _translator_cache[cache_key] = ctranslate2.Translator(
-                    model_dir, device=device, compute_type=compute_type, intra_threads=intra_threads
-                )
+                try:
+                    _translator_cache[cache_key] = ctranslate2.Translator(
+                        model_dir, device=device, compute_type=compute_type, intra_threads=intra_threads
+                    )
+                except Exception as exc:
+                    if device != "cpu":
+                        import sys
+                        print(f"[translate_m2m] CUDA translator init failed ({exc}), falling back to cpu", file=sys.stderr)
+                        self.device = "cpu"
+                        cache_key = (model_dir, "cpu", compute_type, intra_threads)
+                        if cache_key not in _translator_cache:
+                            _translator_cache[cache_key] = ctranslate2.Translator(
+                                model_dir, device="cpu", compute_type=compute_type, intra_threads=intra_threads
+                            )
+                    else:
+                        raise
             self._translator = _translator_cache[cache_key]
 
     def translate(self, text: str) -> str:
@@ -217,55 +231,72 @@ class TranslatorM2M:
         if not stripped:
             return text
 
-        try:
-            pieces = self._sp.encode(stripped, out_type=str)
-            if not pieces:
+        import ctranslate2
+
+        for attempt in range(2):
+            try:
+                pieces = self._sp.encode(stripped, out_type=str)
+                if not pieces:
+                    return text
+
+                source_tokens = [SOURCE_LANG_TOKEN] + pieces + [EOS_TOKEN]
+
+                # Cap decode length relative to the source length. Without this,
+                # a degenerate hypothesis can run all the way to a large fixed
+                # max_decoding_length, turning one bad line into a multi-second
+                # stall -- unacceptable for a live subtitle pipeline.
+                max_decoding_length = min(
+                    MAX_DECODING_LENGTH_CAP,
+                    max(
+                        MAX_DECODING_LENGTH_MIN,
+                        len(pieces) * MAX_DECODING_LENGTH_PER_SOURCE_TOKEN + MAX_DECODING_LENGTH_BASE,
+                    ),
+                )
+
+                results = self._translator.translate_batch(
+                    [source_tokens],
+                    target_prefix=[[self._target_token]],
+                    beam_size=self._beam_size,
+                    no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
+                    max_decoding_length=max_decoding_length,
+                )
+                out_tokens = results[0].hypotheses[0]
+                # The hypothesis starts with the target-language token we passed
+                # as target_prefix -- strip it before detokenizing.
+                if out_tokens and out_tokens[0] == self._target_token:
+                    out_tokens = out_tokens[1:]
+                if out_tokens and out_tokens[-1] == EOS_TOKEN:
+                    out_tokens = out_tokens[:-1]
+                if not out_tokens:
+                    return text
+
+                translated = self._sp.decode(out_tokens).strip()
+                if not translated:
+                    return text
+
+                if self._opencc:
+                    try:
+                        translated = self._opencc.convert(translated)
+                    except Exception:
+                        pass
+
+                return translated
+            except Exception as exc:
+                if self.device != "cpu" and attempt == 0:
+                    import sys
+                    if not self._warned_fallback:
+                        print(f"[translate_m2m] CUDA execution failed ({exc}), permanently falling back to cpu", file=sys.stderr)
+                        self._warned_fallback = True
+                    self.device = "cpu"
+                    with _cache_lock:
+                        cache_key = (self.model_dir, "cpu", self.compute_type, self.intra_threads)
+                        if cache_key not in _translator_cache:
+                            _translator_cache[cache_key] = ctranslate2.Translator(
+                                self.model_dir, device="cpu", compute_type=self.compute_type, intra_threads=self.intra_threads
+                            )
+                        self._translator = _translator_cache[cache_key]
+                    continue
                 return text
-
-            source_tokens = [SOURCE_LANG_TOKEN] + pieces + [EOS_TOKEN]
-
-            # Cap decode length relative to the source length. Without this,
-            # a degenerate hypothesis can run all the way to a large fixed
-            # max_decoding_length, turning one bad line into a multi-second
-            # stall -- unacceptable for a live subtitle pipeline.
-            max_decoding_length = min(
-                MAX_DECODING_LENGTH_CAP,
-                max(
-                    MAX_DECODING_LENGTH_MIN,
-                    len(pieces) * MAX_DECODING_LENGTH_PER_SOURCE_TOKEN + MAX_DECODING_LENGTH_BASE,
-                ),
-            )
-
-            results = self._translator.translate_batch(
-                [source_tokens],
-                target_prefix=[[self._target_token]],
-                beam_size=self._beam_size,
-                no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
-                max_decoding_length=max_decoding_length,
-            )
-            out_tokens = results[0].hypotheses[0]
-            # The hypothesis starts with the target-language token we passed
-            # as target_prefix -- strip it before detokenizing.
-            if out_tokens and out_tokens[0] == self._target_token:
-                out_tokens = out_tokens[1:]
-            if out_tokens and out_tokens[-1] == EOS_TOKEN:
-                out_tokens = out_tokens[:-1]
-            if not out_tokens:
-                return text
-
-            translated = self._sp.decode(out_tokens).strip()
-            if not translated:
-                return text
-
-            if self._opencc:
-                try:
-                    translated = self._opencc.convert(translated)
-                except Exception:
-                    pass
-
-            return translated
-        except Exception:
-            return text
 
 
 def _smoke_test() -> None:

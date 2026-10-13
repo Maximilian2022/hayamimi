@@ -47,6 +47,10 @@ class TranslatorJaEn:
         intra_threads: int = 0,
     ):
         self.model_dir = model_dir
+        self.device = device
+        self.compute_type = compute_type
+        self.intra_threads = intra_threads
+        self._warned_fallback = False
 
         source_spm_path = os.path.join(model_dir, "source.spm")
         target_spm_path = os.path.join(model_dir, "target.spm")
@@ -54,9 +58,20 @@ class TranslatorJaEn:
         self._sp_source = spm.SentencePieceProcessor(model_file=source_spm_path)
         self._sp_target = spm.SentencePieceProcessor(model_file=target_spm_path)
 
-        self._translator = ctranslate2.Translator(
-            model_dir, device=device, compute_type=compute_type, intra_threads=intra_threads
-        )
+        try:
+            self._translator = ctranslate2.Translator(
+                model_dir, device=device, compute_type=compute_type, intra_threads=intra_threads
+            )
+        except Exception as exc:
+            if device != "cpu":
+                import sys
+                print(f"[translate_ja_en] CUDA translator init failed ({exc}), falling back to cpu", file=sys.stderr)
+                self.device = "cpu"
+                self._translator = ctranslate2.Translator(
+                    model_dir, device="cpu", compute_type=compute_type, intra_threads=intra_threads
+                )
+            else:
+                raise
 
     def translate(self, text: str) -> str:
         """Translate a single line of Japanese text to English.
@@ -72,40 +87,54 @@ class TranslatorJaEn:
         if not stripped:
             return text
 
-        try:
-            tokens = self._sp_source.encode(stripped, out_type=str)
-            if not tokens:
+        for attempt in range(2):
+            try:
+                tokens = self._sp_source.encode(stripped, out_type=str)
+                if not tokens:
+                    return text
+
+                # Cap decode length relative to the source length. Without this,
+                # a degenerate hypothesis can run all the way to a large fixed
+                # max_decoding_length, turning one bad line into a multi-second
+                # stall -- unacceptable for a live subtitle pipeline.
+                max_decoding_length = min(
+                    MAX_DECODING_LENGTH_CAP,
+                    max(
+                        MAX_DECODING_LENGTH_MIN,
+                        len(tokens) * MAX_DECODING_LENGTH_PER_SOURCE_TOKEN + MAX_DECODING_LENGTH_BASE,
+                    ),
+                )
+
+                results = self._translator.translate_batch(
+                    [tokens],
+                    beam_size=BEAM_SIZE,
+                    no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
+                    max_decoding_length=max_decoding_length,
+                )
+                out_tokens = results[0].hypotheses[0]
+                if not out_tokens:
+                    return text
+
+                translated = self._sp_target.decode(out_tokens).strip()
+                if not translated:
+                    return text
+
+                return translated
+            except Exception as exc:
+                if self.device != "cpu" and attempt == 0:
+                    import sys
+                    if not self._warned_fallback:
+                        print(f"[translate_ja_en] CUDA execution failed ({exc}), permanently falling back to cpu", file=sys.stderr)
+                        self._warned_fallback = True
+                    self.device = "cpu"
+                    try:
+                        self._translator = ctranslate2.Translator(
+                            self.model_dir, device="cpu", compute_type=self.compute_type, intra_threads=self.intra_threads
+                        )
+                        continue
+                    except Exception:
+                        return text
                 return text
-
-            # Cap decode length relative to the source length. Without this,
-            # a degenerate hypothesis can run all the way to a large fixed
-            # max_decoding_length, turning one bad line into a multi-second
-            # stall -- unacceptable for a live subtitle pipeline.
-            max_decoding_length = min(
-                MAX_DECODING_LENGTH_CAP,
-                max(
-                    MAX_DECODING_LENGTH_MIN,
-                    len(tokens) * MAX_DECODING_LENGTH_PER_SOURCE_TOKEN + MAX_DECODING_LENGTH_BASE,
-                ),
-            )
-
-            results = self._translator.translate_batch(
-                [tokens],
-                beam_size=BEAM_SIZE,
-                no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
-                max_decoding_length=max_decoding_length,
-            )
-            out_tokens = results[0].hypotheses[0]
-            if not out_tokens:
-                return text
-
-            translated = self._sp_target.decode(out_tokens).strip()
-            if not translated:
-                return text
-
-            return translated
-        except Exception:
-            return text
 
 
 def _smoke_test() -> None:
