@@ -38,6 +38,7 @@ if hasattr(sys.stderr, "reconfigure"):
 import asyncio
 import json
 import queue
+import socket
 import threading
 
 import numpy as np
@@ -77,6 +78,8 @@ class IngestServer:
         self.subtitle_server = subtitle_server
         self.audio_q: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=AUDIO_QUEUE_MAXSIZE)
         self._active = False
+        self._current_writer: asyncio.StreamWriter | None = None
+        self._session_id = 0
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -133,6 +136,13 @@ class IngestServer:
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
+            sock = writer.get_extra_info("socket")
+            if sock is not None:
+                try:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                except Exception:
+                    pass
+
             head = await self._read_handshake_head(reader)
             if head is None:
                 writer.close()
@@ -149,17 +159,30 @@ class IngestServer:
             writer.close()
             return
 
+        # 最新の接続を最優先 (Preemption / Takeover)
+        # 前回の接続が残っている場合 (リロード、別タブ、ネットワーク瞬断によるゾンビ等)、
+        # 古い接続を安全に切断して新しいクライアントを受け入れる
+        old_writer = None
         with self._lock:
-            if self._active:
-                try:
-                    await self._send_json(writer, {"type": "error",
-                                                    "message": "already streaming; only one audio "
-                                                               "client is accepted at a time"})
-                except (ConnectionError, OSError):
-                    pass
-                writer.close()
-                return
+            self._session_id += 1
+            my_session = self._session_id
+            if self._active and self._current_writer is not None:
+                old_writer = self._current_writer
+            self._current_writer = writer
             self._active = True
+
+        if old_writer is not None and old_writer != writer:
+            try:
+                await self._send_json(old_writer, {
+                    "type": "error",
+                    "message": "新しいマイククライアントが接続されたため切断されました (preempted)"
+                })
+            except (ConnectionError, OSError):
+                pass
+            try:
+                old_writer.close()
+            except Exception:
+                pass
 
         forward_task = None
         got_handshake = False
@@ -223,10 +246,15 @@ class IngestServer:
             if forward_task is not None:
                 forward_task.cancel()
             with self._lock:
-                self._active = False
-            if got_handshake:
-                self._push_audio(FLUSH)
-            writer.close()
+                if self._session_id == my_session:
+                    self._active = False
+                    self._current_writer = None
+                    if got_handshake:
+                        self._push_audio(FLUSH)
+            try:
+                writer.close()
+            except Exception:
+                pass
 
     async def _send_json(self, writer: asyncio.StreamWriter, obj: dict):
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")

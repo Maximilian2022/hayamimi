@@ -1,5 +1,5 @@
-$version = "GUI v1.2.2"
-$script:AppVersion = "1.2.2"
+﻿$version = "GUI v1.2.3"
+$script:AppVersion = "1.2.3"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -638,29 +638,39 @@ function Update-ContainerLogFile {
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="14"/>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="1.25*"/>
+                <ColumnDefinition Width="10"/>
+                <ColumnDefinition Width="1.0*"/>
+                <ColumnDefinition Width="10"/>
+                <ColumnDefinition Width="1.05*"/>
             </Grid.ColumnDefinitions>
 
             <!-- 起動ボタン -->
             <Button x:Name="BtnStart" Grid.Row="0" Grid.Column="0" Background="#10B981" Foreground="#041E15" Height="48">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="▶" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="BtnStartText" Text="アプリ起動 &amp; Webを開く" FontSize="15" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="BtnStartText" Text="アプリ起動 &amp; Webを開く" FontSize="14.5" FontWeight="Bold" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Button>
+
+            <!-- 再起動ボタン -->
+            <Button x:Name="BtnRestart" Grid.Row="0" Grid.Column="2" Background="#0284C7" Foreground="#FFFFFF" Height="48" ToolTip="実行中のアプリを停止し、ポートや残留プロセスを解放して再起動します">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="🔄" FontSize="14" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="BtnRestartText" Text="アプリ再起動" FontSize="14.5" FontWeight="Bold" VerticalAlignment="Center"/>
                 </StackPanel>
             </Button>
 
             <!-- 終了ボタン -->
-            <Button x:Name="BtnStop" Grid.Row="0" Grid.Column="2" Background="#EF4444" Foreground="#FFFFFF" Height="48" IsEnabled="False">
+            <Button x:Name="BtnStop" Grid.Row="0" Grid.Column="4" Background="#EF4444" Foreground="#FFFFFF" Height="48" IsEnabled="False">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="■" FontSize="15" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="BtnStopText" Text="アプリ終了 &amp; 閉じる" FontSize="15" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="BtnStopText" Text="アプリ終了 &amp; 閉じる" FontSize="14.5" FontWeight="Bold" VerticalAlignment="Center"/>
                 </StackPanel>
             </Button>
 
             <!-- アップデート・リビルドエリア -->
-            <Grid Grid.Row="2" Grid.ColumnSpan="3">
+            <Grid Grid.Row="2" Grid.ColumnSpan="5">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -806,6 +816,8 @@ if ($versionBadge) {
 $window.Title = "hayamimi (早耳) ランチャー ($version)"
 $btnStart = $window.FindName("BtnStart")
 $btnStartText = $window.FindName("BtnStartText")
+$btnRestart = $window.FindName("BtnRestart")
+$btnRestartText = $window.FindName("BtnRestartText")
 $btnStop = $window.FindName("BtnStop")
 $btnStopText = $window.FindName("BtnStopText")
 $btnUpdateApp = $window.FindName("BtnUpdateApp")
@@ -909,11 +921,18 @@ function Test-PortInUse {
 }
 
 function Set-UIState {
-    param([string]$State, [System.Windows.Media.Brush]$Brush, [bool]$CanStart, [bool]$CanStop)
+    param([string]$State, [System.Windows.Media.Brush]$Brush, [bool]$CanStart, [bool]$CanStop, [object]$CanRestart = $null)
     $statusText.Text = $State
     $statusLed.Fill = $Brush
     $btnStart.IsEnabled = $CanStart
     $btnStop.IsEnabled = $CanStop
+    if ($btnRestart) {
+        if ($null -ne $CanRestart) {
+            $btnRestart.IsEnabled = [bool]$CanRestart
+        } else {
+            $btnRestart.IsEnabled = ($CanStart -or $CanStop)
+        }
+    }
 }
 
 # 安全な確認ダイアログ表示関数 (Ownerウィンドウ明示 & 例外フォールバック)
@@ -1185,6 +1204,7 @@ function Set-EngineMode {
         Write-AppLog "実行基盤を「Python venv (ネイティブ)」に切り替えました。" "INFO"
         if ($statusLabel) { $statusLabel.Text = "Python状態" }
         if ($btnStartText) { $btnStartText.Text = "アプリ起動 & Webを開く" }
+        if ($btnRestartText) { $btnRestartText.Text = "アプリ再起動" }
         if ($btnStopText) { $btnStopText.Text = "アプリ終了 & 閉じる" }
         if ($btnRebuild) { $btnRebuild.Content = "🔄 依存パッケージ再導入" }
         if ($updateDescText) { $updateDescText.Text = "※ GitHubの最新コード取得と依存パッケージ更新を行えます。" }
@@ -1192,6 +1212,7 @@ function Set-EngineMode {
         Write-AppLog "実行基盤を「WSL Containers (WSL3)」に切り替えました。" "INFO"
         if ($statusLabel) { $statusLabel.Text = "コンテナ状態" }
         if ($btnStartText) { $btnStartText.Text = "コンテナ起動 & Webを開く" }
+        if ($btnRestartText) { $btnRestartText.Text = "コンテナ再起動" }
         if ($btnStopText) { $btnStopText.Text = "コンテナ終了 & 閉じる" }
         if ($btnRebuild) { $btnRebuild.Content = "🔄 コンテナをリビルド" }
         if ($updateDescText) { $updateDescText.Text = "※ GitHubの最新コード取得とコンテナ更新を行えます。" }
@@ -1627,6 +1648,135 @@ function Stop-PythonVenvApp {
     if (-not $Silent) {
         Write-AppLog "Python プロセスを停止しました。" "INFO"
         Set-UIState "停止中" $brushGray $true $false
+    }
+}
+
+# hayamimi コンテナ停止処理
+function Stop-HayamimiContainer {
+    param([bool]$Silent = $false)
+    if (-not $Silent) {
+        Write-AppLog "hayamimi コンテナを停止しています..." "INFO"
+    }
+    Update-ContainerLogFile
+    if ($script:WslcCmd) {
+        try {
+            $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoStop.FileName = $script:WslcCmd
+            $pinfoStop.Arguments = "stop $ContainerName"
+            $pinfoStop.UseShellExecute = $false
+            $pinfoStop.CreateNoWindow = $true
+            $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
+            $procStop.WaitForExit()
+        } catch {}
+
+        try {
+            $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoRm.FileName = $script:WslcCmd
+            $pinfoRm.Arguments = "remove $ContainerName"
+            $pinfoRm.UseShellExecute = $false
+            $pinfoRm.CreateNoWindow = $true
+            $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
+            $procRm.WaitForExit()
+        } catch {}
+    }
+    if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
+    if (-not $Silent) {
+        Write-AppLog "コンテナを正常に終了・クリーンアップしました。" "INFO"
+        Set-UIState "停止中" $brushGray $true $false
+    }
+}
+
+# 残留プロセスおよび占有ポート (8833, 8766) の徹底クリーンアップ関数
+function Cleanup-ResidualProcesses {
+    param([bool]$LogOutput = $true)
+    if ($LogOutput) {
+        Write-AppLog "残留プロセスおよび待機ポート (8833, 8766) のクリーンアップを実行しています..." "INFO"
+    }
+
+    # 1. realtime_transcribe / subtitle_server を含むプロセスの強制終了
+    try {
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.CommandLine -match "realtime_transcribe\.py|subtitle_server\.py"
+        } | ForEach-Object {
+            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
+
+    # 2. ポート 8833 (HTTP) および 8766 (WebSocket) を占有しているプロセスの特定と強制終了
+    try {
+        $ports = @(8833, 8766)
+        if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+            foreach ($p in $ports) {
+                $conns = Get-NetTCPConnection -LocalPort $p -ErrorAction SilentlyContinue
+                if ($conns) {
+                    $pids = $conns | Select-Object -ExpandProperty OwningProcess -Unique
+                    foreach ($procId in $pids) {
+                        if ($procId -gt 4 -and $procId -ne $PID) {
+                            if ($LogOutput) {
+                                Write-AppLog "ポート $p を占有しているプロセス (PID: $procId) を解放します..." "INFO"
+                            }
+                            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+                }
+            }
+        }
+    } catch {}
+
+    # 3. WSL Containers のコンテナ強制クリーンアップ
+    if ($script:WslcCmd) {
+        try {
+            $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoRm.FileName = $script:WslcCmd
+            $pinfoRm.Arguments = "stop $ContainerName"
+            $pinfoRm.UseShellExecute = $false
+            $pinfoRm.CreateNoWindow = $true
+            $p = [System.Diagnostics.Process]::Start($pinfoRm)
+            $p.WaitForExit()
+        } catch {}
+        try {
+            $pinfoRm2 = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoRm2.FileName = $script:WslcCmd
+            $pinfoRm2.Arguments = "remove $ContainerName"
+            $pinfoRm2.UseShellExecute = $false
+            $pinfoRm2.CreateNoWindow = $true
+            $p2 = [System.Diagnostics.Process]::Start($pinfoRm2)
+            $p2.WaitForExit()
+        } catch {}
+    }
+}
+
+# アプリ再起動メイン関数
+function Invoke-RestartApp {
+    try {
+        Write-AppLog "【再起動】アプリの再起動処理を開始します..." "INFO"
+        Set-UIState "再起動中..." $brushOrange $false $false $false
+
+        if ($healthTimer) { $healthTimer.Stop() }
+
+        # 1. 稼働中アプリの停止
+        if ($script:CurrentEngineMode -eq "Venv") {
+            Stop-PythonVenvApp -Silent $true
+        } else {
+            Stop-HayamimiContainer -Silent $true
+        }
+
+        # 2. 残留プロセス・ポートの徹底クリーンアップ
+        Cleanup-ResidualProcesses -LogOutput $true
+
+        # 3. OSソケット解放待機 (TIME_WAIT対策)
+        Start-Sleep -Milliseconds 800
+
+        # 4. アプリ再起動の実行
+        Write-AppLog "【再起動】プロセスクリーンアップ完了。起動処理を開始します..." "INFO"
+        if ($script:CurrentEngineMode -eq "Venv") {
+            Start-PythonVenvApp
+        } else {
+            Start-HayamimiContainer
+        }
+    } catch {
+        Write-AppLog "再起動処理中にエラーが発生しました: $_" "ERROR"
+        Set-UIState "エラー" $brushRed $true $false $true
     }
 }
 
@@ -2617,6 +2767,13 @@ if ($btnRebuild) {
     })
 }
 
+# 再起動ボタン処理 (残留プロセス解放・クリーンアップ付き)
+if ($btnRestart) {
+    $btnRestart.Add_Click({
+        Invoke-RestartApp
+    })
+}
+
 # 終了ボタン処理
 $btnStop.Add_Click({
     try {
@@ -2626,27 +2783,11 @@ $btnStop.Add_Click({
         if ($script:CurrentEngineMode -eq "Venv") {
             Stop-PythonVenvApp
         } else {
-            Write-AppLog "hayamimi コンテナを停止しています..."
-            Update-ContainerLogFile
-            if ($script:WslcCmd) {
-                $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
-                $pinfoStop.FileName = $script:WslcCmd
-                $pinfoStop.Arguments = "stop $ContainerName"
-                $pinfoStop.UseShellExecute = $false
-                $pinfoStop.CreateNoWindow = $true
-                $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
-                $procStop.WaitForExit()
-
-                $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
-                $pinfoRm.FileName = $script:WslcCmd
-                $pinfoRm.Arguments = "remove $ContainerName"
-                $pinfoRm.UseShellExecute = $false
-                $pinfoRm.CreateNoWindow = $true
-                $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
-                $procRm.WaitForExit()
-            }
-            Write-AppLog "コンテナを正常に終了・クリーンアップしました。"
+            Stop-HayamimiContainer
         }
+
+        # 残留プロセスの安全なクリーンアップ
+        Cleanup-ResidualProcesses -LogOutput $false
 
         $window.Close()
     } catch {

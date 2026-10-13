@@ -1297,7 +1297,13 @@
             }
             updateLivePreviewFromEvent(ev);
           } else if (ev.type === "error") {
-            showError("サーバーエラー: " + ev.message);
+            let msg = "サーバーエラー: " + ev.message;
+            if (ev.message && ev.message.includes("preempted")) {
+              msg = "⚠️ 別のマイククライアント（または別タブ）が接続されたため、このマイク接続は切断されました。";
+            } else if (ev.message && ev.message.includes("already streaming")) {
+              msg = "⚠️ 既に別のマイクが接続中か、前回の接続が残っています。もう一度『マイク開始』を押すか、ランチャーの『アプリ再起動』をお試しください。";
+            }
+            showError(msg);
             stopRecording();
           }
         } catch (e) {
