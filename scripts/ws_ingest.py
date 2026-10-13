@@ -18,6 +18,11 @@ the server dead simple (no need to mix multiple mic streams). A client that
 disconnects just leaves the ingest queue idle -- the pipeline and server
 keep running, and the next connection resumes feeding it.
 """
+import sys
+# Windows Defender の「コントロールされたフォルダー アクセス」(Controlled Folder Access)
+# による OneDrive/保護フォルダー配下での __pycache__ 書き込みブロックを根本から防止
+sys.dont_write_bytecode = True
+
 import asyncio
 import json
 import queue

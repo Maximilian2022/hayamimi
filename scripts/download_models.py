@@ -21,11 +21,15 @@ THIRD_PARTY_NOTICES.md for what you're agreeing to by downloading each one --
 in particular, the ja->en translation model is CC BY-SA 4.0 (share-alike),
 not permissive like the rest.
 """
+import sys
+# Windows Defender の「コントロールされたフォルダー アクセス」(Controlled Folder Access)
+# による OneDrive/保護フォルダー配下での __pycache__ 書き込みブロックを根本から防止
+sys.dont_write_bytecode = True
+
 import argparse
 import io
 import os
 import shutil
-import sys
 import tarfile
 import urllib.request
 

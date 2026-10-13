@@ -4,11 +4,16 @@ Serves an overlay page at http://localhost:<port>/ suitable for an OBS
 browser source (transparent background), and streams partial/final subtitle
 events over SSE at /events. Designed to be driven by realtime_transcribe.py.
 """
+import sys
+# Windows Defender の「コントロールされたフォルダー アクセス」(Controlled Folder Access)
+# による OneDrive/保護フォルダー配下での __pycache__ 書き込みブロックを根本から防止
+sys.dont_write_bytecode = True
+
 import http.server
 import json
 import os
 import queue
-import sys
+import socket
 import threading
 from typing import Callable
 
@@ -502,6 +507,21 @@ class RuntimeControls:
         return bool(self.reset_fn())
 
 
+class _QuietThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    """ThreadingHTTPServer that silences expected client disconnect exceptions.
+
+    Prevents noisy WinError 10054 (ConnectionResetError), ConnectionAbortedError,
+    BrokenPipeError, and socket timeouts from flooding stderr when clients (browsers,
+    OBS, polling probes) close tabs, reload, or terminate connections abruptly.
+    """
+
+    def handle_error(self, request, client_address):
+        _, exc_value, _ = sys.exc_info()
+        if isinstance(exc_value, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, TimeoutError, socket.timeout)):
+            return
+        super().handle_error(request, client_address)
+
+
 class SubtitleServer:
     """HTTP/SSE front end over an EventHub.
 
@@ -588,6 +608,15 @@ class SubtitleServer:
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *args):  # keep the console clean for subtitles
                 pass
+
+            def handle(self):
+                """Wrap request handling to cleanly ignore client resets/aborts."""
+                try:
+                    super().handle()
+                except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, TimeoutError, socket.timeout):
+                    self.close_connection = True
+                except Exception:
+                    raise
 
             def do_GET(self):
                 if self.path == "/events":
@@ -745,6 +774,6 @@ class SubtitleServer:
                 self.end_headers()
                 self.wfile.write(body)
 
-        self._httpd = http.server.ThreadingHTTPServer((self.host, self.port), Handler)
+        self._httpd = _QuietThreadingHTTPServer((self.host, self.port), Handler)
         threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
         return self

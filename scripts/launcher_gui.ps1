@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.1.6"
-$script:AppVersion = "1.1.6"
+﻿$version = "GUI v1.1.7"
+$script:AppVersion = "1.1.7"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -55,6 +55,10 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Media.RenderOptions]::ProcessRenderMode = [System.Windows.Interop.RenderMode]::SoftwareOnly
 
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+
+# --- Windows Defender「コントロールされたフォルダー アクセス」ブロック防止 ---
+# OneDrive や保護フォルダー配下での Python バイトコードキャッシュ (__pycache__) 作成を抑止
+$env:PYTHONDONTWRITEBYTECODE = "1"
 
 # 1. パスの動的解決 (他環境での実行に対応)
 $ScriptDir = $PSScriptRoot
@@ -1351,18 +1355,20 @@ function Invoke-SetupPythonVenv {
             $pinfoPip.RedirectStandardError = $true
             $pinfoPip.UseShellExecute = $false
             $pinfoPip.CreateNoWindow = $true
+            $pinfoPip.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
             $procPip = [System.Diagnostics.Process]::Start($pinfoPip)
             Wait-ProcessWithUiPump -Proc $procPip -LogPrefix "[pip導入]"
             if ($procPip.ExitCode -eq 0) { $installSuccess = $true }
         } else {
             $pinfoPipSys = [System.Diagnostics.ProcessStartInfo]::new()
             $pinfoPipSys.FileName = $venvPython
-            $pinfoPipSys.Arguments = "-m pip install -r `"$reqFile`""
+            $pinfoPipSys.Arguments = "-B -m pip install -r `"$reqFile`""
             $pinfoPipSys.WorkingDirectory = $ProjectRoot
             $pinfoPipSys.RedirectStandardOutput = $true
             $pinfoPipSys.RedirectStandardError = $true
             $pinfoPipSys.UseShellExecute = $false
             $pinfoPipSys.CreateNoWindow = $true
+            $pinfoPipSys.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
             $procPipSys = [System.Diagnostics.Process]::Start($pinfoPipSys)
             Wait-ProcessWithUiPump -Proc $procPipSys -LogPrefix "[pip導入]"
             if ($procPipSys.ExitCode -eq 0) { $installSuccess = $true }
@@ -1386,12 +1392,13 @@ function Invoke-SetupPythonVenv {
         
         $pinfoDl = [System.Diagnostics.ProcessStartInfo]::new()
         $pinfoDl.FileName = $venvPython
-        $pinfoDl.Arguments = "`"$dlScript`" --minimal --translators"
+        $pinfoDl.Arguments = "-B `"$dlScript`" --minimal --translators"
         $pinfoDl.WorkingDirectory = $ProjectRoot
         $pinfoDl.RedirectStandardOutput = $true
         $pinfoDl.RedirectStandardError = $true
         $pinfoDl.UseShellExecute = $false
         $pinfoDl.CreateNoWindow = $true
+        $pinfoDl.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
         $procDl = [System.Diagnostics.Process]::Start($pinfoDl)
         Wait-ProcessWithUiPump -Proc $procDl -LogPrefix "[モデルDL]"
     }
@@ -1443,7 +1450,7 @@ function Start-PythonVenvApp {
     $script:LastPythonLogByteOffset = 0L
 
     $transScript = Join-Path $ProjectRoot "scripts\realtime_transcribe.py"
-    $cmdArgs = "/s /c `"`"$venvPython`" `"$transScript`" --input ws --serve 8833 --ws-host 127.0.0.1 --ws-port 8766 > `"$script:PythonLogFile`" 2>&1`""
+    $cmdArgs = "/s /c `"set PYTHONDONTWRITEBYTECODE=1 && `"$venvPython`" -B `"$transScript`" --input ws --serve 8833 --ws-host 127.0.0.1 --ws-port 8766 > `"$script:PythonLogFile`" 2>&1`""
 
     $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
     $pinfo.FileName = "cmd.exe"
@@ -1451,6 +1458,7 @@ function Start-PythonVenvApp {
     $pinfo.WorkingDirectory = $ProjectRoot
     $pinfo.UseShellExecute = $false
     $pinfo.CreateNoWindow = $true
+    $pinfo.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
 
     $script:ProcPython = [System.Diagnostics.Process]::Start($pinfo)
     $script:HealthCheckAttempts = 0
@@ -2220,6 +2228,10 @@ $healthTimer.Add_Tick({
                     }
                 }
                 Write-AppLog "詳細ログは logs/python.log および logs/launcher.log をご確認ください。" "ERROR"
+                if ($ProjectRoot -match "OneDrive|Documents") {
+                    Write-AppLog "【ヒント】OneDrive または保護されたフォルダー配下で実行された場合、Windows セキュリティの「コントロールされたフォルダー アクセス」によりブロックされた可能性があります。" "WARN"
+                    Write-AppLog "Windows セキュリティ > ウイルスと脅威の防止 > ランサムウェアの防止 でアプリを許可するか、OneDrive 以外のローカルドライブへの配置をご検討ください。" "WARN"
+                }
                 Write-AppLog "==========================================" "ERROR"
                 return
             }

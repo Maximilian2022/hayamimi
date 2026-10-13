@@ -9,10 +9,14 @@ Usage:
     python scripts/realtime_transcribe.py --input speaker                 # PC audio output (WASAPI loopback, Windows)
     python scripts/realtime_transcribe.py --input mix                     # mic + PC audio output, summed
 """
+import sys
+# Windows Defender の「コントロールされたフォルダー アクセス」(Controlled Folder Access)
+# による OneDrive/保護フォルダー配下での __pycache__ 書き込みブロックを根本から防止
+sys.dont_write_bytecode = True
+
 import argparse
 import os
 import queue
-import sys
 import threading
 import time
 import wave

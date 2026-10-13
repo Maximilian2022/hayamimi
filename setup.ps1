@@ -51,6 +51,10 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
 
+# --- Windows Defender「コントロールされたフォルダー アクセス」ブロック防止 ---
+# OneDrive や保護フォルダー配下での Python バイトコードキャッシュ (__pycache__) 作成を抑止
+$env:PYTHONDONTWRITEBYTECODE = "1"
+
 $RepoZipUrl = "https://github.com/Maximilian2022/hayamimi/archive/refs/heads/main.zip"
 $DefaultInstallPath = [System.IO.Path]::Combine([System.Environment]::GetFolderPath("MyDocuments"), "hayamimi")
 
