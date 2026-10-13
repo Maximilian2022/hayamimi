@@ -1,4 +1,4 @@
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+﻿[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
 # --- コンソール & Windows Terminal の完全非表示化 (SW_HIDE) ---
@@ -275,32 +275,112 @@ function Get-SetupWslcCommand {
     return $null
 }
 
-# WSL 3.0 自動インストール関数
+# 仮想化・Hypervisor 診断関数 (セットアップ用)
+function Get-SetupVirtualizationDiagnostic {
+    $diag = [PSCustomObject]@{
+        HypervisorPresent = $false
+        FirmwareVirtualization = $null
+        CpuName = ""
+        CpuVendor = "Unknown"
+        IsReady = $false
+        Reason = ""
+    }
+
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+        if ($cs -and $cs.HypervisorPresent) {
+            $diag.HypervisorPresent = $true
+            $diag.IsReady = $true
+            return $diag
+        }
+    } catch {}
+
+    try {
+        $proc = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($proc) {
+            $diag.CpuName = "$($proc.Name)".Trim()
+            $diag.FirmwareVirtualization = $proc.VirtualizationFirmwareEnabled
+            if ($proc.Manufacturer -match "Intel" -or $proc.Name -match "Intel") {
+                $diag.CpuVendor = "Intel"
+            } elseif ($proc.Manufacturer -match "AMD" -or $proc.Name -match "AMD|Ryzen") {
+                $diag.CpuVendor = "AMD"
+            }
+        }
+    } catch {}
+
+    if ($diag.FirmwareVirtualization -eq $false) {
+        $diag.Reason = "BiosDisabled"
+    } else {
+        $diag.Reason = "WindowsFeatureDisabled"
+    }
+
+    return $diag
+}
+
+# BIOS 設定ガイドの表示 (セットアップ用)
+function Show-SetupBiosGuide {
+    param([object]$Diag)
+    $cpuVendor = if ($Diag -and $Diag.CpuVendor) { $Diag.CpuVendor } else { "Intel" }
+    $settingName = if ($cpuVendor -eq "AMD") { "「SVM Mode」または「AMD-V / SVM」" } else { "「Intel Virtualization Technology (VT-x)」または「Intel (VMX)」" }
+    $cpuDesc = if ($Diag -and $Diag.CpuName) { $Diag.CpuName } else { "お使いの CPU" }
+
+    $msg = "【CPU ハードウェア仮想化が無効です】`r`n`r`n" +
+           "hayamimi (WSL Containers) を実行するには、PC の BIOS/UEFI 設定で仮想化支援機能を有効化（Enabled）にする必要があります。`r`n`r`n" +
+           "■ 検出された CPU: $cpuDesc`r`n" +
+           "■ 設定対象の項目名: $settingName`r`n`r`n" +
+           "【有効化の手順】`r`n" +
+           "1. PC を再起動し、起動直後にメーカーロゴが表示されたら [F2]、[F12]、または [Delete] キーを連打して BIOS/UEFI 画面を開きます。`r`n" +
+           "2. 詳細設定 (Advanced / CPU Configuration) メニューを探します。`r`n" +
+           "3. $settingName を見つけ、「有効 (Enabled)」に変更します。`r`n" +
+           "4. [F10] キーを押して設定を保存し、PC を通常通り再起動してください。"
+
+    [System.Windows.MessageBox]::Show($msg, "BIOS/UEFI 仮想化設定ガイド - hayamimi", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information) | Out-Null
+}
+
+# WSL 3.0 & 仮想化基盤 自動セットアップ関数
 function Invoke-SetupInstallWslContainers {
     try {
-        Write-SetupLog "WSL 3.0 / WSL Containers の自動セットアップを開始します..."
+        Write-SetupLog "WSL 3.0 / 仮想化基盤の自動セットアップを開始します..."
         $installScript = @'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
 Write-Host "===================================================" -ForegroundColor Cyan
-Write-Host "  hayamimi - WSL 3.0 / WSL Containers 自動セットアップ" -ForegroundColor Cyan
+Write-Host "  hayamimi - WSL 3.0 & 仮想化基盤 自動セットアップ" -ForegroundColor Cyan
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host ""
+
+# 0. Windows 仮想化基盤 (VirtualMachinePlatform) & Hypervisor の有効化
+$script:RebootNeeded = $false
+Write-Host "[ステップ 1/5] Windows 仮想化機能 (VirtualMachinePlatform) を有効化しています..." -ForegroundColor Yellow
+try {
+    Write-Host "実行中: DISM (VirtualMachinePlatform & Subsystem-Linux)..."
+    $pDism1 = Start-Process dism.exe -ArgumentList "/online /enable-feature /featurename:VirtualMachinePlatform /all /norestart" -Wait -PassThru -NoNewWindow
+    $pDism2 = Start-Process dism.exe -ArgumentList "/online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart" -Wait -PassThru -NoNewWindow
+    Start-Process bcdedit.exe -ArgumentList "/set hypervisorlaunchtype auto" -Wait -NoNewWindow
+
+    if ($pDism1.ExitCode -eq 3010 -or $pDism2.ExitCode -eq 3010) {
+        $script:RebootNeeded = $true
+    }
+} catch {
+    Write-Host "DISM 機能有効化スキップ: $_" -ForegroundColor DarkGray
+}
 
 # 1. WSL 自体の存在確認
 $hasWsl = (where.exe wsl 2>$null)
 if (-not $hasWsl) {
-    Write-Host "[ステップ 1/4] Windows Subsystem for Linux (WSL) 基盤を新規インストールしています..." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "[ステップ 2/5] Windows Subsystem for Linux (WSL) 基盤を新規インストールしています..." -ForegroundColor Yellow
     Write-Host "実行中: wsl.exe --install --no-distribution"
     wsl.exe --install --no-distribution
 } else {
-    Write-Host "[ステップ 1/4] WSL 基盤は検出されました。" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "[ステップ 2/5] WSL 基盤は検出されました。" -ForegroundColor Green
 }
 
 # 2. WSL を最新版に更新
 Write-Host ""
-Write-Host "[ステップ 2/4] WSL パッケージを最新版に更新しています..." -ForegroundColor Yellow
+Write-Host "[ステップ 3/5] WSL パッケージを最新版に更新しています..." -ForegroundColor Yellow
 Write-Host "実行中: wsl.exe --update"
 wsl.exe --update
 
@@ -308,7 +388,7 @@ wsl.exe --update
 $hasWslc = (where.exe wslc 2>$null)
 if (-not $hasWslc -and -not (Test-Path "C:\Program Files\WSL\wslc.exe")) {
     Write-Host ""
-    Write-Host "[ステップ 3/4] WSL 3.0 (wslc) プレリリース版パッケージを取得しています..." -ForegroundColor Yellow
+    Write-Host "[ステップ 4/5] WSL 3.0 (wslc) プレリリース版パッケージを取得しています..." -ForegroundColor Yellow
     Write-Host "実行中: wsl.exe --update --pre-release"
     wsl.exe --update --pre-release
 }
@@ -359,9 +439,14 @@ if (Test-Path (Join-Path $wslDir "wslc.exe")) {
 
 Write-Host ""
 Write-Host "===================================================" -ForegroundColor Green
-Write-Host "  WSL 3.0 のセットアップが完了しました！" -ForegroundColor Green
+Write-Host "  WSL 3.0 & 仮想化基盤のセットアップが完了しました！" -ForegroundColor Green
 Write-Host "===================================================" -ForegroundColor Green
-Write-Host "※ 新規に WSL を有効化した場合は、PC の再起動が必要になる場合があります。" -ForegroundColor Cyan
+if ($script:RebootNeeded) {
+    Write-Host "【重要】仮想マシンプラットフォームを新規に有効化したため、" -ForegroundColor Yellow
+    Write-Host "        仮想化機能の完全適用には PC の再起動が必要です。" -ForegroundColor Yellow
+} else {
+    Write-Host "※ 新規に WSL を有効化した場合は、PC の再起動が必要になる場合があります。" -ForegroundColor Cyan
+}
 Write-Host "このウィンドウを閉じると、セットアップウィザードで自動認識されます。"
 Write-Host ""
 Read-Host "Enterキーを押して終了してください..."
@@ -381,41 +466,67 @@ Read-Host "Enterキーを押して終了してください..."
             $env:Path = "$machinePath;$userPath;C:\Program Files\WSL"
         } catch {}
 
-        # 再検出
-        $script:wslcCmd = Get-SetupWslcCommand
-        if ($script:wslcCmd) {
-            Write-SetupLog "✔ WSL 3.0 (WSL Containers) が正常にインストール・検出されました: $script:wslcCmd"
-            $wslcBadge.Text = "✔ WSL Containers 検出済み"
-            $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2ECC71")
-            if ($btnInstallWsl) { $btnInstallWsl.Visibility = [System.Windows.Visibility]::Collapsed }
-            return $true
-        } else {
-            Write-SetupLog "WSL更新後も wslc.exe が見つかりませんでした。PC再起動後に再度お試しください。"
-            return $false
-        }
+        # 再検出 & 状態更新
+        Update-SetupRequirementsState | Out-Null
+        return ($script:wslcCmd -ne $null)
     } catch {
         Write-SetupLog "管理者権限プロンプトの起動がキャンセルされたか失敗しました: $_"
         return $false
     }
 }
 
-$script:wslcCmd = Get-SetupWslcCommand
-if ($script:wslcCmd) {
-    $wslcBadge.Text = "✔ WSL Containers 検出済み"
-    $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2ECC71")
-    if ($btnInstallWsl) { $btnInstallWsl.Visibility = [System.Windows.Visibility]::Collapsed }
-    Write-SetupLog "WSL Containers (wslc.exe) が正常に検出されました: $script:wslcCmd"
-} else {
-    $wslcBadge.Text = "⚠ WSL Containers 未検出"
-    $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F39C12")
-    if ($btnInstallWsl) { $btnInstallWsl.Visibility = [System.Windows.Visibility]::Visible }
-    Write-SetupLog "注意: WSL Containers (wslc.exe) が見つかりません。"
-    Write-SetupLog "右上の「📥 WSL3 を自動インストール」ボタンから全自動セットアップを実行できます。"
+# セットアップ要件状態の判定とUI更新関数
+function Update-SetupRequirementsState {
+    $script:wslcCmd = Get-SetupWslcCommand
+    $script:setupDiag = Get-SetupVirtualizationDiagnostic
+
+    if ($script:wslcCmd -and $script:setupDiag.IsReady) {
+        $wslcBadge.Text = "✔ WSL Containers & 仮想化 検出済み"
+        $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2ECC71")
+        if ($btnInstallWsl) { $btnInstallWsl.Visibility = [System.Windows.Visibility]::Collapsed }
+        Write-SetupLog "✔ WSL Containers (wslc.exe) & Hypervisor 仮想化基盤が正常に検出されました。"
+        return $true
+    }
+
+    if (-not $script:setupDiag.IsReady -and $script:setupDiag.Reason -eq "BiosDisabled") {
+        $wslcBadge.Text = "⚠ BIOS 仮想化 (VT-x/AMD-V) 無効"
+        $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#E74C3C")
+        if ($btnInstallWsl) {
+            $btnInstallWsl.Content = "📖 BIOS 設定手順を確認"
+            $btnInstallWsl.Visibility = [System.Windows.Visibility]::Visible
+        }
+        Write-SetupLog "【警告】CPU ハードウェア仮想化 ($($script:setupDiag.CpuVendor): VT-x / AMD-V) が BIOS で無効です。"
+        Write-SetupLog "【案内】BIOS/UEFI 設定で仮想化支援機能を有効化してください。"
+    } elseif (-not $script:setupDiag.IsReady) {
+        $wslcBadge.Text = "⚠ 仮想マシンプラットフォーム無効"
+        $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F39C12")
+        if ($btnInstallWsl) {
+            $btnInstallWsl.Content = "📥 仮想化基盤 & WSL3 を自動設定"
+            $btnInstallWsl.Visibility = [System.Windows.Visibility]::Visible
+        }
+        Write-SetupLog "【警告】Windows 仮想化機能 (VirtualMachinePlatform) が無効、または再起動待ちです。"
+    } else {
+        $wslcBadge.Text = "⚠ WSL Containers 未検出"
+        $wslcBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F39C12")
+        if ($btnInstallWsl) {
+            $btnInstallWsl.Content = "📥 WSL3 を自動インストール"
+            $btnInstallWsl.Visibility = [System.Windows.Visibility]::Visible
+        }
+        Write-SetupLog "注意: WSL Containers (wslc.exe) が見つかりません。"
+    }
+    return $false
 }
+
+Update-SetupRequirementsState | Out-Null
 
 if ($btnInstallWsl) {
     $btnInstallWsl.Add_Click({
-        Invoke-SetupInstallWslContainers | Out-Null
+        $curDiag = Get-SetupVirtualizationDiagnostic
+        if (-not $curDiag.IsReady -and $curDiag.Reason -eq "BiosDisabled") {
+            Show-SetupBiosGuide -Diag $curDiag
+        } else {
+            Invoke-SetupInstallWslContainers | Out-Null
+        }
     })
 }
 

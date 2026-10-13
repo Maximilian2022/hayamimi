@@ -1,4 +1,4 @@
-$version = "GUI v1.0.3"
+﻿$version = "GUI v1.0.4"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -289,7 +289,7 @@ function Update-ContainerLogFile {
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Border Background="#242C3D" CornerRadius="12" Padding="10,4" Margin="0,0,8,0" BorderBrush="#3A465D" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.0.2" FontSize="11" Foreground="#F6AD55" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.0.4" FontSize="11" Foreground="#F6AD55" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#1A202C" CornerRadius="12" Padding="10,4">
                         <TextBlock x:Name="RuntimeBadge" Text="WSL3 Native" FontSize="11" Foreground="#4FD1C5" FontWeight="SemiBold"/>
@@ -330,7 +330,7 @@ function Update-ContainerLogFile {
                     </StackPanel>
                 </Grid>
 
-                <!-- WSL Containers 未検出時のアシストバナー -->
+                <!-- WSL Containers / 仮想化 (Hypervisor) 診断・アシストバナー -->
                 <Border x:Name="WslcAlertBanner" Grid.Row="1" Margin="0,8,0,0" Padding="10,8" Background="#2A1B18" BorderBrush="#E74C3C" BorderThickness="1" CornerRadius="6" Visibility="Collapsed">
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -338,10 +338,13 @@ function Update-ContainerLogFile {
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="⚠ WSL 3.0 (WSL Containers) がインストールされていません" FontSize="12" FontWeight="Bold" Foreground="#FF7A6B"/>
-                            <TextBlock Text="hayamimi の実行に必要な WSL 3.0 をワンクリックで自動インストールできます。" FontSize="11" Foreground="#CBD5E0" Margin="0,2,0,0"/>
+                            <TextBlock x:Name="WslcAlertTitle" Text="⚠ WSL 3.0 / 仮想化基盤が無効です" FontSize="12" FontWeight="Bold" Foreground="#FF7A6B"/>
+                            <TextBlock x:Name="WslcAlertDesc" Text="hayamimi の実行に必要な仮想化機能と WSL 3.0 を自動セットアップできます。" FontSize="11" Foreground="#CBD5E0" Margin="0,2,0,0" TextWrapping="Wrap"/>
                         </StackPanel>
-                        <Button x:Name="BtnUpdateWsl" Grid.Column="1" Content="📥 WSL3 を自動インストール" Background="#2ECC71" Foreground="#0E1117" FontSize="11" FontWeight="Bold" Padding="12,6" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                            <Button x:Name="BtnBiosGuide" Content="📖 BIOS 設定ガイド" Background="#3A465D" Foreground="#ECE5D8" FontSize="11" FontWeight="SemiBold" Padding="10,6" Margin="0,0,6,0" Visibility="Collapsed"/>
+                            <Button x:Name="BtnUpdateWsl" Content="📥 仮想化 &amp; WSL3 自動設定" Background="#2ECC71" Foreground="#0E1117" FontSize="11" FontWeight="Bold" Padding="12,6"/>
+                        </StackPanel>
                     </Grid>
                 </Border>
 
@@ -511,7 +514,10 @@ $btnOpenContainerLog = $window.FindName("BtnOpenContainerLog")
 $btnOpenLauncherLog = $window.FindName("BtnOpenLauncherLog")
 $btnOpenLogsDir = $window.FindName("BtnOpenLogsDir")
 $wslcAlertBanner = $window.FindName("WslcAlertBanner")
+$wslcAlertTitle = $window.FindName("WslcAlertTitle")
+$wslcAlertDesc = $window.FindName("WslcAlertDesc")
 $btnUpdateWsl = $window.FindName("BtnUpdateWsl")
+$btnBiosGuide = $window.FindName("BtnBiosGuide")
 
 # ランタイムバッジ
 $psVer = $PSVersionTable.PSVersion.Major
@@ -553,6 +559,107 @@ function Show-AppConfirm {
         Write-AppLog "確認ダイアログの表示をスキップし、処理を続行します: $_" "WARN"
         return [System.Windows.MessageBoxResult]::Yes
     }
+}
+
+# 仮想化・Hypervisor 状態のインテリジェント診断
+function Get-VirtualizationDiagnostic {
+    $diag = [PSCustomObject]@{
+        HypervisorPresent = $false
+        FirmwareVirtualization = $null
+        CpuName = ""
+        CpuVendor = "Unknown"
+        IsReady = $false
+        Reason = ""
+    }
+
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+        if ($cs -and $cs.HypervisorPresent) {
+            $diag.HypervisorPresent = $true
+            $diag.IsReady = $true
+            return $diag
+        }
+    } catch {}
+
+    try {
+        $proc = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($proc) {
+            $diag.CpuName = "$($proc.Name)".Trim()
+            $diag.FirmwareVirtualization = $proc.VirtualizationFirmwareEnabled
+            if ($proc.Manufacturer -match "Intel" -or $proc.Name -match "Intel") {
+                $diag.CpuVendor = "Intel"
+            } elseif ($proc.Manufacturer -match "AMD" -or $proc.Name -match "AMD|Ryzen") {
+                $diag.CpuVendor = "AMD"
+            }
+        }
+    } catch {}
+
+    if ($diag.FirmwareVirtualization -eq $false) {
+        $diag.Reason = "BiosDisabled"
+    } else {
+        $diag.Reason = "WindowsFeatureDisabled"
+    }
+
+    return $diag
+}
+
+# BIOS / UEFI 仮想化有効化ガイドのポップアップ表示
+function Show-BiosVirtualizationGuide {
+    param([object]$Diag)
+    $cpuVendor = if ($Diag -and $Diag.CpuVendor) { $Diag.CpuVendor } else { "Intel" }
+    
+    $settingName = if ($cpuVendor -eq "AMD") {
+        "「SVM Mode」または「AMD-V / SVM」"
+    } else {
+        "「Intel Virtualization Technology (VT-x)」または「Intel (VMX)」"
+    }
+
+    $cpuDesc = if ($Diag -and $Diag.CpuName) { $Diag.CpuName } else { "お使いの CPU" }
+
+    $guideMsg = "【CPU ハードウェア仮想化が無効です】`r`n`r`n" +
+               "hayamimi (WSL Containers) を実行するには、PC の BIOS/UEFI 設定で仮想化支援機能を有効化（Enabled）にする必要があります。`r`n`r`n" +
+               "■ 検出された CPU: $cpuDesc`r`n" +
+               "■ 設定対象の項目名: $settingName`r`n`r`n" +
+               "【有効化の手順】`r`n" +
+               "1. PC を再起動し、起動直後にメーカーロゴが表示されたら [F2]、[F12]、または [Delete] キーを連打して BIOS/UEFI 画面を開きます。`r`n" +
+               "2. 詳細設定 (Advanced / CPU Configuration / Overclocking) メニューを探します。`r`n" +
+               "3. $settingName を見つけ、「有効 (Enabled)」に変更します。`r`n" +
+               "4. [F10] キーを押して設定を保存し、PC を通常通り再起動してください。`r`n`r`n" +
+               "※ BIOS 設定完了後、この警告は自動的に解消されます。"
+
+    Show-AppConfirm -Message $guideMsg -Title "BIOS/UEFI 仮想化設定ガイド - hayamimi" -Buttons ([System.Windows.MessageBoxButton]::OK) -Icon ([System.Windows.MessageBoxImage]::Information) | Out-Null
+}
+
+# WSL3 & 仮想化アラートバナーの状態更新関数
+function Update-WslcBannerState {
+    $script:WslcCmd = Get-WslcCommand
+    $script:VirtDiag = Get-VirtualizationDiagnostic
+
+    if ($script:WslcCmd -and $script:VirtDiag.IsReady) {
+        if ($wslcAlertBanner) { $wslcAlertBanner.Visibility = "Collapsed" }
+        return $true
+    }
+
+    if ($wslcAlertBanner) {
+        $wslcAlertBanner.Visibility = "Visible"
+        if (-not $script:VirtDiag.IsReady -and $script:VirtDiag.Reason -eq "BiosDisabled") {
+            if ($wslcAlertTitle) { $wslcAlertTitle.Text = "⚠ CPUの仮想化支援 (BIOS: VT-x / AMD-V) が無効です" }
+            if ($wslcAlertDesc) { $wslcAlertDesc.Text = "BIOS/UEFI で $($script:VirtDiag.CpuVendor) 仮想化設定を有効化してください。未設定のままではコンテナを起動できません。" }
+            if ($btnBiosGuide) { $btnBiosGuide.Visibility = "Visible" }
+            if ($btnUpdateWsl) { $btnUpdateWsl.Content = "📥 仮想化 & WSL3 を自動設定" }
+        } elseif (-not $script:VirtDiag.IsReady -and $script:VirtDiag.Reason -eq "WindowsFeatureDisabled") {
+            if ($wslcAlertTitle) { $wslcAlertTitle.Text = "⚠ Windows の仮想化基盤 (VirtualMachinePlatform) が無効です" }
+            if ($wslcAlertDesc) { $wslcAlertDesc.Text = "WSL Containers の実行には Windows の仮想マシンプラットフォームが必要です。ワンクリックで自動有効化できます。" }
+            if ($btnBiosGuide) { $btnBiosGuide.Visibility = "Collapsed" }
+            if ($btnUpdateWsl) { $btnUpdateWsl.Content = "📥 仮想化基盤 & WSL3 を有効化" }
+        } else {
+            if ($wslcAlertTitle) { $wslcAlertTitle.Text = "⚠ WSL 3.0 (WSL Containers) がインストールされていません" }
+            if ($wslcAlertDesc) { $wslcAlertDesc.Text = "hayamimi の実行に必要な WSL 3.0 をワンクリックで自動インストールできます。" }
+            if ($btnBiosGuide) { $btnBiosGuide.Visibility = "Collapsed" }
+            if ($btnUpdateWsl) { $btnUpdateWsl.Content = "📥 WSL3 を自動インストール" }
+        }
+    }
+    return $false
 }
 
 # ファイル共有モード (ReadWrite) での安全なログ行読み取り関数 (ロック競合ゼロ)
@@ -652,19 +759,37 @@ Write-Host "  hayamimi - WSL 3.0 / WSL Containers 自動セットアップ" -For
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host ""
 
+# 0. Windows 仮想化基盤 (VirtualMachinePlatform) & Hypervisor の有効化
+$script:RebootNeeded = $false
+Write-Host "[ステップ 1/5] Windows 仮想化機能 (VirtualMachinePlatform) を有効化しています..." -ForegroundColor Yellow
+try {
+    Write-Host "実行中: DISM (VirtualMachinePlatform & Subsystem-Linux)..."
+    $pDism1 = Start-Process dism.exe -ArgumentList "/online /enable-feature /featurename:VirtualMachinePlatform /all /norestart" -Wait -PassThru -NoNewWindow
+    $pDism2 = Start-Process dism.exe -ArgumentList "/online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart" -Wait -PassThru -NoNewWindow
+    Start-Process bcdedit.exe -ArgumentList "/set hypervisorlaunchtype auto" -Wait -NoNewWindow
+
+    if ($pDism1.ExitCode -eq 3010 -or $pDism2.ExitCode -eq 3010) {
+        $script:RebootNeeded = $true
+    }
+} catch {
+    Write-Host "DISM 機能有効化スキップ: $_" -ForegroundColor DarkGray
+}
+
 # 1. WSL 自体の存在確認
 $hasWsl = (where.exe wsl 2>$null)
 if (-not $hasWsl) {
-    Write-Host "[ステップ 1/4] Windows Subsystem for Linux (WSL) 基盤を新規インストールしています..." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "[ステップ 2/5] Windows Subsystem for Linux (WSL) 基盤を新規インストールしています..." -ForegroundColor Yellow
     Write-Host "実行中: wsl.exe --install --no-distribution"
     wsl.exe --install --no-distribution
 } else {
-    Write-Host "[ステップ 1/4] WSL 基盤は検出されました。" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "[ステップ 2/5] WSL 基盤は検出されました。" -ForegroundColor Green
 }
 
 # 2. WSL を最新版に更新
 Write-Host ""
-Write-Host "[ステップ 2/4] WSL パッケージを最新版に更新しています..." -ForegroundColor Yellow
+Write-Host "[ステップ 3/5] WSL パッケージを最新版に更新しています..." -ForegroundColor Yellow
 Write-Host "実行中: wsl.exe --update"
 wsl.exe --update
 
@@ -672,7 +797,7 @@ wsl.exe --update
 $hasWslc = (where.exe wslc 2>$null)
 if (-not $hasWslc -and -not (Test-Path "C:\Program Files\WSL\wslc.exe")) {
     Write-Host ""
-    Write-Host "[ステップ 3/4] WSL 3.0 (wslc) プレリリース版パッケージを取得しています..." -ForegroundColor Yellow
+    Write-Host "[ステップ 4/5] WSL 3.0 (wslc) プレリリース版パッケージを取得しています..." -ForegroundColor Yellow
     Write-Host "実行中: wsl.exe --update --pre-release"
     wsl.exe --update --pre-release
 }
@@ -681,7 +806,7 @@ if (-not $hasWslc -and -not (Test-Path "C:\Program Files\WSL\wslc.exe")) {
 $hasWslc = (where.exe wslc 2>$null)
 if (-not $hasWslc -and -not (Test-Path "C:\Program Files\WSL\wslc.exe")) {
     Write-Host ""
-    Write-Host "[ステップ 4/4] GitHub から最新の WSL x64 インストーラーを直接取得しています..." -ForegroundColor Yellow
+    Write-Host "[ステップ 5/5] GitHub から最新の WSL x64 インストーラーを直接取得しています..." -ForegroundColor Yellow
     try {
         [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
         $apiUrl = "https://api.github.com/repos/microsoft/WSL/releases"
@@ -723,9 +848,14 @@ if (Test-Path (Join-Path $wslDir "wslc.exe")) {
 
 Write-Host ""
 Write-Host "===================================================" -ForegroundColor Green
-Write-Host "  WSL 3.0 のセットアップが完了しました！" -ForegroundColor Green
+Write-Host "  WSL 3.0 & 仮想化基盤のセットアップが完了しました！" -ForegroundColor Green
 Write-Host "===================================================" -ForegroundColor Green
-Write-Host "※ 新規に WSL を有効化した場合は、PC の再起動が必要になる場合があります。" -ForegroundColor Cyan
+if ($script:RebootNeeded) {
+    Write-Host "【重要】仮想マシンプラットフォームを新規に有効化したため、" -ForegroundColor Yellow
+    Write-Host "        仮想化機能の完全適用には PC の再起動が必要です。" -ForegroundColor Yellow
+} else {
+    Write-Host "※ 新規に WSL を有効化した場合は、PC の再起動が必要になる場合があります。" -ForegroundColor Cyan
+}
 Write-Host "このウィンドウを閉じると、ランチャーで自動認識されます。"
 Write-Host ""
 Read-Host "Enterキーを押して終了してください..."
@@ -1298,9 +1428,26 @@ $healthTimer.Add_Tick({
 # 起動ボタン処理
 $btnStart.Add_Click({
     try {
-        # 1. WSL Containers (wslc.exe) 存在確認
+        # 1. 仮想化基盤 (Hypervisor / BIOS VT-x) チェック
+        $diag = Get-VirtualizationDiagnostic
+        if (-not $diag.IsReady) {
+            Update-WslcBannerState | Out-Null
+            if ($diag.Reason -eq "BiosDisabled") {
+                Show-BiosVirtualizationGuide -Diag $diag
+                return
+            } else {
+                $askVmp = Show-AppConfirm -Message "Windows の仮想化基盤 (VirtualMachinePlatform) が無効、またはPCの再起動待ちです。`r`n`r`n今すぐ全自動で仮想化基盤と WSL 3.0 を有効化しますか？`r`n(管理者権限の設定画面が開きます)" -Title "仮想化基盤の有効化 - hayamimi"
+                if ($askVmp -eq [System.Windows.MessageBoxResult]::Yes) {
+                    Invoke-InstallWslContainers | Out-Null
+                }
+                return
+            }
+        }
+
+        # 2. WSL Containers (wslc.exe) 存在確認
         $script:WslcCmd = Get-WslcCommand
         if (-not $script:WslcCmd) {
+            Update-WslcBannerState | Out-Null
             Set-UIState "WSL3 未検出" $brushOrange $true $false
             Write-AppLog "【案内】WSL 3.0 / WSL Containers (wslc.exe) が未インストールです。" "WARN"
 
@@ -1388,13 +1535,25 @@ $btnStop.Add_Click({
     }
 })
 
-# WSL 自動インストールボタンの処理
+# BIOS 設定ガイドボタンの処理
+if ($btnBiosGuide) {
+    $btnBiosGuide.Add_Click({
+        try {
+            Show-BiosVirtualizationGuide -Diag (Get-VirtualizationDiagnostic)
+        } catch {
+            Write-AppLog "BIOS ガイド表示エラー: $_" "ERROR"
+        }
+    })
+}
+
+# WSL & 仮想化 自動セットアップボタンの処理
 if ($btnUpdateWsl) {
     $btnUpdateWsl.Add_Click({
         try {
             Invoke-InstallWslContainers | Out-Null
+            Update-WslcBannerState | Out-Null
         } catch {
-            Write-AppLog "WSL更新処理エラー: $_" "ERROR"
+            Write-AppLog "WSL/仮想化セットアップ処理エラー: $_" "ERROR"
         }
     })
 }
@@ -1491,12 +1650,13 @@ Write-AppLog "=========================================="
 Write-AppLog "hayamimi ランチャー $version を起動しました ($($runtimeBadge.Text))."
 Write-AppLog "ランチャーログ: $LogFile"
 Write-AppLog "コンテナログ:   $ContainerLogFile"
-Write-AppLog "WSL Containers (WSL3) 環境を確認中..."
+Write-AppLog "WSL Containers (WSL3) および仮想化環境を確認中..."
 
-$script:WslcCmd = Get-WslcCommand
-if ($script:WslcCmd) {
+$isEnvReady = Update-WslcBannerState
+
+if ($isEnvReady) {
     Write-AppLog "✔ WSL Containers 検出: $script:WslcCmd"
-    if ($wslcAlertBanner) { $wslcAlertBanner.Visibility = "Collapsed" }
+    Write-AppLog "✔ Hypervisor 仮想化基盤: 正常稼働中"
     
     if (Test-ContainerRunning) {
         Write-AppLog "既存の hayamimi コンテナが稼働中です。"
@@ -1507,18 +1667,34 @@ if ($script:WslcCmd) {
         Set-UIState "停止中" $brushGray $true $false
     }
 } else {
-    Write-AppLog "【警告】WSL 3.0 / WSL Containers (wslc.exe) が検出されませんでした。" "WARN"
-    Write-AppLog "【案内】hayamimi の実行には WSL 3.0 (wslc) が必要です。" "WARN"
-    Write-AppLog "【解決方法】「📥 WSL3 を自動インストール」ボタンから全自動セットアップを実行できます。" "WARN"
-    if ($wslcAlertBanner) { $wslcAlertBanner.Visibility = "Visible" }
-    Set-UIState "WSL3 未検出" $brushOrange $true $false
+    $diag = Get-VirtualizationDiagnostic
+    if (-not $diag.IsReady) {
+        if ($diag.Reason -eq "BiosDisabled") {
+            Write-AppLog "【警告】CPU ハードウェア仮想化 ($($diag.CpuVendor): VT-x / AMD-V) が BIOS で無効です。" "WARN"
+            Write-AppLog "【案内】hayamimi を動かすには BIOS/UEFI で仮想化を有効にする必要があります。" "WARN"
+            Write-AppLog "【解決方法】「📖 BIOS 設定ガイド」ボタンから有効化手順をご確認ください。" "WARN"
+            Set-UIState "BIOS 仮想化無効" $brushOrange $true $false
+        } else {
+            Write-AppLog "【警告】Windows 仮想化機能 (VirtualMachinePlatform) が無効、または再起動待ちです。" "WARN"
+            Write-AppLog "【解決方法】「📥 仮想化基盤 & WSL3 自動設定」ボタンを押してください。" "WARN"
+            Set-UIState "仮想化基盤無効" $brushOrange $true $false
+        }
+    } elseif (-not $script:WslcCmd) {
+        Write-AppLog "【警告】WSL 3.0 / WSL Containers (wslc.exe) が検出されませんでした。" "WARN"
+        Write-AppLog "【解決方法】「📥 仮想化 & WSL3 自動設定」ボタンから全自動セットアップを実行できます。" "WARN"
+        Set-UIState "WSL3 未検出" $brushOrange $true $false
+    }
 
-    # 画面描画完了時に自動でインストール確認ダイアログを表示
+    # 画面描画完了時に自動でガイドまたはインストール確認ダイアログを表示
     $window.Add_ContentRendered({
-        if (-not $script:WslcCmd) {
-            $ask = Show-AppConfirm -Message "hayamimi の実行に必要な WSL 3.0 (WSL Containers) がインストールされていません。`r`n`r`n今すぐ全自動で WSL 3.0 をインストールしますか？`r`n(管理者権限のインストール画面が開きます)" -Title "WSL 3.0 の自動インストール - hayamimi"
+        $curDiag = Get-VirtualizationDiagnostic
+        if (-not $curDiag.IsReady -and $curDiag.Reason -eq "BiosDisabled") {
+            Show-BiosVirtualizationGuide -Diag $curDiag
+        } elseif (-not $script:WslcCmd -or -not $curDiag.IsReady) {
+            $ask = Show-AppConfirm -Message "hayamimi の実行に必要な仮想化機能または WSL 3.0 がセットアップされていません。`r`n`r`n今すぐ全自動で仮想化基盤と WSL 3.0 のセットアップを開始しますか？`r`n(管理者権限のインストール画面が開きます)" -Title "環境セットアップ - hayamimi"
             if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
                 Invoke-InstallWslContainers | Out-Null
+                Update-WslcBannerState | Out-Null
             }
         }
     })
