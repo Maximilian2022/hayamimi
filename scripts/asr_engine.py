@@ -1103,8 +1103,9 @@ class RoutedASR:
             raise ModelUnavailable(name)
         if name not in self._models and not _model_present(name):
             self._unavailable.add(name)
-            print(f"[hayamimi] model '{name}' not found under models/ "
-                  f"(minimal install?): routing falls back", file=sys.stderr)
+            if not getattr(self, "_fallback_logged", False):
+                self._fallback_logged = True
+                print("[hayamimi] 最小構成 (ReazonSpeech) で音声を認識します。", file=sys.stderr)
             raise ModelUnavailable(name)
         rec = self._models.get(name)
         if rec is None:

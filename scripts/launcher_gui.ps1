@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.1.8"
-$script:AppVersion = "1.1.8"
+﻿$version = "GUI v1.1.9"
+$script:AppVersion = "1.1.9"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -2440,17 +2440,35 @@ $healthTimer.Add_Tick({
         }
     }
 
-    # 3. HTTP 応答確認 (ポート8833)
+    # 3. サーバー疎通確認 (高速 TCP ソケット判定 + プロキシバイパス HTTP 応答確認)
     $ready = $false
     try {
-        $req = [System.Net.HttpWebRequest]::Create($MicUrl)
-        $req.Timeout = 400
-        $req.Method = "GET"
-        $resp = $req.GetResponse()
-        if ($resp.StatusCode -eq [System.Net.HttpStatusCode]::OK) {
-            $ready = $true
+        # 127.0.0.1:8833 の TCP ポート疎通を直接確認 (WPADプロキシ探索・IPv6解決遅延を完全排除)
+        $tcp = [System.Net.Sockets.TcpClient]::new()
+        $asyncRes = $tcp.BeginConnect("127.0.0.1", 8833, $null, $null)
+        $connected = $asyncRes.AsyncWaitHandle.WaitOne(600, $false)
+        if ($connected) {
+            $tcp.EndConnect($asyncRes)
+            $tcp.Close()
+
+            # ポート開放確認後、HTTP 応答も検証 (プロキシ自動検出をバイパス)
+            try {
+                $checkUri = "http://127.0.0.1:8833/mic"
+                $req = [System.Net.HttpWebRequest]::Create($checkUri)
+                $req.Proxy = $null              # プロキシ探索を完全バイパス
+                $req.Timeout = 800             # 0.8秒
+                $resp = $req.GetResponse()
+                if ($resp.StatusCode -eq [System.Net.HttpStatusCode]::OK) {
+                    $ready = $true
+                }
+                $resp.Close()
+            } catch {
+                # HTTP が処理中でも TCP ポートが開いていれば準備完了と判定
+                $ready = $true
+            }
+        } else {
+            $tcp.Close()
         }
-        $resp.Close()
     } catch {}
 
     if ($ready) {
@@ -2464,9 +2482,9 @@ $healthTimer.Add_Tick({
         Set-UIState "稼働中 (8833 / 8766)" $brushGreen $false $true
         Write-AppLog "✔ サーバー起動完了！ブラウザを開きます: $MicUrl" "INFO"
         try {
-            Start-Process $MicUrl
+            Start-Process $MicUrl -ErrorAction Stop
         } catch {
-            Write-AppLog "ブラウザ起動エラー: $_" "WARN"
+            cmd.exe /c start "" "$MicUrl"
         }
     } elseif ($script:HealthCheckAttempts -ge 1200) {
         # 10分 (1200 * 0.5s = 600s) 経過でタイムアウト
