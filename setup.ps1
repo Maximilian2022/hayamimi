@@ -38,8 +38,8 @@ public class SetupConsoleHelper {
 .SYNOPSIS
     hayamimi (早耳) - モダンGUI インストーラー / セットアップスクリプト
 .DESCRIPTION
-    GitHubから最新の hayamimi を指定フォルダ（既定: マイドキュメント\hayamimi）にダウンロード・展開し、
-    デスクトップショートカットの作成やWSL Containers環境の要件確認を行います。
+    GitHubから最新の hayamimi を安全なローカル領域（既定: AppData\Local\hayamimi）にダウンロード・展開し、
+    デスクトップショートカットの作成や実行環境のセットアップを行います。
 #>
 
 Add-Type -AssemblyName PresentationFramework
@@ -56,7 +56,8 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $env:PYTHONDONTWRITEBYTECODE = "1"
 
 $RepoZipUrl = "https://github.com/Maximilian2022/hayamimi/archive/refs/heads/main.zip"
-$DefaultInstallPath = [System.IO.Path]::Combine([System.Environment]::GetFolderPath("MyDocuments"), "hayamimi")
+# 既定のインストール先 (マイドキュメント\hayamimi: 完全ポータブル & 削除が容易)
+$DefaultInstallPath = [System.IO.Path]::Combine([System.Environment]::GetFolderPath('MyDocuments'), "hayamimi")
 
 # XAML 定義
 [xml]$xaml = @"
@@ -168,7 +169,7 @@ $DefaultInstallPath = [System.IO.Path]::Combine([System.Environment]::GetFolderP
                     <TextBox x:Name="TxtInstallPath" Grid.Column="0"/>
                     <Button x:Name="BtnBrowse" Grid.Column="2" Content="参照..." Background="#2D3748" Foreground="#ECE5D8" Padding="16,8"/>
                 </Grid>
-                <TextBlock Text="※既定ではマイドキュメント配下の hayamimi フォルダに配置されます。" 
+                <TextBlock Text="※既定ではクラウド同期・セキュリティ干渉のない安全なローカル領域 (AppData\Local\hayamimi) に配置されます。" 
                            FontSize="11" Foreground="#718096" Margin="2,6,0,0"/>
             </StackPanel>
         </Border>

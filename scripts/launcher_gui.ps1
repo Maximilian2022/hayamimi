@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.1.7"
-$script:AppVersion = "1.1.7"
+﻿$version = "GUI v1.1.8"
+$script:AppVersion = "1.1.8"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -234,6 +234,140 @@ function Wait-ProcessWithUiPump {
             }
         }
     } catch {}
+}
+
+# --- 高精度クラウド同期検出 (レジストリ / Cloud Filter 属性 / パス名非依存) ---
+function Test-CloudSyncPath {
+    param([string]$Path)
+    try {
+        if (-not $Path) { return $false }
+
+        # 1. Windows レジストリに登録された全 OneDrive 同期ルート (個人/学校/法人)
+        $odRoots = Get-ChildItem "HKCU:\Software\Microsoft\OneDrive\Accounts" -ErrorAction SilentlyContinue |
+            ForEach-Object { (Get-ItemProperty $_.PSPath).UserFolder } |
+            Where-Object { $_ -and (Test-Path $_) }
+
+        foreach ($r in $odRoots) {
+            if ($Path.StartsWith($r, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $true
+            }
+        }
+
+        # 2. 環境変数 (OneDrive, OneDriveConsumer, OneDriveCommercial)
+        $envRoots = @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial) | Where-Object { $_ -and (Test-Path $_) }
+        foreach ($er in $envRoots) {
+            if ($Path.StartsWith($er, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $true
+            }
+        }
+
+        # 3. リダイレクトされた User Shell Folders (Documents, Desktop)
+        $shellFolders = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" -ErrorAction SilentlyContinue
+        if ($shellFolders) {
+            $specialPaths = @($shellFolders.Personal, $shellFolders.Desktop) | Where-Object { $_ -and (Test-Path $_) }
+            foreach ($sp in $specialPaths) {
+                if ($Path.StartsWith($sp, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $item = Get-Item $sp -Force -ErrorAction SilentlyContinue
+                    if ($item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                        return $true
+                    }
+                }
+            }
+        }
+
+        # 4. パス文字列フォールバック
+        if ($Path -match "(?i)OneDrive|Dropbox|Google Drive|iCloudDrive") {
+            return $true
+        }
+    } catch {}
+    return $false
+}
+
+# --- 案1: OneDrive モデル永続ピン留め保護 (+p -u: 完全ポータブル) ---
+function Protect-ModelFiles {
+    <#
+    .SYNOPSIS
+        OneDrive のファイルオンデマンドによるモデル消失 (0バイトスタブ化) を防ぐため、
+        models フォルダに「常にこのデバイスに保持する (+p -u)」属性を付与します。
+    #>
+    try {
+        $modelsDir = Join-Path $ProjectRoot "models"
+        if (-not (Test-Path $modelsDir)) { return }
+
+        $isCloud = Test-CloudSyncPath $ProjectRoot
+        if ($isCloud) {
+            $null = cmd.exe /c "attrib.exe +p -u `"$modelsDir`" /s /d" 2>&1
+            Write-AppLog "✔ OneDrive クラウド保護: models フォルダをローカル永続保持に設定しました (attrib +p -u)" "INFO"
+        }
+    } catch {
+        Write-AppLog "モデル保護属性の適用中に警告が発生しました: $_" "WARN"
+    }
+}
+
+# --- 案3: 自律セルフヒーリング (モデル実体サイズ検証 & 自動修復) ---
+function Ensure-ModelsIntegrity {
+    <#
+    .SYNOPSIS
+        AIモデルの実体存在・ファイルサイズを検証し、OneDrive による0バイト化や欠落を検知した場合は
+        自動で再取得 (自己修復) を行い、ローカル永続保持属性 (+p) を付与します。
+    #>
+    param([bool]$SilentIfReady = $false)
+    try {
+        $modelsDir = Join-Path $ProjectRoot "models"
+        if (-not (Test-Path $modelsDir)) {
+            New-Item -ItemType Directory -Path $modelsDir -Force | Out-Null
+        }
+
+        $coreRzKey = Join-Path $modelsDir "sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17\tokens.txt"
+        $coreLidKey = Join-Path $modelsDir "sherpa-onnx-whisper-tiny\tiny-tokens.txt"
+
+        $isRzOk = (Test-Path $coreRzKey) -and ((Get-Item $coreRzKey -Force).Length -gt 0)
+        $isLidOk = (Test-Path $coreLidKey) -and ((Get-Item $coreLidKey -Force).Length -gt 0)
+
+        if ($isRzOk -and $isLidOk) {
+            Protect-ModelFiles
+            if (-not $SilentIfReady) {
+                Write-AppLog "✔ Core AI モデル実体を確認しました (完全ポータブル保持)" "INFO"
+            }
+            return $true
+        }
+
+        # 欠落または 0バイト化されている場合は自動修復
+        Write-AppLog "⚠ AIモデルの欠落またはオンライン未水和 (0バイト) を検知しました。自動修復を開始します..." "WARN"
+        Set-UIState "モデル自己修復中..." $brushOrange $false $false
+
+        $venvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+        $dlScript = Join-Path $ProjectRoot "scripts\download_models.py"
+
+        if (-not (Test-Path $venvPython)) {
+            $venvPython = (where.exe python 2>$null | Select-Object -First 1)
+        }
+
+        if ($venvPython -and (Test-Path $dlScript)) {
+            $pinfoDl = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoDl.FileName = $venvPython
+            $pinfoDl.Arguments = "-B `"$dlScript`" --minimal --translators"
+            $pinfoDl.WorkingDirectory = $ProjectRoot
+            $pinfoDl.RedirectStandardOutput = $true
+            $pinfoDl.RedirectStandardError = $true
+            $pinfoDl.UseShellExecute = $false
+            $pinfoDl.CreateNoWindow = $true
+            $pinfoDl.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            $procDl = [System.Diagnostics.Process]::Start($pinfoDl)
+            Wait-ProcessWithUiPump -Proc $procDl -LogPrefix "[モデル自己修復]"
+
+            Protect-ModelFiles
+            Write-AppLog "✔ AIモデルの自己修復が完了しました！" "INFO"
+            Set-UIState "停止中" $brushGray $true $false
+            return $true
+        } else {
+            Write-AppLog "Python 環境が準備されていないため、モデル自己修復をスキップしました。" "WARN"
+            return $false
+        }
+    } catch {
+        Write-AppLog "モデル整合性検証中に例外が発生しました: $_" "WARN"
+        return $false
+    }
 }
 
 $script:LastContainerLogLineCount = 0
@@ -1383,25 +1517,8 @@ function Invoke-SetupPythonVenv {
         Write-AppLog "✔ 依存パッケージのインストールが完了しました！" "INFO"
     }
 
-    # 4. モデルダウンロードの確認
-    $coreModelDir = Join-Path $ProjectRoot "models\sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17"
-    if (-not (Test-Path $coreModelDir)) {
-        Set-UIState "モデルDL中 (約1.5GB)..." $brushOrange $false $false
-        Write-AppLog "Coreモデルおよび翻訳モデルをダウンロードしています (初回のみ数分)..." "INFO"
-        $dlScript = Join-Path $ProjectRoot "scripts\download_models.py"
-        
-        $pinfoDl = [System.Diagnostics.ProcessStartInfo]::new()
-        $pinfoDl.FileName = $venvPython
-        $pinfoDl.Arguments = "-B `"$dlScript`" --minimal --translators"
-        $pinfoDl.WorkingDirectory = $ProjectRoot
-        $pinfoDl.RedirectStandardOutput = $true
-        $pinfoDl.RedirectStandardError = $true
-        $pinfoDl.UseShellExecute = $false
-        $pinfoDl.CreateNoWindow = $true
-        $pinfoDl.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        $procDl = [System.Diagnostics.Process]::Start($pinfoDl)
-        Wait-ProcessWithUiPump -Proc $procDl -LogPrefix "[モデルDL]"
-    }
+    # 4. AIモデルの実体検証 & セルフヒーリング
+    Ensure-ModelsIntegrity | Out-Null
 
     Write-AppLog "✔ Python venv 環境のセットアップがすべて完了しました！" "INFO"
     Write-AppLog "=========================================="
@@ -1420,6 +1537,13 @@ function Start-PythonVenvApp {
         if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
             Invoke-SetupPythonVenv | Out-Null
         }
+        return
+    }
+
+    # 必須モデル存在事前チェック & セルフヒーリング
+    $hasModels = Ensure-ModelsIntegrity
+    if (-not $hasModels) {
+        Set-UIState "モデル取得失敗" $brushRed $true $false
         return
     }
 
@@ -2681,6 +2805,7 @@ if ($initMode -eq "Wslc") {
 }
 Set-EngineMode $initMode
 Update-GpuDeviceBadge
+Ensure-ModelsIntegrity -SilentIfReady $true | Out-Null
 
 Write-AppLog "=========================================="
 Write-AppLog "hayamimi ランチャー $version を起動しました ($($runtimeBadge.Text))."

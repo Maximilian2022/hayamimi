@@ -103,7 +103,7 @@ def _fetch_bytes(url: str, max_retries: int = 3) -> bytes:
 
 def download_file(url: str, dest_path: str, label: str) -> None:
     """Single-file model (e.g. silero_vad.onnx, campplus_sv.onnx)."""
-    if os.path.exists(dest_path):
+    if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
         print(f"[skip] {label} (already present: {dest_path})")
         return
     print(f"[get ] {label}")
@@ -115,8 +115,16 @@ def download_and_extract_tarbz2(url: str, dest_dir: str, label: str) -> None:
     tarball's basename; we re-home that under models/<dest_dir_name>."""
     target = os.path.join(MODELS_DIR, dest_dir)
     if os.path.isdir(target):
-        print(f"[skip] {label} (already present: {target})")
-        return
+        has_valid_files = any(
+            os.path.getsize(os.path.join(dp, f)) > 0
+            for dp, dn, fn in os.walk(target)
+            for f in fn if not f.startswith(".")
+        )
+        if has_valid_files:
+            print(f"[skip] {label} (already present: {target})")
+            return
+        print(f"[warn] {label}: {target} exists but contains no valid model files. Re-fetching...")
+        shutil.rmtree(target, ignore_errors=True)
     print(f"[get ] {label}")
     tmp = os.path.join(MODELS_DIR, f".{dest_dir}.tar.bz2.part")
     os.makedirs(MODELS_DIR, exist_ok=True)
@@ -184,8 +192,16 @@ def download_hf_repo(repo: str, dest_dir: str, label: str, ignore_patterns=None)
     translation/punctuation models, which are distributed as small repos)."""
     target = os.path.join(MODELS_DIR, dest_dir)
     if os.path.isdir(target):
-        print(f"[skip] {label} (already present: {target})")
-        return
+        has_valid_files = any(
+            os.path.getsize(os.path.join(dp, f)) > 0
+            for dp, dn, fn in os.walk(target)
+            for f in fn if not f.startswith(".")
+        )
+        if has_valid_files:
+            print(f"[skip] {label} (already present: {target})")
+            return
+        print(f"[warn] {label}: {target} exists but contains no valid model files. Re-fetching...")
+        shutil.rmtree(target, ignore_errors=True)
     print(f"[get ] {label}")
     try:
         from huggingface_hub import snapshot_download
