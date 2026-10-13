@@ -1,4 +1,4 @@
-﻿$version = "GUI v1.1.3"
+﻿$version = "GUI v1.1.4"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -283,7 +283,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi ランチャー (GUI v1.1.3)"
+        Title="hayamimi ランチャー (GUI v1.1.4)"
         Height="780" Width="780"
         MinHeight="680" MinWidth="720"
         WindowStartupLocation="CenterScreen"
@@ -361,7 +361,7 @@ function Update-ContainerLogFile {
                         <TextBlock x:Name="GpuBadge" Text="⚡ GPU: 検出中..." FontSize="11" Foreground="#10B981" FontWeight="SemiBold"/>
                     </Border>
                     <Border Background="#1E1B4B" CornerRadius="12" Padding="10,5" Margin="0,0,8,0" BorderBrush="#4338CA" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.1.3" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.1.4" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#141B2D" CornerRadius="12" Padding="10,5" BorderBrush="#253350" BorderThickness="1">
                         <TextBlock x:Name="RuntimeBadge" Text="Python venv" FontSize="11" Foreground="#38BDF8" FontWeight="SemiBold"/>
@@ -759,7 +759,7 @@ function Show-AppConfirm {
     }
 }
 
-# 仮想化・Hypervisor 状態のインテリジェント診断
+# 仮想化・Hypervisor 状態のインテリジェント診断 (Hyper-V稼働時のWMI False偽陽性を完全防止)
 function Get-VirtualizationDiagnostic {
     $diag = [PSCustomObject]@{
         HypervisorPresent = $false
@@ -771,7 +771,7 @@ function Get-VirtualizationDiagnostic {
         Details = ""
     }
 
-    # 1. CPU ハードウェア仮想化支援 (BIOS: VT-x / AMD-V) チェック
+    # 1. CPU 情報およびベンダーの取得
     try {
         $proc = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($proc) {
@@ -785,12 +785,9 @@ function Get-VirtualizationDiagnostic {
         }
     } catch {}
 
-    if ($diag.FirmwareVirtualization -eq $false) {
-        $diag.Reason = "BiosDisabled"
-        return $diag
-    }
-
     # 2. Hypervisor の稼働確認
+    # (※ Windows 10/11 で Hyper-V/VBS が動作している場合、Win32_Processor の VirtualizationFirmwareEnabled は
+    #     WMI 仕様により必ず False または null になるため、HypervisorPresent が True の場合は CPU 仮想化は確実に有効である)
     try {
         $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
         if ($cs) {
@@ -798,14 +795,7 @@ function Get-VirtualizationDiagnostic {
         }
     } catch {}
 
-    # 3. vmcompute サービス (Hyper-V Host Compute Service / VirtualMachinePlatform) の存在確認
-    $hasVmCompute = (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\vmcompute")
-    if (-not $hasVmCompute) {
-        $diag.Reason = "WindowsFeatureDisabled"
-        return $diag
-    }
-
-    # 4. WSL / HCS スモークテスト (wslc コマンドが存在する場合)
+    # 3. WSL Containers / HCS スモークテスト最優先判定 (実動作確認)
     $testWslc = Get-WslcCommand
     if ($testWslc) {
         try {
@@ -816,18 +806,43 @@ function Get-VirtualizationDiagnostic {
             $pinfo.RedirectStandardError = $true
             $pinfo.UseShellExecute = $false
             $pinfo.CreateNoWindow = $true
-            $proc = [System.Diagnostics.Process]::Start($pinfo)
-            $stdout = $proc.StandardOutput.ReadToEnd()
-            $stderr = $proc.StandardError.ReadToEnd()
-            $proc.WaitForExit(2000) | Out-Null
+            $procWslc = [System.Diagnostics.Process]::Start($pinfo)
+            $stdout = $procWslc.StandardOutput.ReadToEnd()
+            $stderr = $procWslc.StandardError.ReadToEnd()
+            $procWslc.WaitForExit(2000) | Out-Null
 
             $combined = "$stdout $stderr"
+            if ($procWslc.ExitCode -eq 0 -and $combined -notmatch "HCS_E_SERVICE_NOT_AVAILABLE|0x80370102|service is not available") {
+                # wslc images が正常に動作するなら、ハードウェア仮想化も HCS も 100% 準備完了
+                $diag.IsReady = $true
+                return $diag
+            }
+
             if ($combined -match "HCS_E_SERVICE_NOT_AVAILABLE|0x80370102|必要な機能がインストールされていない|service is not available") {
                 $diag.Reason = "HcsServiceUnavailable"
                 $diag.Details = "HCS_E_SERVICE_NOT_AVAILABLE"
                 return $diag
             }
         } catch {}
+    }
+
+    # 4. 本当に BIOS で無効な場合のみ検出 (Hypervisor が動いておらず、かつ Firmware で無効と返された場合)
+    if (-not $diag.HypervisorPresent -and $diag.FirmwareVirtualization -eq $false) {
+        $diag.Reason = "BiosDisabled"
+        return $diag
+    }
+
+    # 5. vmcompute サービス (Hyper-V Host Compute Service / VirtualMachinePlatform) の存在確認
+    $hasVmCompute = (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\vmcompute")
+    if (-not $hasVmCompute) {
+        $diag.Reason = "WindowsFeatureDisabled"
+        return $diag
+    }
+
+    # 6. Hypervisor が稼働していれば Ready
+    if ($diag.HypervisorPresent) {
+        $diag.IsReady = $true
+        return $diag
     }
 
     $diag.IsReady = $true
