@@ -1,4 +1,6 @@
-﻿$version = "GUI v1.1.4"
+﻿$version = "GUI v1.1.5"
+$script:AppVersion = "1.1.5"
+$script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -283,7 +285,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi ランチャー (GUI v1.1.4)"
+        Title="hayamimi ランチャー (GUI v1.1.5)"
         Height="780" Width="780"
         MinHeight="680" MinWidth="720"
         WindowStartupLocation="CenterScreen"
@@ -361,7 +363,7 @@ function Update-ContainerLogFile {
                         <TextBlock x:Name="GpuBadge" Text="⚡ GPU: 検出中..." FontSize="11" Foreground="#10B981" FontWeight="SemiBold"/>
                     </Border>
                     <Border Background="#1E1B4B" CornerRadius="12" Padding="10,5" Margin="0,0,8,0" BorderBrush="#4338CA" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.1.4" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.1.5" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#141B2D" CornerRadius="12" Padding="10,5" BorderBrush="#253350" BorderThickness="1">
                         <TextBlock x:Name="RuntimeBadge" Text="Python venv" FontSize="11" Foreground="#38BDF8" FontWeight="SemiBold"/>
@@ -497,8 +499,8 @@ function Update-ContainerLogFile {
                 <TextBlock x:Name="UpdateDescText" Grid.Column="0" Text="※ GitHubの最新コード取得と依存パッケージ更新を行えます。" FontSize="11" Foreground="#64748B" VerticalAlignment="Center"/>
                 <Button x:Name="BtnUpdateApp" Grid.Column="1" Background="#141E2E" BorderBrush="#23344D" BorderThickness="1" Foreground="#38BDF8" Height="30" Padding="12,4" FontSize="11" ToolTip="GitHubから最新のソースコードを取得します">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="📥" FontSize="11" Margin="0,0,5,0" VerticalAlignment="Center"/>
-                        <TextBlock Text="本体を最新版に更新" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="BtnUpdateAppIcon" Text="📥" FontSize="11" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="BtnUpdateAppText" Text="本体を最新版に更新" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
                 <Button x:Name="BtnRebuild" Grid.Column="3" Background="#141E2E" BorderBrush="#23344D" BorderThickness="1" Foreground="#94A3B8" Height="30" Padding="12,4" FontSize="11" ToolTip="最新のソースコードを反映します">
@@ -605,13 +607,13 @@ $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
 # --- WPF UIスレッド未処理例外の安全捕捉 (プロセスクラッシュ完全防止) ---
 $window.Dispatcher.Add_UnhandledExceptionFilter({
-    param($sender, $e)
+    param($eventSender, $e)
     try {
         $e.RequestCatch = $true
     } catch {}
 })
 $window.Dispatcher.Add_UnhandledException({
-    param($sender, $e)
+    param($eventSender, $e)
     try {
         Write-AppLog "UIエラーが発生しましたが回復しました: $($e.Exception.Message)" "ERROR"
         $e.Handled = $true
@@ -636,6 +638,9 @@ $btnStartText = $window.FindName("BtnStartText")
 $btnStop = $window.FindName("BtnStop")
 $btnStopText = $window.FindName("BtnStopText")
 $btnUpdateApp = $window.FindName("BtnUpdateApp")
+$btnUpdateAppText = $window.FindName("BtnUpdateAppText")
+$btnUpdateAppIcon = $window.FindName("BtnUpdateAppIcon")
+$updateDescText = $window.FindName("UpdateDescText")
 $btnRebuild = $window.FindName("BtnRebuild")
 $btnOpenMic = $window.FindName("BtnOpenMic")
 $btnOpenObs = $window.FindName("BtnOpenObs")
@@ -1032,7 +1037,7 @@ function Set-EngineMode {
 
 # 実行基盤切り替え時の安全ハンドラ (稼働中プロセス停止確認付き)
 $script:IsSwitchingMode = $false
-function Handle-EngineModeSwitch {
+function Invoke-EngineModeSwitch {
     param(
         [string]$TargetMode,
         [System.Windows.Controls.RadioButton]$TargetRb,
@@ -1183,7 +1188,7 @@ function Test-HayamimiImageExists {
 function Test-PythonRunning {
     try {
         $procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*realtime_transcribe.py*" }
-        return ($procs -ne $null -and $procs.Count -gt 0)
+        return ($null -ne $procs -and $procs.Count -gt 0)
     } catch {
         return $false
     }
@@ -1797,11 +1802,109 @@ function Invoke-BuildContainerImage {
     }
 }
 
+# バージョン文字列を [version] オブジェクトに変換するヘルパー
+function Get-ParsedVersion {
+    param([string]$verText)
+    if (-not $verText) { return $null }
+    if ($verText -match '(\d+\.\d+\.\d+(\.\d+)?)') {
+        try {
+            return [version]$matches[1]
+        } catch {
+            return $null
+        }
+    }
+    return $null
+}
+
+# GitHub の最新バージョン確認関数
+# GitHub の最新バージョン確認関数 (承認済み動詞 Test- を適用)
+function Test-AppUpdate {
+    param(
+        [switch]$PromptUser,
+        [switch]$SilentOnLatest
+    )
+
+    try {
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+
+        $url = $script:VersionCheckUrl
+        # キャッシュ回避用クエリパラメータ (Unixタイムスタンプ秒)
+        $randSec = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        $reqUrl = "${url}?_t=${randSec}"
+
+        Write-AppLog "GitHub (version.txt) から最新バージョンを確認中..." "INFO"
+
+        $req = [System.Net.HttpWebRequest]::Create($reqUrl)
+        $req.Timeout = 4000
+        $req.ReadWriteTimeout = 4000
+        $req.UserAgent = "hayamimi-launcher/$script:AppVersion"
+        $req.Headers.Add("Cache-Control", "no-cache")
+
+        $resp = $req.GetResponse()
+        $stream = $resp.GetResponseStream()
+        $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)
+        $remoteVerRaw = $reader.ReadToEnd().Trim()
+        $reader.Close()
+        $stream.Close()
+        $resp.Close()
+
+        $remoteVer = Get-ParsedVersion $remoteVerRaw
+        $localVer = Get-ParsedVersion $script:AppVersion
+
+        if ($remoteVer -and $localVer) {
+            if ($remoteVer -gt $localVer) {
+                Write-AppLog "📢 新しいバージョン (v$remoteVer) が公開されています！（現在のバージョン: v$localVer）" "WARN"
+
+                # UI の更新ボタンを強調表示
+                if ($btnUpdateApp) {
+                    $btnUpdateApp.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#064E3B")
+                    $btnUpdateApp.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#10B981")
+                    $btnUpdateApp.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#34D399")
+                    $btnUpdateApp.ToolTip = "新しいバージョン (v$remoteVer) にアップデートできます"
+                }
+                if ($btnUpdateAppIcon) {
+                    $btnUpdateAppIcon.Text = "🔔"
+                }
+                if ($btnUpdateAppText) {
+                    $btnUpdateAppText.Text = "最新版 (v$remoteVer) に更新"
+                }
+                if ($updateDescText) {
+                    $updateDescText.Text = "📢 新しいバージョン (v$remoteVer) が利用可能です！"
+                    $updateDescText.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#34D399")
+                }
+
+                if ($PromptUser) {
+                    $ask = Show-AppConfirm -Message "新しいバージョン (v$remoteVer) が公開されています。`r`n`r`n現在のバージョン: v$localVer`r`n最新のバージョン: v$remoteVer`r`n`r`n今すぐ最新版にアップデートしますか？`r`n（アップデート後、ランチャーは自動で再起動します）" -Title "アップデートの確認 - hayamimi"
+                    if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
+                        Invoke-UpdateAppCode -AutoConfirm
+                    }
+                }
+                return $true
+            } else {
+                if (-not $SilentOnLatest) {
+                    Write-AppLog "✔ hayamimi は最新バージョン (v$localVer) です。" "INFO"
+                }
+                return $false
+            }
+        } else {
+            Write-AppLog "バージョン情報の解析に失敗しました: '$remoteVerRaw'" "WARN"
+            return $false
+        }
+    } catch {
+        Write-AppLog "バージョン確認をスキップしました (オフラインまたは接続タイムアウト): $($_.Exception.Message)" "WARN"
+        return $false
+    }
+}
+
 # 本体の最新コード取得（アップデート）関数
 function Invoke-UpdateAppCode {
+    param([switch]$AutoConfirm)
+
     try {
-        $confirm = Show-AppConfirm -Message "GitHub (Maximilian2022/hayamimi) から最新のソースコードを取得（アップデート）しますか？`r`n`r`n※ 取得完了後、コンテナのリビルドを実施することで最新機能が反映されます。" -Title "本体のアップデート - hayamimi"
-        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+        if (-not $AutoConfirm) {
+            $confirm = Show-AppConfirm -Message "GitHub (Maximilian2022/hayamimi) から最新のソースコードを取得（アップデート）しますか？`r`n`r`n※ 取得完了後、ランチャーが自動再起動され最新機能が反映されます。" -Title "本体のアップデート - hayamimi"
+            if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+        }
 
         Write-AppLog "=========================================="
         Write-AppLog "本体の最新コード取得（アップデート）を開始します..." "INFO"
@@ -1858,7 +1961,7 @@ function Invoke-UpdateAppCode {
 
         # 2. Git がない、または git pull 失敗時は GitHub ZIP 直接取得
         if (-not $updateSuccess) {
-            Write-AppLog "GitHub API から最新ソースコードアーカイブを取得中..." "INFO"
+            Write-AppLog "GitHub から最新ソースコードアーカイブを取得中..." "INFO"
             [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
             $zipUrl = "https://github.com/Maximilian2022/hayamimi/archive/refs/heads/main.zip"
             $tempZip = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "hayamimi-latest.zip")
@@ -1867,12 +1970,12 @@ function Invoke-UpdateAppCode {
             Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing -TimeoutSec 30
             Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force
 
-            # 展開フォルダ内のファイルをプロジェクトルートに安全上書き (models/ や logs/ や .git は保持)
+            # 展開フォルダ内のファイルをプロジェクトルートに安全上書き (.venv / models / logs / config / scratch / .git は保持)
             $innerDir = Get-ChildItem -Path $tempExtract -Directory | Select-Object -First 1
             if ($innerDir) {
                 $srcItems = Get-ChildItem -Path $innerDir.FullName
                 foreach ($item in $srcItems) {
-                    if ($item.Name -in @(".git", "models", "logs", "scratch")) { continue }
+                    if ($item.Name -in @(".git", ".venv", "models", "logs", "config", "scratch")) { continue }
                     $destPath = Join-Path $ProjectRoot $item.Name
                     if ($item.PSIsContainer) {
                         if (-not (Test-Path $destPath)) {
@@ -1915,7 +2018,7 @@ function Invoke-UpdateAppCode {
         Set-UIState "停止中" $brushGray $true $false
 
         if ($updateSuccess) {
-            $askRestart = Show-AppConfirm -Message "最新のソースコードを取得しました！`r`n`r`nランチャーGUIを最新版で再起動しますか？`r`n(※ 再起動後、必要に応じて「🔄 コンテナをリビルド」を行ってください)" -Title "本体更新の完了 - hayamimi"
+            $askRestart = Show-AppConfirm -Message "最新のソースコードを取得しました！`r`n`r`nランチャーGUIを最新版で再起動しますか？" -Title "本体更新の完了 - hayamimi"
             if ($askRestart -eq [System.Windows.MessageBoxResult]::Yes) {
                 Write-AppLog "ランチャーを再起動して最新コードを適用します..." "INFO"
                 $startVbs = Join-Path $ProjectRoot "start.vbs"
@@ -1933,11 +2036,6 @@ function Invoke-UpdateAppCode {
                 }
                 $window.Close()
                 return
-            } else {
-                $askRebuild = Show-AppConfirm -Message "更新をコンテナに反映するため、今すぐリビルドを実行しますか？`r`n(※ ランチャーGUI自体の変更を反映するには、後ほどランチャーを手動で再起動してください)" -Title "コンテナの更新反映 - hayamimi"
-                if ($askRebuild -eq [System.Windows.MessageBoxResult]::Yes) {
-                    Invoke-BuildContainerImage -Force $true -AutoStart $false | Out-Null
-                }
             }
         }
     } catch {
@@ -2283,7 +2381,13 @@ $btnStart.Add_Click({
 # 本体アップデートボタン処理 (GitHubからの最新コード取得)
 if ($btnUpdateApp) {
     $btnUpdateApp.Add_Click({
-        Invoke-UpdateAppCode
+        $hasNew = Test-AppUpdate -SilentOnLatest
+        if (-not $hasNew) {
+            $ask = Show-AppConfirm -Message "現在は最新バージョン (v$script:AppVersion) です。`r`n`r`nGitHub からソースコードを再取得（強制更新）しますか？" -Title "本体アップデート - hayamimi"
+            if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
+                Invoke-UpdateAppCode -AutoConfirm
+            }
+        }
     })
 }
 
@@ -2351,12 +2455,12 @@ $btnStop.Add_Click({
 # 実行基盤ラジオボタン処理 (稼働中安全停止確認付き)
 if ($rbModeVenv) {
     $rbModeVenv.Add_Checked({
-        Handle-EngineModeSwitch -TargetMode "Venv" -TargetRb $rbModeVenv -OtherRb $rbModeWslc
+        Invoke-EngineModeSwitch -TargetMode "Venv" -TargetRb $rbModeVenv -OtherRb $rbModeWslc
     })
 }
 if ($rbModeWslc) {
     $rbModeWslc.Add_Checked({
-        Handle-EngineModeSwitch -TargetMode "Wslc" -TargetRb $rbModeWslc -OtherRb $rbModeVenv
+        Invoke-EngineModeSwitch -TargetMode "Wslc" -TargetRb $rbModeWslc -OtherRb $rbModeVenv
     })
 }
 
@@ -2442,9 +2546,12 @@ $btnOpenLogsDir.Add_Click({
 # ウィンドウクローズ処理
 $script:IsClosing = $false
 $window.Add_Closing({
-    param($sender, $e)
+    param($eventSender, $e)
     if ($script:IsClosing) { return }
 
+    if ($updateCheckTimer -and $updateCheckTimer.IsEnabled) {
+        $updateCheckTimer.Stop()
+    }
     if ($buildTimer -and $buildTimer.IsEnabled) {
         $buildTimer.Stop()
     }
@@ -2587,6 +2694,15 @@ $window.Add_ContentRendered({
     }
 })
 
+# 起動時アップデート自動確認タイマー (起動1.2秒後に非同期で安全に実行)
+$updateCheckTimer = [System.Windows.Threading.DispatcherTimer]::new()
+$updateCheckTimer.Interval = [TimeSpan]::FromMilliseconds(1200)
+$updateCheckTimer.Add_Tick({
+    $updateCheckTimer.Stop()
+    Test-AppUpdate -PromptUser
+})
+$updateCheckTimer.Start()
+
 $pollTimer.Start()
 
 # ウィンドウ表示
@@ -2594,3 +2710,6 @@ $window.ShowDialog() | Out-Null
 
 $pollTimer.Stop()
 $healthTimer.Stop()
+if ($updateCheckTimer -and $updateCheckTimer.IsEnabled) {
+    $updateCheckTimer.Stop()
+}
