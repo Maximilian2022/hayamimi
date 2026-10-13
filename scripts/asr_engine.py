@@ -22,6 +22,17 @@ import glob
 import os
 import re
 import sys
+# Windows cmd.exe リダイレクト環境での日本語ログ文字化け (CP932) を完全防止
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 import threading
 import time
 from typing import Callable

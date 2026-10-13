@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.1.9"
-$script:AppVersion = "1.1.9"
+﻿$version = "GUI v1.2.0"
+$script:AppVersion = "1.2.0"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -59,6 +59,9 @@ Add-Type -AssemblyName System.Drawing
 # --- Windows Defender「コントロールされたフォルダー アクセス」ブロック防止 ---
 # OneDrive や保護フォルダー配下での Python バイトコードキャッシュ (__pycache__) 作成を抑止
 $env:PYTHONDONTWRITEBYTECODE = "1"
+# Python 出力の UTF-8 固定 (Windows CP932 / Shift-JIS 日本語ログ文字化け完全防止)
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
 
 # 1. パスの動的解決 (他環境での実行に対応)
 $ScriptDir = $PSScriptRoot
@@ -1583,6 +1586,8 @@ function Start-PythonVenvApp {
     $pinfo.UseShellExecute = $false
     $pinfo.CreateNoWindow = $true
     $pinfo.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    $pinfo.Environment["PYTHONIOENCODING"] = "utf-8"
+    $pinfo.Environment["PYTHONUTF8"] = "1"
 
     $script:ProcPython = [System.Diagnostics.Process]::Start($pinfo)
     $script:HealthCheckAttempts = 0

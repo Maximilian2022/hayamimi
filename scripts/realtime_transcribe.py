@@ -14,6 +14,18 @@ import sys
 # による OneDrive/保護フォルダー配下での __pycache__ 書き込みブロックを根本から防止
 sys.dont_write_bytecode = True
 
+# Windows cmd.exe リダイレクト環境での日本語ログ文字化け (CP932) を完全防止
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import argparse
 import os
 import queue
