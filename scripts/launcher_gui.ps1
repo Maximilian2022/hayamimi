@@ -1,4 +1,4 @@
-﻿$version = "GUI v1.1.2"
+﻿$version = "GUI v1.1.3"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -145,6 +145,71 @@ function Write-AppLogBatch {
     }
 }
 
+# UI メッセージループ維持 & 外部プロセス逐次ロギング待機関数 (Windows「応答なし」完全防止)
+function Wait-ProcessWithUiPump {
+    param(
+        [System.Diagnostics.Process]$Proc,
+        [string]$LogPrefix = "[処理中]"
+    )
+
+    $stdOutReader = $Proc.StandardOutput
+    $stdErrReader = $Proc.StandardError
+
+    while (-not $Proc.HasExited) {
+        # WPF UI メッセージループを明示的に実行し、OSからの「応答なし」判定を根絶
+        try {
+            [System.Windows.Threading.Dispatcher]::CurrentDispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+        } catch {}
+
+        # 逐次出力を安全に読み取ってGUIログへリアルタイム反映
+        try {
+            if ($stdOutReader -and -not $stdOutReader.EndOfStream) {
+                $line = $stdOutReader.ReadLine()
+                if ($line -and $line.Trim()) {
+                    Write-AppLog "$LogPrefix $($line.Trim())" "INFO"
+                }
+            }
+        } catch {}
+
+        try {
+            if ($stdErrReader -and -not $stdErrReader.EndOfStream) {
+                $errLine = $stdErrReader.ReadLine()
+                if ($errLine -and $errLine.Trim()) {
+                    Write-AppLog "$LogPrefix $errLine" "INFO"
+                }
+            }
+        } catch {}
+
+        Start-Sleep -Milliseconds 40
+    }
+
+    # 終了後の未読出力を読み切る
+    try {
+        if ($stdOutReader) {
+            $remaining = $stdOutReader.ReadToEnd()
+            if ($remaining) {
+                $lines = $remaining -split "[\r\n]+"
+                foreach ($rLine in $lines) {
+                    if ($rLine.Trim()) {
+                        Write-AppLog "$LogPrefix $($rLine.Trim())" "INFO"
+                    }
+                }
+            }
+        }
+        if ($stdErrReader) {
+            $errRemaining = $stdErrReader.ReadToEnd()
+            if ($errRemaining) {
+                $errLines = $errRemaining -split "[\r\n]+"
+                foreach ($eLine in $errLines) {
+                    if ($eLine.Trim()) {
+                        Write-AppLog "$LogPrefix $($eLine.Trim())" "INFO"
+                    }
+                }
+            }
+        }
+    } catch {}
+}
+
 $script:LastContainerLogLineCount = 0
 
 # WSL Containers (wslc.exe) パス解決関数 (PATH未登録環境や Program Files 直下も自動検出)
@@ -218,36 +283,40 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi ランチャー (GUI v1.1.2)"
-        Height="610" Width="660"
+        Title="hayamimi ランチャー (GUI v1.1.3)"
+        Height="780" Width="780"
+        MinHeight="680" MinWidth="720"
         WindowStartupLocation="CenterScreen"
-        ResizeMode="CanMinimize"
-        Background="#0E1117"
+        ResizeMode="CanResizeWithGrip"
+        Background="#0B0F17"
         Foreground="#ECE5D8">
     <Window.Resources>
-        <FontFamily x:Key="MainFont">Yu Gothic UI, Segoe UI, Meiryo UI, sans-serif</FontFamily>
-        <FontFamily x:Key="MonoFont">Consolas, 'Cascadia Code', monospace</FontFamily>
+        <FontFamily x:Key="MainFont">Yu Gothic UI, 'Segoe UI', Meiryo UI, sans-serif</FontFamily>
+        <FontFamily x:Key="MonoFont">'Cascadia Code', Consolas, monospace</FontFamily>
         
+        <!-- 基本ボタンスタイル (丸み・ホバー微発光) -->
         <Style TargetType="Button">
             <Setter Property="FontFamily" Value="{StaticResource MainFont}"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontSize" Value="13"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="16,10"/>
+            <Setter Property="Padding" Value="14,8"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="border"
                                 Background="{TemplateBinding Background}"
-                                CornerRadius="8"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="7"
                                 Padding="{TemplateBinding Padding}"
                                 SnapsToDevicePixels="True">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="border" Property="Opacity" Value="0.88"/>
+                                <Setter TargetName="border" Property="Opacity" Value="0.90"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="border" Property="Opacity" Value="0.75"/>
@@ -263,17 +332,17 @@ function Update-ContainerLogFile {
         </Style>
     </Window.Resources>
 
-    <Grid Margin="22">
+    <Grid Margin="20,18,20,18">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/> <!-- ヘッダー (Row 0) -->
+            <RowDefinition Height="Auto"/> <!-- ステータス &amp; 設定カード (Row 1) -->
+            <RowDefinition Height="Auto"/> <!-- 操作ボタンエリア (Row 2) -->
+            <RowDefinition Height="Auto"/> <!-- Web画面クイックリンク (Row 3) -->
+            <RowDefinition Height="*"/>    <!-- ログコンソール (Row 4, 伸縮) -->
         </Grid.RowDefinitions>
 
-        <!-- ヘッダー -->
-        <Border Grid.Row="0" Margin="0,0,0,14" Padding="0,0,0,10" BorderBrush="#252A36" BorderThickness="0,0,0,1">
+        <!-- 0. ヘッダー -->
+        <Border Grid.Row="0" Margin="0,0,0,14" Padding="0,0,0,12" BorderBrush="#1E2638" BorderThickness="0,0,0,1">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -281,119 +350,118 @@ function Update-ContainerLogFile {
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Vertical">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="hayamimi" FontSize="26" FontWeight="Bold" Foreground="#ECE5D8" FontFamily="{StaticResource MainFont}"/>
-                        <TextBlock Text=" (早耳)" FontSize="22" FontWeight="Bold" Foreground="#E04F2F" FontFamily="{StaticResource MainFont}" Margin="6,2,0,0"/>
+                        <TextBlock Text="hayamimi" FontSize="26" FontWeight="ExtraBold" Foreground="#F8FAFC" FontFamily="{StaticResource MainFont}"/>
+                        <TextBlock Text=" (早耳)" FontSize="22" FontWeight="Bold" Foreground="#FF6B4A" FontFamily="{StaticResource MainFont}" Margin="6,2,0,0"/>
                     </StackPanel>
-                    <TextBlock Text="リアルタイム音声認識 &amp; 多言語同時翻訳 (Python venv / WSL3)" 
-                               FontSize="12" Foreground="#8C93A0" Margin="2,4,0,0"/>
+                    <TextBlock Text="リアルタイム音声認識 &amp; 多言語同時翻訳 (ローカル完結・高速ASR)" 
+                               FontSize="12" Foreground="#8B949E" Margin="2,4,0,0"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border x:Name="GpuBadgeBorder" Background="#141E1B" CornerRadius="12" Padding="10,4" Margin="0,0,8,0" BorderBrush="#2ECC71" BorderThickness="1">
-                        <TextBlock x:Name="GpuBadge" Text="⚡ GPU: 検出中..." FontSize="11" Foreground="#2ECC71" FontWeight="SemiBold"/>
+                    <Border x:Name="GpuBadgeBorder" Background="#0C241E" CornerRadius="12" Padding="12,5" Margin="0,0,8,0" BorderBrush="#10B981" BorderThickness="1">
+                        <TextBlock x:Name="GpuBadge" Text="⚡ GPU: 検出中..." FontSize="11" Foreground="#10B981" FontWeight="SemiBold"/>
                     </Border>
-                    <Border Background="#242C3D" CornerRadius="12" Padding="10,4" Margin="0,0,8,0" BorderBrush="#3A465D" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.1.2" FontSize="11" Foreground="#F6AD55" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                    <Border Background="#1E1B4B" CornerRadius="12" Padding="10,5" Margin="0,0,8,0" BorderBrush="#4338CA" BorderThickness="1">
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.1.3" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
-                    <Border Background="#1A202C" CornerRadius="12" Padding="10,4">
-                        <TextBlock x:Name="RuntimeBadge" Text="Python venv" FontSize="11" Foreground="#4FD1C5" FontWeight="SemiBold"/>
+                    <Border Background="#141B2D" CornerRadius="12" Padding="10,5" BorderBrush="#253350" BorderThickness="1">
+                        <TextBlock x:Name="RuntimeBadge" Text="Python venv" FontSize="11" Foreground="#38BDF8" FontWeight="SemiBold"/>
                     </Border>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <!-- ステータスカード -->
-        <Border Grid.Row="1" Background="#161B26" CornerRadius="10" Padding="16,12" Margin="0,0,0,12" BorderBrush="#262D3D" BorderThickness="1">
+        <!-- 1. ステータス &amp; 設定カード -->
+        <Border Grid.Row="1" Background="#131924" CornerRadius="10" Padding="16,14" Margin="0,0,0,14" BorderBrush="#21293B" BorderThickness="1">
             <Grid>
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/> <!-- 実行基盤セレクター -->
+                    <RowDefinition Height="Auto"/> <!-- 状態表示行 -->
+                    <RowDefinition Height="Auto"/> <!-- プログレスバー -->
+                    <RowDefinition Height="Auto"/> <!-- アラートバナー -->
+                    <RowDefinition Height="Auto"/> <!-- フッター情報 -->
                 </Grid.RowDefinitions>
 
-                <!-- 実行基盤セレクター -->
-                <Border Grid.Row="0" Margin="0,0,0,10" Background="#10141D" CornerRadius="8" Padding="12,8" BorderBrush="#252A36" BorderThickness="1">
+                <!-- 実行基盤セレクター (すっきり集約・重複ボタン完全撤廃) -->
+                <Border Grid.Row="0" Margin="0,0,0,12" Background="#0D111A" CornerRadius="8" Padding="12,10" BorderBrush="#1E2638" BorderThickness="1">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="実行基盤:" FontSize="12" FontWeight="SemiBold" Foreground="#A0AEC0" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                        <TextBlock Text="実行基盤:" FontSize="12.5" FontWeight="SemiBold" Foreground="#94A3B8" VerticalAlignment="Center" Margin="0,0,16,0"/>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                            <RadioButton x:Name="RbModeVenv" Content="🐍 Python venv (ネイティブ / 再起動不要)" GroupName="EngineMode" Foreground="#ECE5D8" FontSize="12" Margin="0,0,18,0" VerticalAlignment="Center" Cursor="Hand" IsChecked="True"/>
-                            <RadioButton x:Name="RbModeWslc" Content="📦 WSL Containers (WSL3 コンテナ)" GroupName="EngineMode" Foreground="#ECE5D8" FontSize="12" VerticalAlignment="Center" Cursor="Hand"/>
+                            <RadioButton x:Name="RbModeVenv" Content="🐍 Python venv (ネイティブ / 再起動不要・推奨)" GroupName="EngineMode" Foreground="#F1F5F9" FontSize="12.5" Margin="0,0,24,0" VerticalAlignment="Center" Cursor="Hand" IsChecked="True"/>
+                            <RadioButton x:Name="RbModeWslc" Content="📦 WSL Containers (WSL3 コンテナ)" GroupName="EngineMode" Foreground="#F1F5F9" FontSize="12.5" VerticalAlignment="Center" Cursor="Hand"/>
                         </StackPanel>
-                        <Button x:Name="BtnSetupEnv" Grid.Column="2" Content="📥 Python環境を自動構築" Background="#3182CE" Foreground="#FFFFFF" FontSize="11" FontWeight="Bold" Padding="12,5" Visibility="Collapsed"/>
                     </Grid>
                 </Border>
 
-                <Grid Grid.Row="1">
+                <!-- 状態表示行 -->
+                <Grid Grid.Row="1" Margin="2,0,2,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     
-                    <Ellipse x:Name="StatusLed" Grid.Column="0" Width="14" Height="14" Fill="#718096" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                    <Ellipse x:Name="StatusLed" Grid.Column="0" Width="14" Height="14" Fill="#64748B" Margin="0,0,12,0" VerticalAlignment="Center"/>
                     
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock x:Name="StatusLabel" Text="実行状態" FontSize="11" Foreground="#718096"/>
-                        <TextBlock x:Name="StatusText" Text="停止中" FontSize="15" FontWeight="Bold" Foreground="#ECE5D8" Margin="0,2,0,0"/>
+                        <TextBlock x:Name="StatusLabel" Text="実行状態" FontSize="11" Foreground="#64748B"/>
+                        <TextBlock x:Name="StatusText" Text="停止中" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" Margin="0,2,0,0"/>
                     </StackPanel>
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Border Background="#1F2636" CornerRadius="6" Padding="8,4" Margin="4,0">
-                            <TextBlock Text="HTTP: 8833" FontSize="11" Foreground="#A0AEC0" FontFamily="{StaticResource MonoFont}"/>
+                        <Border Background="#1A2234" CornerRadius="6" Padding="10,4" Margin="0,0,8,0" BorderBrush="#26334D" BorderThickness="1">
+                            <TextBlock Text="HTTP: 8833" FontSize="11" Foreground="#94A3B8" FontFamily="{StaticResource MonoFont}"/>
                         </Border>
-                        <Border Background="#1F2636" CornerRadius="6" Padding="8,4">
-                            <TextBlock Text="WS: 8766" FontSize="11" Foreground="#A0AEC0" FontFamily="{StaticResource MonoFont}"/>
+                        <Border Background="#1A2234" CornerRadius="6" Padding="10,4" BorderBrush="#26334D" BorderThickness="1">
+                            <TextBlock Text="WS: 8766" FontSize="11" Foreground="#94A3B8" FontFamily="{StaticResource MonoFont}"/>
                         </Border>
                     </StackPanel>
                 </Grid>
 
                 <!-- 初期化・モデルダウンロード プログレスバー -->
-                <ProgressBar x:Name="InitProgressBar" Grid.Row="2" Height="3" Margin="0,8,0,2" Foreground="#2ECC71" Background="#10141D" BorderThickness="0" IsIndeterminate="True" Visibility="Collapsed"/>
+                <ProgressBar x:Name="InitProgressBar" Grid.Row="2" Height="4" Margin="0,10,0,2" Foreground="#10B981" Background="#0D111A" BorderThickness="0" IsIndeterminate="True" Visibility="Collapsed"/>
 
-                <!-- アシスト・診断バナー (WSL または Python 未セットアップ警告) -->
-                <Border x:Name="WslcAlertBanner" Grid.Row="3" Margin="0,8,0,0" Padding="10,8" Background="#2A1B18" BorderBrush="#E74C3C" BorderThickness="1" CornerRadius="6" Visibility="Collapsed">
+                <!-- アシスト・診断バナー (必要な時だけアクションボタンを1箇所に集約表示) -->
+                <Border x:Name="WslcAlertBanner" Grid.Row="3" Margin="0,10,0,0" Padding="12,10" Background="#241315" BorderBrush="#EF4444" BorderThickness="1" CornerRadius="8" Visibility="Collapsed">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock x:Name="WslcAlertTitle" Text="⚠ WSL 3.0 / 仮想化基盤が無効です" FontSize="12" FontWeight="Bold" Foreground="#FF7A6B"/>
-                            <TextBlock x:Name="WslcAlertDesc" Text="hayamimi の実行に必要な仮想化機能と WSL 3.0 を自動セットアップできます。" FontSize="11" Foreground="#CBD5E0" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="WslcAlertTitle" Text="⚠ WSL 3.0 / 仮想化基盤が無効です" FontSize="12.5" FontWeight="Bold" Foreground="#F87171"/>
+                            <TextBlock x:Name="WslcAlertDesc" Text="hayamimi の実行に必要な仮想化機能と WSL 3.0 を自動セットアップできます。" FontSize="11.5" Foreground="#CBD5E1" Margin="0,3,0,0" TextWrapping="Wrap"/>
                         </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
-                            <Button x:Name="BtnBiosGuide" Content="📖 BIOS 設定ガイド" Background="#3A465D" Foreground="#ECE5D8" FontSize="11" FontWeight="SemiBold" Padding="10,6" Margin="0,0,6,0" Visibility="Collapsed"/>
-                            <Button x:Name="BtnUpdateWsl" Content="📥 仮想化 &amp; WSL3 自動設定" Background="#2ECC71" Foreground="#0E1117" FontSize="11" FontWeight="Bold" Padding="12,6"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                            <Button x:Name="BtnBiosGuide" Content="📖 BIOS 設定ガイド" Background="#334155" Foreground="#F8FAFC" FontSize="11.5" FontWeight="SemiBold" Padding="11,6" Margin="0,0,8,0" Visibility="Collapsed"/>
+                            <Button x:Name="BtnUpdateWsl" Content="📥 仮想化 &amp; WSL3 自動設定" Background="#10B981" Foreground="#041E15" FontSize="12" FontWeight="Bold" Padding="14,7"/>
                         </StackPanel>
                     </Grid>
                 </Border>
 
-                <!-- フッター & WSL3 追加セットアップボタン (常時アクセス可能) -->
-                <Border Grid.Row="4" Margin="0,8,0,0" Padding="8,6" Background="#11151F" CornerRadius="6">
+                <!-- フッター &amp; WSL3 追加セットアップボタン (常時アクセス可能) -->
+                <Border Grid.Row="4" Margin="0,10,0,0" Padding="10,7" Background="#0D111A" CornerRadius="7" BorderBrush="#1C2434" BorderThickness="1">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="🌐 リアルタイム翻訳は Webのマイク画面 (/mic) で自由に設定可能です。" 
-                                   FontSize="11" Foreground="#8C93A0" VerticalAlignment="Center"/>
-                        <Button x:Name="BtnInstallWslAlways" Grid.Column="1" Content="📦 WSL 3.0 を追加セットアップ" Background="#1F2636" Foreground="#CBD5E0" FontSize="11" Padding="10,4" Margin="8,0,0,0" ToolTip="WSL Containers 環境の有効化・インストールを行います"/>
+                        <TextBlock Grid.Column="0" Text="💡 リアルタイム翻訳言語（英語・中国語・韓国語等）は Webのマイク画面 (/mic) で自由に変更できます。" 
+                                   FontSize="11" Foreground="#8B949E" VerticalAlignment="Center"/>
+                        <Button x:Name="BtnInstallWslAlways" Grid.Column="1" Content="📦 WSL 3.0 を追加セットアップ" Background="#1A2234" BorderBrush="#273550" BorderThickness="1" Foreground="#94A3B8" FontSize="11" Padding="10,4" Margin="10,0,0,0" ToolTip="WSL Containers 環境の有効化・インストールを行います"/>
                     </Grid>
                 </Border>
             </Grid>
         </Border>
 
-        <!-- 操作ボタンエリア -->
-        <Grid Grid.Row="2" Margin="0,0,0,12">
+        <!-- 2. 操作ボタンエリア -->
+        <Grid Grid.Row="2" Margin="0,0,0,14">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="8"/>
+                <RowDefinition Height="10"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
@@ -403,18 +471,18 @@ function Update-ContainerLogFile {
             </Grid.ColumnDefinitions>
 
             <!-- 起動ボタン -->
-            <Button x:Name="BtnStart" Grid.Row="0" Grid.Column="0" Background="#2ECC71" Foreground="#0E1117" Height="46">
+            <Button x:Name="BtnStart" Grid.Row="0" Grid.Column="0" Background="#10B981" Foreground="#041E15" Height="48">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="▶" FontSize="15" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="BtnStartText" Text="アプリ起動 &amp; Webを開く" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <TextBlock Text="▶" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="BtnStartText" Text="アプリ起動 &amp; Webを開く" FontSize="15" FontWeight="Bold" VerticalAlignment="Center"/>
                 </StackPanel>
             </Button>
 
             <!-- 終了ボタン -->
-            <Button x:Name="BtnStop" Grid.Row="0" Grid.Column="2" Background="#E74C3C" Foreground="#FFFFFF" Height="46" IsEnabled="False">
+            <Button x:Name="BtnStop" Grid.Row="0" Grid.Column="2" Background="#EF4444" Foreground="#FFFFFF" Height="48" IsEnabled="False">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="■" FontSize="14" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="BtnStopText" Text="アプリ終了 &amp; 閉じる" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <TextBlock Text="■" FontSize="15" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="BtnStopText" Text="アプリ終了 &amp; 閉じる" FontSize="15" FontWeight="Bold" VerticalAlignment="Center"/>
                 </StackPanel>
             </Button>
 
@@ -426,82 +494,104 @@ function Update-ContainerLogFile {
                     <ColumnDefinition Width="8"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock x:Name="UpdateDescText" Grid.Column="0" Text="※ GitHubの最新コード取得と環境更新を行えます。" FontSize="11" Foreground="#718096" VerticalAlignment="Center"/>
-                <Button x:Name="BtnUpdateApp" Grid.Column="1" Background="#1A202C" Foreground="#4FD1C5" Height="28" Padding="10,4" FontSize="11" ToolTip="GitHubから最新のソースコードを取得します">
+                <TextBlock x:Name="UpdateDescText" Grid.Column="0" Text="※ GitHubの最新コード取得と依存パッケージ更新を行えます。" FontSize="11" Foreground="#64748B" VerticalAlignment="Center"/>
+                <Button x:Name="BtnUpdateApp" Grid.Column="1" Background="#141E2E" BorderBrush="#23344D" BorderThickness="1" Foreground="#38BDF8" Height="30" Padding="12,4" FontSize="11" ToolTip="GitHubから最新のソースコードを取得します">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="📥" FontSize="11" Margin="0,0,5,0" VerticalAlignment="Center"/>
                         <TextBlock Text="本体を最新版に更新" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
-                <Button x:Name="BtnRebuild" Grid.Column="3" Background="#1A202C" Foreground="#A0AEC0" Height="28" Padding="10,4" FontSize="11" ToolTip="最新のソースコードを反映します">
+                <Button x:Name="BtnRebuild" Grid.Column="3" Background="#141E2E" BorderBrush="#23344D" BorderThickness="1" Foreground="#94A3B8" Height="30" Padding="12,4" FontSize="11" ToolTip="最新のソースコードを反映します">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="🔄" FontSize="11" Margin="0,0,5,0" VerticalAlignment="Center"/>
-                        <TextBlock Text="環境を再構築" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBlock Text="依存パッケージ再導入" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
             </Grid>
         </Grid>
 
-        <!-- クイックリンクエリア -->
-        <Border Grid.Row="3" Background="#141822" CornerRadius="8" Padding="12,8" Margin="0,0,0,12" BorderBrush="#202634" BorderThickness="1">
+        <!-- 3. Web画面クイックリンク -->
+        <Border Grid.Row="3" Background="#111622" CornerRadius="8" Padding="14,9" Margin="0,0,0,14" BorderBrush="#1C2434" BorderThickness="1">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Web画面:" FontSize="12" Foreground="#718096" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Grid.Column="0" Text="Web画面:" FontSize="12" FontWeight="SemiBold" Foreground="#64748B" VerticalAlignment="Center" Margin="0,0,14,0"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <Button x:Name="BtnOpenMic" Background="Transparent" Foreground="#63B3ED" Padding="8,4" FontSize="12" Margin="0,0,8,0">
-                        <TextBlock Text="🎤 マイク入力 (/mic)" TextDecorations="Underline"/>
+                    <Button x:Name="BtnOpenMic" Background="#152033" BorderBrush="#2563EB" BorderThickness="1" Foreground="#60A5FA" Padding="11,5" FontSize="11.5" Margin="0,0,10,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🎤" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="マイク入力 (/mic)" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
                     </Button>
-                    <Button x:Name="BtnOpenObs" Background="Transparent" Foreground="#63B3ED" Padding="8,4" FontSize="12" Margin="0,0,8,0">
-                        <TextBlock Text="📺 OBS字幕 (/)" TextDecorations="Underline"/>
+                    <Button x:Name="BtnOpenObs" Background="#152033" BorderBrush="#2563EB" BorderThickness="1" Foreground="#60A5FA" Padding="11,5" FontSize="11.5" Margin="0,0,10,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="📺" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="OBS字幕 (/)" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
                     </Button>
-                    <Button x:Name="BtnOpenDashboard" Background="Transparent" Foreground="#63B3ED" Padding="8,4" FontSize="12">
-                        <TextBlock Text="📊 ダッシュボード (/dashboard)" TextDecorations="Underline"/>
+                    <Button x:Name="BtnOpenDashboard" Background="#152033" BorderBrush="#2563EB" BorderThickness="1" Foreground="#60A5FA" Padding="11,5" FontSize="11.5">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="📊" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="ダッシュボード (/dashboard)" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
                     </Button>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <!-- ログコンソール -->
-        <Border Grid.Row="4" Background="#090B0E" CornerRadius="8" BorderBrush="#1C222E" BorderThickness="1">
+        <!-- 4. ログコンソール (MinHeight 240px、タイトルとボタン群の絶対非重複グリッド) -->
+        <Border Grid.Row="4" Background="#090D14" CornerRadius="8" BorderBrush="#1C2433" BorderThickness="1" MinHeight="240">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
-                <Border Grid.Row="0" Background="#11151C" Padding="10,6" CornerRadius="8,8,0,0" BorderBrush="#1C222E" BorderThickness="0,0,0,1">
+                
+                <!-- ログヘッダーバー -->
+                <Border Grid.Row="0" Background="#0F1420" Padding="12,7" CornerRadius="8,8,0,0" BorderBrush="#1C2433" BorderThickness="0,0,0,1">
                     <Grid>
-                        <TextBlock Text="実行ログ (logs/launcher.log, logs/python.log, logs/container.log)" FontSize="11" Foreground="#718096" FontFamily="{StaticResource MonoFont}" VerticalAlignment="Center"/>
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                            <Button x:Name="BtnOpenPythonLog" Background="Transparent" Foreground="#63B3ED" Padding="4,0" Margin="0,0,6,0" FontSize="11">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="📋 実行ログ" FontSize="12" FontWeight="Bold" Foreground="#94A3B8" VerticalAlignment="Center"/>
+                            <TextBlock Text=" (リアルタイム出力)" FontSize="10.5" Foreground="#64748B" Margin="6,1,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="BtnOpenPythonLog" Background="#152033" BorderBrush="#23344D" BorderThickness="1" Foreground="#38BDF8" Padding="7,3" Margin="0,0,5,0" FontSize="11" ToolTip="Python実行ログ (logs/python.log) を開く">
                                 <TextBlock Text="📄 python.log"/>
                             </Button>
-                            <Button x:Name="BtnOpenContainerLog" Background="Transparent" Foreground="#63B3ED" Padding="4,0" Margin="0,0,6,0" FontSize="11">
-                                <TextBlock Text="📄 container.log"/>
+                            <Button x:Name="BtnOpenContainerLog" Background="#152033" BorderBrush="#23344D" BorderThickness="1" Foreground="#38BDF8" Padding="7,3" Margin="0,0,5,0" FontSize="11" ToolTip="コンテナログ (logs/container.log) を開く">
+                                <TextBlock Text="📦 container.log"/>
                             </Button>
-                            <Button x:Name="BtnOpenLauncherLog" Background="Transparent" Foreground="#63B3ED" Padding="4,0" Margin="0,0,6,0" FontSize="11">
-                                <TextBlock Text="📄 launcher.log"/>
+                            <Button x:Name="BtnOpenLauncherLog" Background="#152033" BorderBrush="#23344D" BorderThickness="1" Foreground="#38BDF8" Padding="7,3" Margin="0,0,5,0" FontSize="11" ToolTip="ランチャーログ (logs/launcher.log) を開く">
+                                <TextBlock Text="🚀 launcher.log"/>
                             </Button>
-                            <Button x:Name="BtnOpenLogsDir" Background="Transparent" Foreground="#63B3ED" Padding="4,0" Margin="0,0,6,0" FontSize="11">
+                            <Button x:Name="BtnOpenLogsDir" Background="#152033" BorderBrush="#23344D" BorderThickness="1" Foreground="#94A3B8" Padding="7,3" Margin="0,0,5,0" FontSize="11" ToolTip="logs フォルダをエクスプローラーで開く">
                                 <TextBlock Text="📁 logsフォルダ"/>
                             </Button>
-                            <Button x:Name="BtnClearLog" Background="Transparent" Foreground="#718096" Padding="4,0" FontSize="11">
-                                <TextBlock Text="クリア"/>
+                            <Button x:Name="BtnClearLog" Background="#152033" BorderBrush="#23344D" BorderThickness="1" Foreground="#64748B" Padding="7,3" FontSize="11" ToolTip="画面上のログ表示をクリア">
+                                <TextBlock Text="🧹 クリア"/>
                             </Button>
                         </StackPanel>
                     </Grid>
                 </Border>
-                <ScrollViewer Grid.Row="1" x:Name="LogScrollViewer" VerticalScrollBarVisibility="Auto" Margin="8">
+                
+                <!-- ログ表示エリア -->
+                <ScrollViewer Grid.Row="1" x:Name="LogScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Margin="10,8">
                     <TextBox x:Name="LogTextBox"
                              Background="Transparent"
-                             Foreground="#A0AEC0"
+                             Foreground="#94A3B8"
                              BorderThickness="0"
                              IsReadOnly="True"
                              TextWrapping="Wrap"
                              FontFamily="{StaticResource MonoFont}"
-                             FontSize="11"
+                             FontSize="11.5"
                              CaretBrush="Transparent"/>
                 </ScrollViewer>
             </Grid>
@@ -583,11 +673,12 @@ if ($psVer -ge 7) {
     $runtimeBadge.Text = "PowerShell 5.1"
 }
 
-# ブラシ定義
-$brushGray   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#718096")
-$brushGreen  = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#2ECC71")
-$brushOrange = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F39C12")
-$brushRed    = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#E74C3C")
+# ブラシ定義 (モダンカラーパレット)
+$brushGray   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#64748B")
+$brushGreen  = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#10B981")
+$brushOrange = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F59E0B")
+$brushRed    = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#EF4444")
+$brushBlue   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#38BDF8")
 
 $script:HasNvidiaGpu = $false
 
@@ -605,7 +696,7 @@ function Update-GpuDeviceBadge {
             }
             if ($gpuBadgeBorder) {
                 $gpuBadgeBorder.BorderBrush = $brushGreen
-                $gpuBadgeBorder.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#141E1B")
+                $gpuBadgeBorder.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#0C241E")
             }
             Write-AppLog "✔ NVIDIA GPU 検出: $($nvidiaGpu.Name) (CUDA 推論対応)" "INFO"
             return
@@ -615,11 +706,11 @@ function Update-GpuDeviceBadge {
         # NVIDIA GPU が無い場合は CPU 推論として表示
         if ($gpuBadge) {
             $gpuBadge.Text = "⚙ CPU 推論 (AVX2)"
-            $gpuBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#63B3ED")
+            $gpuBadge.Foreground = $brushBlue
         }
         if ($gpuBadgeBorder) {
-            $gpuBadgeBorder.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#3182CE")
-            $gpuBadgeBorder.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#15202B")
+            $gpuBadgeBorder.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#0284C7")
+            $gpuBadgeBorder.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#0F1E33")
         }
     } catch {
         $script:HasNvidiaGpu = $false
@@ -873,8 +964,8 @@ function Update-EngineBannerState {
                 }
             }
             if ($btnSetupEnv) {
-                $btnSetupEnv.Content = "📥 Python環境を自動構築"
-                $btnSetupEnv.Visibility = "Visible"
+                # 重複防止のためセレクター行のボタンは完全非表示
+                $btnSetupEnv.Visibility = "Collapsed"
             }
             $runtimeBadge.Text = "Python (未構築)"
             $runtimeBadge.Foreground = $brushOrange
@@ -1092,7 +1183,7 @@ function Test-AppRunning {
     }
 }
 
-# Python venv (ネイティブ実行環境) 自動セットアップ関数
+# Python venv (ネイティブ実行環境) 自動セットアップ関数 (UIフリーズ・応答なし完全防止)
 function Invoke-SetupPythonVenv {
     param([bool]$ForceRecreate = $false)
 
@@ -1100,7 +1191,6 @@ function Invoke-SetupPythonVenv {
     Write-AppLog "Python venv (ネイティブ実行環境) のセットアップを開始します..." "INFO"
     Set-UIState "Python環境構築中..." $brushOrange $false $false
     if ($initProgressBar) { $initProgressBar.Visibility = "Visible" }
-    if ($btnSetupEnv) { $btnSetupEnv.IsEnabled = $false }
 
     # 1. uv の準備 (既存の uv または tools\uv\uv.exe)
     $uvCmd = (where.exe uv 2>$null | Select-Object -First 1)
@@ -1121,7 +1211,17 @@ function Invoke-SetupPythonVenv {
             $uvUrl = "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
             
             [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-            Invoke-WebRequest -Uri $uvUrl -OutFile $uvZip -TimeoutSec 30
+            
+            # WebClient による非同期ダウンロード & UIメッセージループ維持
+            $wc = [System.Net.WebClient]::new()
+            $wc.DownloadFileAsync([Uri]$uvUrl, $uvZip)
+            while ($wc.IsBusy) {
+                try {
+                    [System.Windows.Threading.Dispatcher]::CurrentDispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+                } catch {}
+                Start-Sleep -Milliseconds 40
+            }
+            $wc.Dispose()
             
             Expand-Archive -Path $uvZip -DestinationPath $localUvDir -Force
             Remove-Item -Path $uvZip -Force -ErrorAction SilentlyContinue
@@ -1151,26 +1251,32 @@ function Invoke-SetupPythonVenv {
             $pinfoVenv.UseShellExecute = $false
             $pinfoVenv.CreateNoWindow = $true
             $procVenv = [System.Diagnostics.Process]::Start($pinfoVenv)
-            $vOut = $procVenv.StandardOutput.ReadToEnd()
-            $vErr = $procVenv.StandardError.ReadToEnd()
-            $procVenv.WaitForExit()
+            Wait-ProcessWithUiPump -Proc $procVenv -LogPrefix "[venv作成]"
+            
             if ($procVenv.ExitCode -ne 0) {
-                Write-AppLog "仮想環境の作成に失敗しました: $vErr" "ERROR"
+                Write-AppLog "仮想環境の作成に失敗しました (ExitCode: $($procVenv.ExitCode))" "ERROR"
                 Set-UIState "セットアップ失敗" $brushRed $true $false
                 if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
-                if ($btnSetupEnv) { $btnSetupEnv.IsEnabled = $true }
                 return $false
             }
             Write-AppLog "✔ Python 3.11 仮想環境 (.venv) を作成しました。" "INFO"
         } else {
             $sysPython = (where.exe python 2>$null | Select-Object -First 1)
             if ($sysPython) {
-                Start-Process $sysPython -ArgumentList "-m venv .venv" -WorkingDirectory $ProjectRoot -Wait -NoNewWindow
+                $pinfoSys = [System.Diagnostics.ProcessStartInfo]::new()
+                $pinfoSys.FileName = $sysPython
+                $pinfoSys.Arguments = "-m venv .venv"
+                $pinfoSys.WorkingDirectory = $ProjectRoot
+                $pinfoSys.RedirectStandardOutput = $true
+                $pinfoSys.RedirectStandardError = $true
+                $pinfoSys.UseShellExecute = $false
+                $pinfoSys.CreateNoWindow = $true
+                $procSys = [System.Diagnostics.Process]::Start($pinfoSys)
+                Wait-ProcessWithUiPump -Proc $procSys -LogPrefix "[venv作成]"
             } else {
                 Write-AppLog "Python または uv が見つかりません。" "ERROR"
                 Set-UIState "Python未検出" $brushRed $true $false
                 if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
-                if ($btnSetupEnv) { $btnSetupEnv.IsEnabled = $true }
                 return $false
             }
         }
@@ -1191,20 +1297,26 @@ function Invoke-SetupPythonVenv {
             $pinfoPip.UseShellExecute = $false
             $pinfoPip.CreateNoWindow = $true
             $procPip = [System.Diagnostics.Process]::Start($pinfoPip)
-            $pOut = $procPip.StandardOutput.ReadToEnd()
-            $pErr = $procPip.StandardError.ReadToEnd()
-            $procPip.WaitForExit()
+            Wait-ProcessWithUiPump -Proc $procPip -LogPrefix "[pip導入]"
             if ($procPip.ExitCode -eq 0) { $installSuccess = $true }
         } else {
-            $procPip = Start-Process $venvPython -ArgumentList "-m pip install -r `"$reqFile`"" -WorkingDirectory $ProjectRoot -Wait -PassThru -NoNewWindow
-            if ($procPip.ExitCode -eq 0) { $installSuccess = $true }
+            $pinfoPipSys = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoPipSys.FileName = $venvPython
+            $pinfoPipSys.Arguments = "-m pip install -r `"$reqFile`""
+            $pinfoPipSys.WorkingDirectory = $ProjectRoot
+            $pinfoPipSys.RedirectStandardOutput = $true
+            $pinfoPipSys.RedirectStandardError = $true
+            $pinfoPipSys.UseShellExecute = $false
+            $pinfoPipSys.CreateNoWindow = $true
+            $procPipSys = [System.Diagnostics.Process]::Start($pinfoPipSys)
+            Wait-ProcessWithUiPump -Proc $procPipSys -LogPrefix "[pip導入]"
+            if ($procPipSys.ExitCode -eq 0) { $installSuccess = $true }
         }
 
         if (-not $installSuccess) {
             Write-AppLog "パッケージのインストールに失敗しました。" "ERROR"
             Set-UIState "インストール失敗" $brushRed $true $false
             if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
-            if ($btnSetupEnv) { $btnSetupEnv.IsEnabled = $true }
             return $false
         }
         Write-AppLog "✔ 依存パッケージのインストールが完了しました！" "INFO"
@@ -1216,14 +1328,23 @@ function Invoke-SetupPythonVenv {
         Set-UIState "モデルDL中 (約1.5GB)..." $brushOrange $false $false
         Write-AppLog "Coreモデルおよび翻訳モデルをダウンロードしています (初回のみ数分)..." "INFO"
         $dlScript = Join-Path $ProjectRoot "scripts\download_models.py"
-        Start-Process $venvPython -ArgumentList "`"$dlScript`" --minimal --translators" -WorkingDirectory $ProjectRoot -Wait -NoNewWindow
+        
+        $pinfoDl = [System.Diagnostics.ProcessStartInfo]::new()
+        $pinfoDl.FileName = $venvPython
+        $pinfoDl.Arguments = "`"$dlScript`" --minimal --translators"
+        $pinfoDl.WorkingDirectory = $ProjectRoot
+        $pinfoDl.RedirectStandardOutput = $true
+        $pinfoDl.RedirectStandardError = $true
+        $pinfoDl.UseShellExecute = $false
+        $pinfoDl.CreateNoWindow = $true
+        $procDl = [System.Diagnostics.Process]::Start($pinfoDl)
+        Wait-ProcessWithUiPump -Proc $procDl -LogPrefix "[モデルDL]"
     }
 
     Write-AppLog "✔ Python venv 環境のセットアップがすべて完了しました！" "INFO"
     Write-AppLog "=========================================="
     Set-UIState "停止中" $brushGray $true $false
     if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
-    if ($btnSetupEnv) { $btnSetupEnv.IsEnabled = $true }
     Update-EngineBannerState | Out-Null
     return $true
 }
