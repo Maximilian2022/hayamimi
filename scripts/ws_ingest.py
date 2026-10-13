@@ -42,6 +42,9 @@ INGEST_PATH = "/ingest"
 FLUSH = object()
 
 
+AUDIO_QUEUE_MAXSIZE = 200
+
+
 class IngestServer:
     """Accepts PCM over a WS connection, exposes it as a chunk queue.
 
@@ -55,10 +58,24 @@ class IngestServer:
         self.port = port
         self.sample_rate = sample_rate
         self.subtitle_server = subtitle_server
-        self.audio_q: "queue.Queue[np.ndarray]" = queue.Queue()
+        self.audio_q: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=AUDIO_QUEUE_MAXSIZE)
         self._active = False
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
+
+    def _push_audio(self, item):
+        """Put into audio_q without blocking forever; drop oldest chunk if full."""
+        try:
+            self.audio_q.put_nowait(item)
+        except queue.Full:
+            try:
+                self.audio_q.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self.audio_q.put_nowait(item)
+            except queue.Full:
+                pass
 
     def start(self) -> "IngestServer":
         ready = threading.Event()
@@ -181,7 +198,7 @@ class IngestServer:
                             continue
                         if src_rate != self.sample_rate:
                             samples = resample_linear(samples, src_rate, self.sample_rate)
-                        self.audio_q.put(samples)
+                        self._push_audio(samples)
                     # OP_TEXT after handshake / OP_CONT: ignored, not part of this protocol
         except (ConnectionError, asyncio.IncompleteReadError, OSError):
             pass
@@ -191,7 +208,7 @@ class IngestServer:
             with self._lock:
                 self._active = False
             if got_handshake:
-                self.audio_q.put(FLUSH)
+                self._push_audio(FLUSH)
             writer.close()
 
     async def _send_json(self, writer: asyncio.StreamWriter, obj: dict):

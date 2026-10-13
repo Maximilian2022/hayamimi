@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.1.5"
-$script:AppVersion = "1.1.5"
+﻿$version = "GUI v1.1.6"
+$script:AppVersion = "1.1.6"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -99,6 +99,24 @@ $MicUrl = "http://localhost:8833/mic"
 $ObsUrl = "http://localhost:8833/"
 $DashboardUrl = "http://localhost:8833/dashboard"
 
+# WPF TextBox メモリ肥大化・描画ハング防止用トリミング設定 (約1,500〜2,000行を維持)
+$script:MaxLogTextLength = 80000
+$script:TrimTargetLength = 60000
+
+function Trim-LogTextBox {
+    if (-not $logTextBox) { return }
+    $len = $logTextBox.Text.Length
+    if ($len -gt $script:MaxLogTextLength) {
+        $cutIdx = $len - $script:TrimTargetLength
+        $newlineIdx = $logTextBox.Text.IndexOf("`n", $cutIdx)
+        if ($newlineIdx -gt 0 -and $newlineIdx -lt ($len - 100)) {
+            $logTextBox.Text = $logTextBox.Text.Substring($newlineIdx + 1)
+        } else {
+            $logTextBox.Text = $logTextBox.Text.Substring($cutIdx)
+        }
+    }
+}
+
 # ランチャー用ロギング関数 (単一メッセージ)
 function Write-AppLog {
     param([string]$Message, [string]$Level = "INFO")
@@ -113,6 +131,7 @@ function Write-AppLog {
 
     if ($logTextBox -and $logScrollViewer) {
         $logTextBox.AppendText("[$timeOnly] $Message`r`n")
+        Trim-LogTextBox
         $logScrollViewer.ScrollToEnd()
     }
 }
@@ -143,6 +162,7 @@ function Write-AppLogBatch {
 
     if ($logTextBox -and $logScrollViewer) {
         $logTextBox.AppendText($guiSb.ToString())
+        Trim-LogTextBox
         $logScrollViewer.ScrollToEnd()
     }
 }
@@ -261,21 +281,23 @@ function Update-ContainerLogFile {
                     $validLines.Add($lStr.Trim())
                 }
             }
-            if ($validLines.Count -gt 0) {
+            if ($validLines.Count -gt $script:LastContainerLogLineCount) {
                 $text = ($validLines -join "`r`n") + "`r`n"
                 [System.IO.File]::WriteAllText($ContainerLogFile, $text, [System.Text.Encoding]::UTF8)
 
                 if ($EchoToGui -and $logTextBox) {
-                    if ($validLines.Count -gt $script:LastContainerLogLineCount) {
-                        for ($i = $script:LastContainerLogLineCount; $i -lt $validLines.Count; $i++) {
-                            $item = $validLines[$i]
-                            if ($item.Trim()) {
-                                Write-AppLog "[コンテナ] $item" "CONTAINER"
-                            }
+                    $newContainerLines = [System.Collections.Generic.List[string]]::new()
+                    for ($i = $script:LastContainerLogLineCount; $i -lt $validLines.Count; $i++) {
+                        $item = $validLines[$i]
+                        if ($item.Trim()) {
+                            $newContainerLines.Add("[コンテナ] $item")
                         }
-                        $script:LastContainerLogLineCount = $validLines.Count
+                    }
+                    if ($newContainerLines.Count -gt 0) {
+                        Write-AppLogBatch -Messages $newContainerLines -Level "CONTAINER"
                     }
                 }
+                $script:LastContainerLogLineCount = $validLines.Count
             }
         }
     } catch {}
@@ -669,6 +691,7 @@ $script:ConfigFile = Join-Path $ProjectRoot "config\launcher_config.json"
 $script:ProcPython = $null
 $script:PythonLogFile = Join-Path $LogsDir "python.log"
 $script:LastPythonLogLineCount = 0
+$script:LastPythonLogByteOffset = 0L
 
 # ランタイムバッジ
 $psVer = $PSVersionTable.PSVersion.Major
@@ -1094,26 +1117,38 @@ function Read-FileSharedLines {
     return $lines
 }
 
-# Python ログ更新関数 (logs/python.log から新着ログを GUI コンソールに反映)
+# Python ログ更新関数 (logs/python.log から新着ログを差分読み取りして GUI コンソールに反映)
 function Update-PythonLogFile {
     param([bool]$EchoToGui = $true)
     if (-not (Test-Path $script:PythonLogFile)) { return }
     try {
-        $lines = Read-FileSharedLines -FilePath $script:PythonLogFile
-        if ($lines.Count -gt $script:LastPythonLogLineCount) {
-            if ($EchoToGui -and $logTextBox) {
-                $newLines = [System.Collections.Generic.List[string]]::new()
-                for ($i = $script:LastPythonLogLineCount; $i -lt $lines.Count; $i++) {
-                    $item = $lines[$i]
-                    if ($item -and $item.Trim() -and $item -notmatch "^#") {
-                        $newLines.Add("[Python] $($item.Trim())")
-                    }
-                }
-                if ($newLines.Count -gt 0) {
-                    Write-AppLogBatch -Messages $newLines -Level "PYTHON"
+        $fileInfo = [System.IO.FileInfo]::new($script:PythonLogFile)
+        $fileLen = $fileInfo.Length
+        if ($fileLen -lt $script:LastPythonLogByteOffset) {
+            # ログファイルが再作成された場合
+            $script:LastPythonLogByteOffset = 0L
+        }
+        if ($fileLen -eq $script:LastPythonLogByteOffset) { return }
+
+        $fs = [System.IO.FileStream]::new($script:PythonLogFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        [void]$fs.Seek($script:LastPythonLogByteOffset, [System.IO.SeekOrigin]::Begin)
+        $sr = [System.IO.StreamReader]::new($fs, [System.Text.Encoding]::UTF8)
+        $newContent = $sr.ReadToEnd()
+        $script:LastPythonLogByteOffset = $fs.Position
+        $sr.Close()
+        $fs.Close()
+
+        if ($newContent -and $EchoToGui -and $logTextBox) {
+            $lines = $newContent -split "`r?`n"
+            $newLines = [System.Collections.Generic.List[string]]::new()
+            foreach ($item in $lines) {
+                if ($item -and $item.Trim() -and $item -notmatch "^#") {
+                    $newLines.Add("[Python] $($item.Trim())")
                 }
             }
-            $script:LastPythonLogLineCount = $lines.Count
+            if ($newLines.Count -gt 0) {
+                Write-AppLogBatch -Messages $newLines -Level "PYTHON"
+            }
         }
     } catch {}
 }
@@ -1405,6 +1440,7 @@ function Start-PythonVenvApp {
     }
     [System.IO.File]::WriteAllText($script:PythonLogFile, "# hayamimi python log`r`n", [System.Text.Encoding]::UTF8)
     $script:LastPythonLogLineCount = 0
+    $script:LastPythonLogByteOffset = 0L
 
     $transScript = Join-Path $ProjectRoot "scripts\realtime_transcribe.py"
     $cmdArgs = "/s /c `"`"$venvPython`" `"$transScript`" --input ws --serve 8833 --ws-host 127.0.0.1 --ws-port 8766 > `"$script:PythonLogFile`" 2>&1`""

@@ -42,6 +42,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 
 
@@ -91,6 +92,9 @@ BEAM_SIZE_BY_TARGET = {
 DEFAULT_BEAM_SIZE = 4
 
 _vocab_cache: "dict[str, set[str]]" = {}
+_translator_cache: "dict[tuple[str, str, str, int], object]" = {}
+_sp_cache: "dict[str, object]" = {}
+_cache_lock = threading.Lock()
 
 
 def _load_vocab(model_dir: str = _MODEL_DIR) -> "set[str]":
@@ -186,12 +190,18 @@ class TranslatorM2M:
         import ctranslate2
         import sentencepiece as spm
 
-        sp_path = os.path.join(model_dir, "sentencepiece.model")
-        self._sp = spm.SentencePieceProcessor(model_file=sp_path)
+        with _cache_lock:
+            sp_path = os.path.join(model_dir, "sentencepiece.model")
+            if sp_path not in _sp_cache:
+                _sp_cache[sp_path] = spm.SentencePieceProcessor(model_file=sp_path)
+            self._sp = _sp_cache[sp_path]
 
-        self._translator = ctranslate2.Translator(
-            model_dir, device=device, compute_type=compute_type, intra_threads=intra_threads
-        )
+            cache_key = (model_dir, device, compute_type, intra_threads)
+            if cache_key not in _translator_cache:
+                _translator_cache[cache_key] = ctranslate2.Translator(
+                    model_dir, device=device, compute_type=compute_type, intra_threads=intra_threads
+                )
+            self._translator = _translator_cache[cache_key]
 
     def translate(self, text: str) -> str:
         """Translate a single line of Japanese text to self.target_lang.

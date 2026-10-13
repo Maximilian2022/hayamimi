@@ -1277,6 +1277,9 @@
             item.appendChild(badge);
             item.appendChild(text);
             finalFeed.prepend(item);
+            while (finalFeed.children.length > 200) {
+              finalFeed.removeChild(finalFeed.lastElementChild);
+            }
 
             if (ev.latency_ms != null) {
               latVal.textContent = Math.round(ev.latency_ms);
