@@ -17,7 +17,7 @@ services:
     # 必要に応じて追加のASR引数をcommandで指定可能
     # 例: command: ["--translate", "en"]
     # 例: command: ["--en-tier", "v2", "--punct-model", "4class"]
-    command: []
+    command: [ "--en-tier", "v2", "--punct-model", "4class" ]
 
   proxy:
     build:
