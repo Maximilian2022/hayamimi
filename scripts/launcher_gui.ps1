@@ -1,5 +1,5 @@
-$version = "GUI v1.3.1"
-$script:AppVersion = "1.3.1"
+﻿$version = "GUI v1.3.2"
+$script:AppVersion = "1.3.2"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -351,7 +351,7 @@ function Ensure-ModelsIntegrity {
         if ($venvPython -and (Test-Path $dlScript)) {
             $pinfoDl = [System.Diagnostics.ProcessStartInfo]::new()
             $pinfoDl.FileName = $venvPython
-            $pinfoDl.Arguments = "-B `"$dlScript`" --minimal --translators"
+            $pinfoDl.Arguments = "-B `"$dlScript`" --minimal --translators --punct-4class"
             $pinfoDl.WorkingDirectory = $ProjectRoot
             $pinfoDl.RedirectStandardOutput = $true
             $pinfoDl.RedirectStandardError = $true
@@ -1657,9 +1657,31 @@ function Start-PythonVenvApp {
     [System.IO.File]::WriteAllText($script:PythonLogFile, "# hayamimi python log`r`n", [System.Text.Encoding]::UTF8)
     $script:LastPythonLogLineCount = 0
     $script:LastPythonLogByteOffset = 0L
+    # 4-class 句読点モデル (models/punct-ja-4class-permissive) の存在確認 & 初回自動ダウンロード (約40MB)
+    $punct4Dir = Join-Path $ProjectRoot "models\punct-ja-4class-permissive"
+    $punct4Onnx = Join-Path $punct4Dir "punct_4class.onnx"
+    $punct4Tok = Join-Path $punct4Dir "hf\tokenizer.json"
+    if (-not (Test-Path $punct4Onnx) -or -not (Test-Path $punct4Tok)) {
+        Write-AppLog "4-class 句読点モデルを準備しています (約40MB)..." "INFO"
+        $dlScript = Join-Path $ProjectRoot "scripts\download_models.py"
+        if (Test-Path $dlScript) {
+            $pinfoDl = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoDl.FileName = $venvPython
+            $pinfoDl.Arguments = "-B `"$dlScript`" --minimal --punct-4class"
+            $pinfoDl.WorkingDirectory = $ProjectRoot
+            $pinfoDl.RedirectStandardOutput = $true
+            $pinfoDl.RedirectStandardError = $true
+            $pinfoDl.UseShellExecute = $false
+            $pinfoDl.CreateNoWindow = $true
+            $pinfoDl.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            $procDl = [System.Diagnostics.Process]::Start($pinfoDl)
+            Wait-ProcessWithUiPump -Proc $procDl -LogPrefix "[4class句読点取得]"
+            Protect-ModelFiles
+        }
+    }
 
     $transScript = Join-Path $ProjectRoot "scripts\realtime_transcribe.py"
-    $cmdArgs = "/s /c `"set PYTHONDONTWRITEBYTECODE=1 && `"$venvPython`" -B `"$transScript`" --input ws --serve 8833 --ws-host 0.0.0.0 --ws-port 8766 > `"$script:PythonLogFile`" 2>&1`""
+    $cmdArgs = "/s /c `"set PYTHONDONTWRITEBYTECODE=1 && `"$venvPython`" -B `"$transScript`" --input ws --serve 8833 --ws-host 0.0.0.0 --ws-port 8766 --punct-model 4class > `"$script:PythonLogFile`" 2>&1`""
 
     $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
     $pinfo.FileName = "cmd.exe"
