@@ -9,27 +9,37 @@ echo "[entrypoint] 引数: $*"
 
 # モデルディレクトリの確認とダウンロード判定
 MODELS_DIR="/app/models"
-NEED_CORE=0
-NEED_TRANSLATE=0
+DOWNLOAD_ARGS=("--minimal")
+NEED_DOWNLOAD=0
 
 if [ ! -d "$MODELS_DIR" ] || [ -z "$(ls -A "$MODELS_DIR" 2>/dev/null)" ] || [ ! -d "$MODELS_DIR/sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17" ]; then
-    NEED_CORE=1
+    NEED_DOWNLOAD=1
 fi
 
 if [[ "$*" == *"--translate"* ]]; then
+    DOWNLOAD_ARGS+=("--translators")
     if [ ! -d "$MODELS_DIR/mojicast-fugumt-ja-en-ct2" ] || [ ! -d "$MODELS_DIR/mojicast-m2m100-ct2" ]; then
-        NEED_TRANSLATE=1
+        NEED_DOWNLOAD=1
     fi
 fi
 
-if [ $NEED_CORE -eq 1 ] || [ $NEED_TRANSLATE -eq 1 ]; then
-    if [ $NEED_TRANSLATE -eq 1 ] || [[ "$*" == *"--translate"* ]]; then
-        echo "初回セットアップ: Coreモデル + 翻訳モデル (計約1.7GB) をダウンロードしています..."
-        python scripts/download_models.py --minimal --translators
-    else
-        echo "初回セットアップ: Coreモデル (約1.1GB) をダウンロードしています..."
-        python scripts/download_models.py --minimal
+if [[ "$*" == *"--en-tier v2"* ]] || [[ "$*" == *"--en-tier=v2"* ]]; then
+    DOWNLOAD_ARGS+=("--en-parakeet-v2")
+    if [ ! -d "$MODELS_DIR/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8" ]; then
+        NEED_DOWNLOAD=1
     fi
+fi
+
+if [[ "$*" == *"--punct-model 4class"* ]] || [[ "$*" == *"--punct-model=4class"* ]]; then
+    DOWNLOAD_ARGS+=("--punct-4class")
+    if [ ! -d "$MODELS_DIR/punct-ja-4class-permissive" ]; then
+        NEED_DOWNLOAD=1
+    fi
+fi
+
+if [ $NEED_DOWNLOAD -eq 1 ]; then
+    echo "セットアップ: モデルファイルをダウンロードしています (${DOWNLOAD_ARGS[*]})..."
+    python scripts/download_models.py "${DOWNLOAD_ARGS[@]}"
     echo "モデルファイルの準備が完了しました。"
 else
     echo "既存のモデルディレクトリを確認しました: $MODELS_DIR"
