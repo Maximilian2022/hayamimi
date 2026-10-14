@@ -50,6 +50,7 @@ from ws_protocol import (OP_BINARY, OP_CLOSE, OP_PING, OP_PONG, OP_TEXT,
 
 READ_CHUNK = 4096
 MAX_HEADER_BYTES = 16384
+MAX_BUFFER_BYTES = 8 * 1024 * 1024  # 8MB max buffer limit against slowloris / memory bomb
 INGEST_PATH = "/ingest"
 
 # Sentinel pushed onto audio_q when a streaming client disconnects, so the
@@ -61,6 +62,27 @@ FLUSH = object()
 
 
 AUDIO_QUEUE_MAXSIZE = 200
+
+
+def _is_safe_origin(origin: str | None, host: str | None) -> bool:
+    """Allow connections without an Origin header (non-browser clients like ESP32/curl)
+    or matching localhost, 127.0.0.1, LAN private IPs, or matching Host header.
+    Rejects cross-site WebSocket hijacking from third-party websites.
+    """
+    if not origin:
+        return True
+    from urllib.parse import urlparse
+    parsed = urlparse(origin)
+    ohost = (parsed.hostname or "").lower()
+    if ohost in ("localhost", "127.0.0.1", "::1"):
+        return True
+    if ohost.startswith("192.168.") or ohost.startswith("10.") or (ohost.startswith("172.") and 16 <= int(ohost.split(".")[1] or 0) <= 31):
+        return True
+    if host:
+        req_host = host.split(":")[0].lower()
+        if ohost == req_host:
+            return True
+    return False
 
 
 class IngestServer:
@@ -153,6 +175,11 @@ class IngestServer:
                 await writer.drain()
                 writer.close()
                 return
+            if not _is_safe_origin(req.get("origin"), req.get("host")):
+                writer.write(b"HTTP/1.1 403 Forbidden\r\n\r\nCross-Origin WebSocket not allowed\r\n")
+                await writer.drain()
+                writer.close()
+                return
             writer.write(build_handshake_response(req["key"]))
             await writer.drain()
         except (ConnectionError, asyncio.IncompleteReadError, OSError):
@@ -199,8 +226,13 @@ class IngestServer:
                 if not data:
                     break
                 buf += data
+                if len(buf) > MAX_BUFFER_BYTES:
+                    break  # runaway payload / buffer overflow guard
                 while True:
-                    result = decode_frame(bytes(buf))
+                    try:
+                        result = decode_frame(bytes(buf))
+                    except ValueError:
+                        return  # frame declared oversized -> close immediately
                     if result is None:
                         break
                     opcode, payload, consumed = result
@@ -263,15 +295,36 @@ class IngestServer:
 
     async def _forward_events(self, writer: asyncio.StreamWriter):
         """Mirror the SubtitleServer's broadcast (partial/final/...) onto
-        this WS connection, the same events the SSE dashboard receives."""
+        this WS connection, the same events the SSE dashboard receives.
+
+        Uses polling with timeout + closed flag to ensure background threads
+        do not leak or block indefinitely in ThreadPoolExecutor upon disconnect.
+        """
         q = self.subtitle_server.subscribe()
         loop = asyncio.get_event_loop()
+        closed = False
+
+        def get_item():
+            while not closed:
+                try:
+                    return q.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+            return None
+
         try:
             while True:
-                data = await loop.run_in_executor(None, q.get)
+                data = await loop.run_in_executor(None, get_item)
+                if data is None:
+                    break
                 writer.write(encode_frame(data.encode("utf-8"), opcode=OP_TEXT))
                 await writer.drain()
         except (ConnectionError, asyncio.CancelledError, OSError):
             pass
         finally:
+            closed = True
+            try:
+                q.put_nowait(None)
+            except Exception:
+                pass
             self.subtitle_server.unsubscribe(q)

@@ -62,6 +62,18 @@ Whisper系・クラウドSTT API・他のローカルモデルとの比較（hay
 
 🎬 **[デモ動画を見る](https://github.com/oboroge0/hayamimi/releases/download/v0.1.0/hayamimi_demo.mp4)**: 実際の4言語音声（日英韓中）を文字起こししたときの記録を、そのまま再生した動画です。
 
+## オリジナル（Fork元）との主な違い・拡張機能
+
+本リポジトリ（hayamimi）は、[oboroge0/hayamimi](https://github.com/oboroge0/hayamimi) をベースに、GUI操作性を追加した Fork 版です。
+
+| 項目 | オリジナル (Upstream) | hayamimi (本Fork版) |
+| :--- | :--- | :--- |
+| **実行基盤 & Python** | Python 3.10+、CLI のみ | **Python 3.14 標準対応**<br>・`uv` による完全自動環境構築（配布先 PC に Python が無くても事前インストール不要で動作）|
+| **Docker / コンテナ & HTTPS リバースプロキシ** | **なし**（Docker 非対応、ローカル Python CLI 実行のみ） | **Docker Compose による 2コンテナ構成 (`compose.yaml`)**<br>・**hayamimi本体**: `python:3.14-slim` ベース、モデル（`./models`）の自動取得・永続化対応<br>・**proxy (nginx)**: 自己署名証明書を自動生成し、スマホ等のブラウザマイク入力（`getUserMedia`）に必須となる **Secure Context（HTTPS: 8843 / WSS）** を標準提供<br>・**WSL Containers (WSL3)**: Docker Desktop 不要で、Windows 11 標準の軽量仮想化基盤上でも分離コンテナとして稼働可能（GUI ランチャーからワンクリック切替） |
+| **起動・UI 環境** | コマンドライン（CLI）実行のみ | **モダン GUI ランチャー & ウィザード同梱**<br>・ワンクリックインストーラー (`setup.ps1`) でデスクトップショートカット作成<br>・ダークUIランチャー (`start.vbs` / `start.bat`) による起動/停止/再起動<br>・Python venv (ネイティブ) と WSL Containers (WSL3) のハイブリッド対応<br>・GUI からのワンクリック「本体アップデート」機能 |
+| **Web マイク UI** | なし（プロトコル仕様のみ） | **Web マイク & スタジオ機能 (`/mic`) を標準搭載**<br>・スマホや外部 PC のブラウザから直接マイク音声をリアルタイム送信<br>・OBS 字幕スタイル（フォント、サイズ、文字色、縁取り、背景色、配置等）のリアルタイムプレビュー＆視覚的カスタマイズ<br>・ブラウザ上からの言語・翻訳・句読点設定の動的変更 |
+| **ネットワーク & セキュリティ** | 既定で `127.0.0.1` バインド、CORS `*`、認証なし | **LAN 利用を前提とした多層防御を配備**<br>・スマホ連携のため既定で `0.0.0.0` バインド<br>・**CSWSH 防御**: Origin / Host ヘッダー検証（外部 Web からの不正 WebSocket 接続を 403 遮断）<br>・**CORS 制限**: `*` を撤去し安全なオリジンのみ許可<br>・**CSRF 防御**: 設定変更 POST API で `Content-Type: application/json` を必須化<br>・**DoS 防御**: WS フレーム長（4MB）および受信バッファ（8MB）の上限強制<br>・**XSS 対策**: DOM 構築の `textContent` 安全化 |
+
 ## ネットワーク音声入力
 
 `--input ws`を付けると、ローカルマイクの代わりにWebSocket経由で音声を受け付ける
@@ -82,10 +94,13 @@ Whisper系・クラウドSTT API・他のローカルモデルとの比較（hay
 外部ライブラリ不要の参照クライアント（wavファイルを実時間ペースで送信）で、
 スマホ/ESP32クライアントを作るときのテンプレートにもなります。
 
-`--input ws`は既定で`127.0.0.1`にバインドするので、エンドポイントは何もしなければ
+~~`--input ws`は既定で`127.0.0.1`にバインドするので、エンドポイントは何もしなければ
 localhostからしかアクセスできません。LAN上の他端末を受け付けたいときだけ
 `--ws-host 0.0.0.0`を明示してください（`/ingest`に認証はないので、信頼できる
-ネットワークでのみ使うこと）。バインドしたアドレスは起動時にstderrへ出力されます。
+ネットワークでのみ使うこと）。バインドしたアドレスは起動時にstderrへ出力されます。~~
+
+> **【hayamimi Fork版の変更点】**  
+> hayamimi ではスマートフォン（`/mic`）や外部端末からの利用を標準サポートするため、モダンGUIランチャー等では既定で `0.0.0.0` にバインドして起動します。これに伴い、安全な通信を担保するために **CSWSH（クロスサイトWebSocketハイジャック）対策（Origin/Host検証）**、**SSE/HTTP の CORS 制限**、および **DoS防御（最大ペイロード4MB/バッファ上限8MB強制）** を実装しています。信頼できる同一LAN内での利用を想定しています。
 
 ## スピーカー（PC音声）ループバック入力
 
@@ -148,9 +163,14 @@ with RoutedASR(en_tier="v2", punct_model="4class", on_event=hub.publish) as asr:
 
 ## 動作環境
 
-Python 3.10以上と、PATHの通ったffmpegが必要です。開発と検証は**Windows 11**で行いました。
+~~Python 3.10以上と、PATHの通ったffmpegが必要です。開発と検証は**Windows 11**で行いました。
 使っているランタイムはどれもクロスプラットフォームなのでmacOS/Linuxでも動くはずですが、
-実機での通し確認はまだできていません。動いた・動かなかったの報告を歓迎します。
+実機での通し確認はまだできていません。動いた・動かなかったの報告を歓迎します。~~
+
+> **【hayamimi Fork版の変更点】**  
+> **Python 3.11 〜 3.14** に対応しています（CIにて 3.11 / 3.14 両バージョンのテストを常時実行）。  
+> 本ツールは配布を想定しており、配布先マシンに Python や 3.14 が事前インストールされていなくても、付属の `setup.ps1` またはランチャー（`start.bat` / `start.vbs`）を実行することで、高速ツール `uv` を介して自動的に専用 Python 仮想環境（`.venv`）が完全自動構築されます。  
+> また、過去バージョン（Python 3.11 環境）をご利用中の既存ユーザー様も、ランチャーの「本体のアップデート」機能により、既存の `.venv` 環境を一切破壊することなく最新コードと依存関係の差分更新が安全に適用されます。
 
 ## クイックスタート
 
@@ -180,6 +200,35 @@ python -m venv .venv
 # -> ブラウザで http://localhost:8833/dashboard を開く
 ```
 
+> **【hayamimi Fork版: モダンGUIランチャー / セットアップウィザード】**  
+> hayamimi では、コマンドラインを使わずにワンクリックで導入・起動できる GUI ツールを標準同梱しています：
+> - **初回セットアップ**: `setup.ps1` を右クリックして「PowerShell で実行」またはダブルクリックするだけで、必要な環境のダウンロードからデスクトップショートカット作成まで完了します。
+> - **ワンクリック起動**: `start.vbs` または `start.bat`（デスクトップショートカット）から、モダンダークUIのGUIランチャー（`launcher_gui.ps1`）が起動します。Python venv ネイティブ実行と WSL Containers (WSL3) のハイブリッド切り替え、音声デバイス選択、モデル自動ダウンロード、本体アップデート機能に対応しています。
+
+### Docker Compose によるコンテナ実行（推奨）
+
+Docker 環境（Docker Desktop / Linux サーバー等）では、`compose.yaml` を用いて ASR 本体と SSL/TLS リバースプロキシ（nginx）を一括起動できます。スマートフォン等の外部端末から Web マイク（`/mic`）を利用する場合、ブラウザのセキュリティ要件（Secure Context）を満たすため、**プロキシ経由の HTTPS（ポート 8843）** でアクセスします。
+
+```bash
+# 1. コンテナのビルドと起動 (ASR 本体 + nginx リバースプロキシ)
+docker compose up -d
+
+# 2. 初回起動時のモデルダウンロードログを確認
+docker compose logs -f hayamimi
+
+# 停止
+docker compose down
+```
+
+#### アクセス先 URL
+- **スマートフォン・外部端末向け (HTTPS プロキシ経由・マイク入力推奨)**:
+  - **Web マイク画面**: `https://<PCまたはサーバーのIP>:8843/mic`  
+    *(※ 初回アクセス時、自己署名証明書の警告画面が出た場合は「詳細設定」→「アクセスする」を許可してください)*
+  - **OBS 字幕オーバーレイ**: `https://<PCまたはサーバーのIP>:8843/`
+  - **ライブダッシュボード**: `https://<PCまたはサーバーのIP>:8843/dashboard`
+- **PC ローカル確認用 (HTTP 直結)**:
+  - `http://localhost:8833/mic` / `http://localhost:8833/dashboard`
+
 `scripts/download_models.py`は約3.1GB分のモデルを`models/`（git管理外）にダウンロードします。
 `--minimal`を付けると日本語と英語だけの約1.1GB構成になります。上記2つのオプトイン
 ティアは個別のフラグで追加します: `--en-parakeet-v2`（+約460MB、`--en-tier v2`用）と
@@ -198,7 +247,7 @@ python -m venv .venv
 | `--mic-device NAME` | システムの既定入力デバイス | `--input mic`/`mix`が録音するデバイス名の部分一致指定。`--list-audio-devices`参照 |
 | `--speaker-device NAME` | システムの既定出力デバイス | `--input speaker`/`mix`がループバックするデバイス名の部分一致指定。`--list-audio-devices`参照 |
 | `--list-audio-devices` | オフ | 利用可能な音声デバイス一覧を表示して終了 |
-| `--ws-host HOST` | `127.0.0.1` | `--input ws`の`/ingest`エンドポイントのバインドホスト。LANクライアントを受け付けるには`0.0.0.0`を指定 |
+| `--ws-host HOST` | `127.0.0.1` | `--input ws`の`/ingest`エンドポイントのバインドホスト。~~LANクライアントを受け付けるには`0.0.0.0`を指定~~（※hayamimi GUIランチャー経由ではスマホマイク連携のため既定で `0.0.0.0` をバインドして起動） |
 | `--ws-port PORT` | 8766 | `--input ws`の`/ingest`エンドポイントのポート |
 | `--threads N` | 4 | モデルごとの推論スレッド数 |
 | `--no-partial` | オフ | 発話中の速報字幕を無効化 |

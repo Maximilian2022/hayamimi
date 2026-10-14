@@ -70,6 +70,18 @@ models -- including the languages where hayamimi loses -- is in
 
 🎬 **[Watch the demo video](https://github.com/oboroge0/hayamimi/releases/download/v0.1.0/hayamimi_demo.mp4)** — real 4-language audio (ja/en/ko/zh) transcribed live, replayed frame-accurately from a captured session.
 
+## Differences from Upstream (Original)
+
+This repository (hayamimi) is an enhanced fork of [oboroge0/hayamimi](https://github.com/oboroge0/hayamimi), designed for turnkey distribution, zero-command-line user experience, and robust production stability for streamers and end users.
+
+| Category | Upstream (Original) | hayamimi (This Fork) |
+| :--- | :--- | :--- |
+| **Runtime & Python** | Python 3.10+, CLI only | **Python 3.14 Standardized**<br>• Fully automated standalone setup via `uv` (runs out-of-the-box on clean PCs without Python pre-installed)|
+| **Docker, Containers & HTTPS Reverse Proxy** | **None** (No Docker support, local Python CLI only) | **Dual-Container Stack via Docker Compose (`compose.yaml`)**<br>• **hayamimi Core**: Based on `python:3.14-slim` with self-healing model downloads and volume persistence (`./models`)<br>• **proxy (nginx)**: Automatically generates SSL certificates to terminate **HTTPS (8843) and WSS**, satisfying the Secure Context requirement for smartphone browser mics (`getUserMedia`)<br>• **WSL Containers (WSL3)**: Native execution on Windows 11 standard virtualization without Docker Desktop (switchable via GUI launcher) |
+| **GUI & Deployment** | Command-line execution only | **Modern GUI Launcher & Setup Wizard**<br>• One-click setup (`setup.ps1`) with desktop shortcut creation<br>• Dark-themed GUI launcher (`start.vbs` / `start.bat`) for start/stop/restart<br>• Native Python venv and WSL Containers (WSL3) hybrid engine switching<br>• One-click in-app update mechanism from GitHub |
+| **Web Microphone UI** | Not included (protocol spec only) | **Built-in Web Mic & Studio Studio (`/mic`)**<br>• Real-time wireless mic streaming directly from smartphones or other LAN PCs<br>• Visual subtitle styling editor (Google Fonts, sizing, colors, strokes, opacity, placement) with live preview<br>• In-browser dynamic ASR, translation, and punctuation settings |
+| **Network & Security** | Default `127.0.0.1`, CORS `*`, unauthenticated | **Hardened Multi-Layer Security**<br>• Binds to `0.0.0.0` by default for mobile mic access<br>• **CSWSH Protection**: Validates Origin & Host headers (rejects unauthorized cross-origin WebSocket handshakes with 403 Forbidden)<br>• **Restricted CORS**: Removed wildcard `*`, reflecting only safe origins<br>• **CSRF Protection**: Enforces `Content-Type: application/json` on state-changing POST APIs<br>• **DoS Mitigation**: Hard payload limits (max 4MB frame, max 8MB buffer)<br>• **XSS Prevention**: Safe DOM construction via `textContent` |
+
 ## Network audio input
 
 `--input ws` runs a WebSocket ingest endpoint instead of reading the local
@@ -90,10 +102,13 @@ Only one audio-producing client is accepted at a time; `scripts/ws_mic_client.py
 is a dependency-free reference client (streams a wav file at real-time pace)
 that doubles as a template for a phone/ESP32 implementation.
 
-`--input ws` binds `127.0.0.1` by default, so the endpoint is localhost-only
+~~`--input ws` binds `127.0.0.1` by default, so the endpoint is localhost-only
 until you opt in with `--ws-host 0.0.0.0` -- do that only on a network you
 trust, since `/ingest` has no authentication. The bound address is printed
-to stderr on startup either way.
+to stderr on startup either way.~~
+
+> **[hayamimi Fork Changes]**  
+> In hayamimi, we bind to `0.0.0.0` by default in the modern GUI launcher to support smartphone (`/mic`) and external LAN devices. To ensure security, **CSWSH protection (Origin & Host header validation)**, **SSE/HTTP CORS restriction**, and **DoS guards (max payload 4MB / max buffer 8MB)** are implemented. Use within trusted LAN environments.
 
 ## Speaker (system audio) loopback input
 
@@ -157,9 +172,14 @@ with RoutedASR(en_tier="v2", punct_model="4class", on_event=hub.publish) as asr:
 
 ## Requirements
 
-Python 3.10+ and ffmpeg on PATH. Developed and tested on **Windows 11**;
+~~Python 3.10+ and ffmpeg on PATH. Developed and tested on **Windows 11**;
 macOS/Linux are expected to work (all runtimes are cross-platform) but are
-not yet CI-tested end to end — reports welcome.
+not yet CI-tested end to end — reports welcome.~~
+
+> **[hayamimi Fork Changes]**  
+> Fully supports **Python 3.11 through 3.14** (continuously verified in CI across both 3.11 and 3.14).  
+> Designed for turnkey distribution: even if Python (or 3.14) is not installed on the destination machine, running `setup.ps1` or the GUI launcher (`start.bat` / `start.vbs`) automatically provisions a self-contained `.venv` environment using `uv`.  
+> Existing users running on Python 3.11 can safely upgrade via the GUI launcher's "Update App" feature without breaking their existing `.venv` or requiring manual reinstallation.
 
 ## Quickstart
 
@@ -189,6 +209,35 @@ python -m venv .venv
 # -> open http://localhost:8833/dashboard in a browser
 ```
 
+> **[hayamimi Fork: Modern GUI Launcher & Setup Wizard]**  
+> hayamimi includes intuitive GUI tools for zero-command-line deployment:
+> - **Initial Setup**: Run `setup.ps1` to download and configure the standalone environment and create desktop shortcuts.
+> - **One-Click Launch**: Start via `start.vbs` or `start.bat` (desktop shortcut) to launch the modern dark-mode GUI (`launcher_gui.ps1`) supporting Native Python venv / WSL Containers (WSL3) switching, audio device selection, automatic model downloads, and one-click app updates.
+
+### Running with Docker Compose (Recommended)
+
+In containerized environments (Docker Desktop, Linux servers, etc.), hayamimi runs as a multi-container stack via `compose.yaml`, pairing the core engine with an nginx SSL/TLS reverse proxy. Accessing via **HTTPS (Port 8843)** satisfies modern browser Secure Context requirements for smartphone microphone access (`getUserMedia`).
+
+```bash
+# 1. Build and start services (hayamimi core + nginx reverse proxy)
+docker compose up -d
+
+# 2. Follow model download logs on first startup
+docker compose logs -f hayamimi
+
+# Stop services
+docker compose down
+```
+
+#### Access Endpoints
+- **For Smartphones & External Devices (via HTTPS Proxy - Recommended for Mic)**:
+  - **Web Mic Interface**: `https://<SERVER_IP>:8843/mic`  
+    *(Accept the self-signed certificate warning on first visit)*
+  - **OBS Subtitle Overlay**: `https://<SERVER_IP>:8843/`
+  - **Live Dashboard**: `https://<SERVER_IP>:8843/dashboard`
+- **Local PC Direct Access (HTTP)**:
+  - `http://localhost:8833/mic` / `http://localhost:8833/dashboard`
+
 `scripts/download_models.py` pulls ~3.1GB of pretrained models into
 `models/` (git-ignored). Pass `--minimal` for a ~1.1GB ja/en-only install
 (ReazonSpeech, whisper-tiny, Silero VAD, Japanese punctuation). Two opt-in
@@ -209,7 +258,7 @@ All flags are on `scripts/realtime_transcribe.py`:
 | `--mic-device NAME` | system default input | substring match for the input device `--input mic`/`mix` captures from; see `--list-audio-devices` |
 | `--speaker-device NAME` | system default output | substring match for the output device `--input speaker`/`mix` loops back from; see `--list-audio-devices` |
 | `--list-audio-devices` | off | print available audio devices and exit |
-| `--ws-host HOST` | `127.0.0.1` | bind host for `--input ws`'s `/ingest` endpoint; pass `0.0.0.0` to accept LAN clients |
+| `--ws-host HOST` | `127.0.0.1` | bind host for `--input ws`'s `/ingest` endpoint; ~~pass `0.0.0.0` to accept LAN clients~~ (※hayamimi GUI launcher binds `0.0.0.0` by default for mobile mic support) |
 | `--ws-port PORT` | 8766 | port for `--input ws`'s `/ingest` endpoint |
 | `--threads N` | 4 | inference threads per model |
 | `--no-partial` | off | disable in-progress draft subtitles |

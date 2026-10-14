@@ -927,6 +927,9 @@ class SessionStats:
         self.total_audio_s = 0.0
         self.segments = 0
         self.latencies_ms: list[float] = []
+        self._lat_sum = 0.0
+        self._lat_count = 0
+        self._lat_max = 0.0
         self.refine_lang_corrections = 0  # times the refine pass overruled the fast-path language
         # docs/design/diarization.md section 10.6 diagnostics: eval_diar.py's
         # generate_diarize_hypothesis() groups VAD segments purely on the
@@ -952,12 +955,21 @@ class SessionStats:
         # own first final as "switched" from the old session's last one.
         self.last_final_lang: str | None = None
 
+    def record_latency(self, latency_ms: float):
+        self._lat_sum += latency_ms
+        self._lat_count += 1
+        if latency_ms > self._lat_max:
+            self._lat_max = latency_ms
+        self.latencies_ms.append(latency_ms)
+        if len(self.latencies_ms) > 500:
+            del self.latencies_ms[:-500]
+
     def summary(self) -> str:
-        if not self.latencies_ms:
+        if self._lat_count == 0:
             return f"total_audio={self.total_audio_s:.1f}s segments=0"
-        mean = sum(self.latencies_ms) / len(self.latencies_ms)
+        mean = self._lat_sum / self._lat_count
         return (f"total_audio={self.total_audio_s:.1f}s segments={self.segments} "
-                f"mean_latency={mean:.0f}ms max_latency={max(self.latencies_ms):.0f}ms "
+                f"mean_latency={mean:.0f}ms max_latency={self._lat_max:.0f}ms "
                 f"refine_lang_corrections={self.refine_lang_corrections} "
                 f"refine_groups_closed={self.refine_groups_closed} "
                 f"refine_lang_boundary_flushes={self.refine_lang_boundary_flushes}")
@@ -1053,7 +1065,7 @@ def drain_segments(vad, sample_rate: int, asr: RoutedASR, stats: SessionStats,
         speaker_tag = f"{display_speaker}|" if display_speaker else ""
 
         stats.segments += 1
-        stats.latencies_ms.append(latency_ms)
+        stats.record_latency(latency_ms)
         printer.clear()
         # GitHub issue #29: `switched` is true only when this final's
         # language differs from the PREVIOUS final's -- tracked on `stats`
@@ -1249,17 +1261,19 @@ class TranslatorPool:
         with self._lock:
             if lang in self._translators:
                 return
-            t0 = time.perf_counter()
-            if self.hub is not None:
-                self.hub.publish({"type": "model_load", "model": f"translator:{lang}",
-                                  "phase": "start", "ms": None})
-            translator = _build_translator(lang)  # ValueError propagates on an unsupported code
-            ms = (time.perf_counter() - t0) * 1000
-            if self.hub is not None:
-                self.hub.publish({"type": "model_load", "model": f"translator:{lang}",
-                                  "phase": "done", "ms": ms})
-            self._translators[lang] = translator
-            self._order.append(lang)
+        t0 = time.perf_counter()
+        if self.hub is not None:
+            self.hub.publish({"type": "model_load", "model": f"translator:{lang}",
+                              "phase": "start", "ms": None})
+        translator = _build_translator(lang)  # ValueError propagates on an unsupported code
+        ms = (time.perf_counter() - t0) * 1000
+        if self.hub is not None:
+            self.hub.publish({"type": "model_load", "model": f"translator:{lang}",
+                              "phase": "done", "ms": ms})
+        with self._lock:
+            if lang not in self._translators:
+                self._translators[lang] = translator
+                self._order.append(lang)
 
     def remove_target(self, lang: str) -> None:
         """Drop `lang` from the pool. A no-op if it wasn't a target."""
@@ -1306,10 +1320,10 @@ class TranslationWorker:
     worker already pulling ja finals to translate -- see main()'s wiring.
     """
 
-    def __init__(self, pool: TranslatorPool, hub: "EventHub"):
+    def __init__(self, pool: TranslatorPool, hub: "EventHub", maxsize: int = 100):
         self._pool = pool
         self._hub = hub
-        self._q: "queue.Queue" = queue.Queue()
+        self._q: "queue.Queue" = queue.Queue(maxsize=maxsize)
         self._closed = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -1318,14 +1332,22 @@ class TranslationWorker:
         """Queue one finalized ja line for translation.
 
         A no-op after close(): the worker is gone, so anything queued now
-        would sit unread forever. Unlike Refiner.maybe_refine() (which
-        raises, because losing refine text loses transcript content), a
-        dropped console translation of a line that was already printed in
-        its original language costs the user nothing at shutdown.
+        would sit unread forever. Uses put_nowait with overflow drop to
+        prevent memory ballooning under high load.
         """
         if self._closed:
             return
-        self._q.put(text)
+        try:
+            self._q.put_nowait(text)
+        except queue.Full:
+            try:
+                self._q.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._q.put_nowait(text)
+            except queue.Full:
+                pass
 
     def close(self) -> None:
         """Stop the worker thread once everything already queued has been
@@ -1466,7 +1488,7 @@ class Refiner:
         # the old _worker_lock in either order and print [refine/...] lines
         # out of chronological sequence. A single consumer thread draining a
         # Queue processes strictly in enqueue order, so this can't happen.
-        self._task_queue: "queue.Queue" = queue.Queue()
+        self._task_queue: "queue.Queue" = queue.Queue(maxsize=100)
         self._closed = False
         self._close_lock = threading.Lock()
         self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)

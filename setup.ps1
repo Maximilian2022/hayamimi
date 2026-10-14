@@ -1,4 +1,4 @@
-﻿[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
 # --- コンソール & Windows Terminal の完全非表示化 (SW_HIDE) ---
@@ -493,7 +493,8 @@ Write-Host ""
 Read-Host "Enterキーを押して終了してください..."
 '@
 
-        $scriptBlockFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "install_wsl3_setup.ps1")
+        $uniqueId = [System.Guid]::NewGuid().ToString("N")
+        $scriptBlockFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "install_wsl3_setup_$uniqueId.ps1")
         [System.IO.File]::WriteAllText($scriptBlockFile, $installScript, [System.Text.Encoding]::UTF8)
 
         $proc = Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptBlockFile`"" -PassThru

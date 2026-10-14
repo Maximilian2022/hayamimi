@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.2.4"
-$script:AppVersion = "1.2.4"
+$version = "GUI v1.3.1"
+$script:AppVersion = "1.3.1"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -1408,6 +1408,46 @@ function Test-AppRunning {
     }
 }
 
+# Python 仮想環境のバージョン取得関数
+function Get-PythonVenvVersion {
+    $venvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+    if (-not (Test-Path $venvPython)) { return $null }
+    try {
+        $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $pinfo.FileName = $venvPython
+        $pinfo.Arguments = "-c `"import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')`""
+        $pinfo.WorkingDirectory = $ProjectRoot
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.UseShellExecute = $false
+        $pinfo.CreateNoWindow = $true
+        $proc = [System.Diagnostics.Process]::Start($pinfo)
+        $verStr = $proc.StandardOutput.ReadToEnd().Trim()
+        $proc.WaitForExit(3000) | Out-Null
+        if ($verStr -match '^\d+\.\d+') {
+            return $verStr
+        }
+    } catch {}
+    return $null
+}
+
+# Python 3.14 環境の最新性確認・自動再構築関数 (3.11 等の旧環境は自動で 3.14 で作り直す)
+function Ensure-PythonVenvUpToDate {
+    $venvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+    if (-not (Test-Path $venvPython)) {
+        return (Invoke-SetupPythonVenv)
+    }
+
+    $curVer = Get-PythonVenvVersion
+    if ($curVer -and ($curVer -ne "3.14")) {
+        Write-AppLog "=========================================="
+        Write-AppLog "【環境更新】旧バージョン (Python $curVer) の仮想環境を検出しました。" "WARN"
+        Write-AppLog "hayamimi を最新の Python 3.14 実行環境へ自動アップグレードするため、仮想環境 (.venv) を再構築します..." "INFO"
+        Set-UIState "Python 3.14更新中..." $brushOrange $false $false
+        return (Invoke-SetupPythonVenv -ForceRecreate $true)
+    }
+    return $true
+}
+
 # Python venv (ネイティブ実行環境) 自動セットアップ関数 (UIフリーズ・応答なし完全防止)
 function Invoke-SetupPythonVenv {
     param([bool]$ForceRecreate = $false)
@@ -1464,12 +1504,21 @@ function Invoke-SetupPythonVenv {
     $venvDir = Join-Path $ProjectRoot ".venv"
     $venvPython = Join-Path $venvDir "Scripts\python.exe"
 
+    if ($ForceRecreate -and (Test-Path $venvDir)) {
+        Write-AppLog "既存の仮想環境 (.venv) をクリーンアップしています..." "INFO"
+        try {
+            Remove-Item -Path $venvDir -Recurse -Force -ErrorAction Stop
+        } catch {
+            Write-AppLog "仮想環境フォルダの削除警告: $_" "WARN"
+        }
+    }
+
     if ($ForceRecreate -or -not (Test-Path $venvPython)) {
-        Write-AppLog "Python 3.11 仮想環境 (.venv) を作成しています..." "INFO"
+        Write-AppLog "Python 3.14 仮想環境 (.venv) を作成しています..." "INFO"
         if ($uvCmd) {
             $pinfoVenv = [System.Diagnostics.ProcessStartInfo]::new()
             $pinfoVenv.FileName = $uvCmd
-            $pinfoVenv.Arguments = "venv .venv --python 3.11"
+            $pinfoVenv.Arguments = "venv .venv --python 3.14"
             $pinfoVenv.WorkingDirectory = $ProjectRoot
             $pinfoVenv.RedirectStandardOutput = $true
             $pinfoVenv.RedirectStandardError = $true
@@ -1484,7 +1533,7 @@ function Invoke-SetupPythonVenv {
                 if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
                 return $false
             }
-            Write-AppLog "✔ Python 3.11 仮想環境 (.venv) を作成しました。" "INFO"
+            Write-AppLog "✔ Python 3.14 仮想環境 (.venv) を作成しました。" "INFO"
         } else {
             $sysPython = (where.exe python 2>$null | Select-Object -First 1)
             if ($sysPython) {
@@ -1562,13 +1611,17 @@ function Invoke-SetupPythonVenv {
 
 # Python venv アプリの起動処理
 function Start-PythonVenvApp {
+    # 仮想環境の存在および Python 3.14 への整合性確認 (3.11 環境は自動再構築)
+    $isOk = Ensure-PythonVenvUpToDate
+    if (-not $isOk) {
+        Write-AppLog "Python 仮想環境の準備に失敗したため起動を中止しました。" "ERROR"
+        Set-UIState "セットアップ失敗" $brushRed $true $false
+        return
+    }
+
     $venvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
     if (-not (Test-Path $venvPython)) {
         Write-AppLog "Python 仮想環境 (.venv) が見つかりません。先にセットアップを行ってください。" "WARN"
-        $ask = Show-AppConfirm -Message "Python 仮想環境 (.venv) がまだ構築されていません。`r`n`r`n今すぐ自動でセットアップを開始しますか？`r`n(PC再起動・管理者権限は不要です)" -Title "Python環境セットアップ - hayamimi"
-        if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
-            Invoke-SetupPythonVenv | Out-Null
-        }
         return
     }
 
@@ -1620,6 +1673,7 @@ function Start-PythonVenvApp {
 
     $script:ProcPython = [System.Diagnostics.Process]::Start($pinfo)
     $script:HealthCheckAttempts = 0
+    $script:ReadyConsecutiveCount = 0
     $healthTimer.Start()
 }
 
@@ -1895,7 +1949,8 @@ Write-Host ""
 Read-Host "Enterキーを押して終了してください..."
 '@
 
-        $scriptBlockFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "install_wsl3.ps1")
+        $uniqueId = [System.Guid]::NewGuid().ToString("N")
+        $scriptBlockFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "install_wsl3_$uniqueId.ps1")
         [System.IO.File]::WriteAllText($scriptBlockFile, $installScript, [System.Text.Encoding]::UTF8)
 
         $proc = Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptBlockFile`"" -PassThru
@@ -2049,6 +2104,7 @@ function Start-HayamimiContainer {
         Update-ContainerLogFile -EchoToGui $true
         $script:HealthCheckAttempts = 0
         $script:ContainerDeadCount = 0
+        $script:ReadyConsecutiveCount = 0
         $healthTimer.Start()
 
     } catch {
@@ -2349,6 +2405,44 @@ function Invoke-UpdateAppCode {
         Set-UIState "停止中" $brushGray $true $false
 
         if ($updateSuccess) {
+            # 既存の .venv に対する依存パッケージの更新確認 (Python 3.11 / 3.14 両対応)
+            $venvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+            $reqFile = Join-Path $ProjectRoot "requirements.txt"
+            if ((Test-Path $venvPython) -and (Test-Path $reqFile)) {
+                Write-AppLog "仮想環境 (.venv) の依存パッケージ更新を確認・適用しています..." "INFO"
+                $uvCmd = (where.exe uv 2>$null | Select-Object -First 1)
+                if (-not $uvCmd) {
+                    $localUvExe = Join-Path $ProjectRoot "tools\uv\uv.exe"
+                    if (Test-Path $localUvExe) { $uvCmd = $localUvExe }
+                }
+                if ($uvCmd) {
+                    $pinfoPip = [System.Diagnostics.ProcessStartInfo]::new()
+                    $pinfoPip.FileName = $uvCmd
+                    $pinfoPip.Arguments = "pip install -r `"$reqFile`" --python `"$venvPython`""
+                    $pinfoPip.WorkingDirectory = $ProjectRoot
+                    $pinfoPip.RedirectStandardOutput = $true
+                    $pinfoPip.RedirectStandardError = $true
+                    $pinfoPip.UseShellExecute = $false
+                    $pinfoPip.CreateNoWindow = $true
+                    $pinfoPip.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
+                    $procPip = [System.Diagnostics.Process]::Start($pinfoPip)
+                    Wait-ProcessWithUiPump -Proc $procPip -LogPrefix "[依存更新]"
+                } else {
+                    $pinfoPip = [System.Diagnostics.ProcessStartInfo]::new()
+                    $pinfoPip.FileName = $venvPython
+                    $pinfoPip.Arguments = "-B -m pip install -r `"$reqFile`""
+                    $pinfoPip.WorkingDirectory = $ProjectRoot
+                    $pinfoPip.RedirectStandardOutput = $true
+                    $pinfoPip.RedirectStandardError = $true
+                    $pinfoPip.UseShellExecute = $false
+                    $pinfoPip.CreateNoWindow = $true
+                    $pinfoPip.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
+                    $procPip = [System.Diagnostics.Process]::Start($pinfoPip)
+                    Wait-ProcessWithUiPump -Proc $procPip -LogPrefix "[依存更新]"
+                }
+                Write-AppLog "✔ 依存パッケージの同期が完了しました。" "INFO"
+            }
+
             $askRestart = Show-AppConfirm -Message "最新のソースコードを取得しました！`r`n`r`nランチャーGUIを最新版で再起動しますか？" -Title "本体更新の完了 - hayamimi"
             if ($askRestart -eq [System.Windows.MessageBoxResult]::Yes) {
                 Write-AppLog "ランチャーを再起動して最新コードを適用します..." "INFO"
@@ -2483,6 +2577,7 @@ $buildTimer.Add_Tick({
 # ヘルスチェックタイマー (最大10分待機・初期化猶予付き異常終了検知)
 $script:HealthCheckAttempts = 0
 $script:ContainerDeadCount = 0
+$script:ReadyConsecutiveCount = 0
 $healthTimer = [System.Windows.Threading.DispatcherTimer]::new()
 $healthTimer.Interval = [TimeSpan]::FromMilliseconds(500)
 
@@ -2603,34 +2698,50 @@ $healthTimer.Add_Tick({
         }
     }
 
-    # 3. サーバー疎通確認 (HTTP 8833 および WebSocket 8766 の双方の開放を確認)
-    $ready = $false
-    try {
-        # 8833 (HTTP) のソケット疎通確認
-        $tcpHttp = [System.Net.Sockets.TcpClient]::new()
-        $asyncHttp = $tcpHttp.BeginConnect("127.0.0.1", 8833, $null, $null)
-        $connectedHttp = $asyncHttp.AsyncWaitHandle.WaitOne(600, $false)
-        if ($connectedHttp) {
-            $tcpHttp.EndConnect($asyncHttp)
-            $tcpHttp.Close()
+    # 3. サーバー疎通確認 (HTTP /config が 200 OK かつ WebSocket 8766 がリッスン中であることを検証)
+    # ※ モデルロード完了後に server.controls がセットされ、初めて /config が 200 OK になる。
+    #    この検証により「モデルロード中・サーバー未準備のフライング起動」を完全防止する。
+    $isHttpReady = $false
+    $isWsReady = $false
 
-            # 8766 (WebSocket: モデルロード完了時にオープン) のソケット疎通確認
+    try {
+        $req = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:8833/config")
+        $req.Timeout = 800
+        $req.Method = "GET"
+        $resp = $req.GetResponse()
+        if ($resp) {
+            $httpResp = [System.Net.HttpWebResponse]$resp
+            if ($httpResp.StatusCode -eq [System.Net.HttpStatusCode]::OK) {
+                $isHttpReady = $true
+            }
+            $httpResp.Close()
+        }
+    } catch {}
+
+    if ($isHttpReady) {
+        try {
+            # 8766 (WebSocket: モデルロード完了後に IngestServer が起動) のソケット疎通確認
             $tcpWs = [System.Net.Sockets.TcpClient]::new()
             $asyncWs = $tcpWs.BeginConnect("127.0.0.1", 8766, $null, $null)
             $connectedWs = $asyncWs.AsyncWaitHandle.WaitOne(600, $false)
             if ($connectedWs) {
                 $tcpWs.EndConnect($asyncWs)
                 $tcpWs.Close()
-                $ready = $true
+                $isWsReady = $true
             } else {
                 $tcpWs.Close()
             }
-        } else {
-            $tcpHttp.Close()
-        }
-    } catch {}
+        } catch {}
+    }
 
-    if ($ready) {
+    if ($isHttpReady -and $isWsReady) {
+        $script:ReadyConsecutiveCount++
+    } else {
+        $script:ReadyConsecutiveCount = 0
+    }
+
+    # 2回連続確認 (約1秒間安定稼働) で起動完了と判定
+    if ($script:ReadyConsecutiveCount -ge 2) {
         $healthTimer.Stop()
         if ($initProgressBar) { $initProgressBar.Visibility = "Collapsed" }
         if ($script:CurrentEngineMode -eq "Venv") {
@@ -2639,7 +2750,12 @@ $healthTimer.Add_Tick({
             Update-ContainerLogFile -EchoToGui $true
         }
         Set-UIState "稼働中 (8833 / 8766)" $brushGreen $false $true
-        Write-AppLog "✔ サーバー起動完了！ブラウザを開きます: $MicUrl" "INFO"
+        Write-AppLog "✔ サーバーの全モジュール（モデルロード/HTTP/WebSocket）の起動が完了しました！" "INFO"
+        Write-AppLog "ブラウザ（MICページ）を開きます: $MicUrl" "INFO"
+
+        # リスナーが完全に安定するまで 500ms 待機
+        Start-Sleep -Milliseconds 500
+
         try {
             Start-Process $MicUrl -ErrorAction Stop
         } catch {
@@ -2663,13 +2779,9 @@ $healthTimer.Add_Tick({
 $btnStart.Add_Click({
     try {
         if ($script:CurrentEngineMode -eq "Venv") {
-            # Python venv モード
-            $venvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-            if (-not (Test-Path $venvPython)) {
-                Write-AppLog "【初回検知】Python 仮想環境 (.venv) が未構築です。自動セットアップを開始します..." "INFO"
-                $ok = Invoke-SetupPythonVenv
-                if (-not $ok) { return }
-            }
+            # Python venv モード (3.14 整合性確認 & 3.11 からの自動再構築)
+            $isOk = Ensure-PythonVenvUpToDate
+            if (-not $isOk) { return }
             Start-PythonVenvApp
         } else {
             # WSL Containers モード

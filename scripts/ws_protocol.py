@@ -54,7 +54,13 @@ def parse_handshake_request(head: bytes) -> dict | None:
     key = headers.get("sec-websocket-key")
     if not key:
         return None
-    return {"method": method, "path": path, "key": key}
+    return {
+        "method": method,
+        "path": path,
+        "key": key,
+        "origin": headers.get("origin"),
+        "host": headers.get("host"),
+    }
 
 
 def build_handshake_response(client_key: str) -> bytes:
@@ -78,6 +84,23 @@ def build_handshake_request(host: str, port: int, path: str, key: str) -> bytes:
     ).encode("ascii")
 
 
+MAX_FRAME_PAYLOAD = 4 * 1024 * 1024  # 4MB safety limit against malformed / DoS frames
+
+try:
+    import numpy as _np
+    def _unmask(payload: bytes, mask_key: bytes) -> bytes:
+        if not payload:
+            return b""
+        arr = _np.frombuffer(payload, dtype=_np.uint8)
+        mask = _np.frombuffer(mask_key, dtype=_np.uint8)
+        rep = (len(arr) + 3) // 4
+        mask_rep = _np.tile(mask, rep)[:len(arr)]
+        return (arr ^ mask_rep).tobytes()
+except ImportError:
+    def _unmask(payload: bytes, mask_key: bytes) -> bytes:
+        return bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+
+
 def encode_frame(payload: bytes, opcode: int = OP_BINARY, mask: bool = False) -> bytes:
     """Build one complete, unfragmented WS frame.
 
@@ -95,7 +118,7 @@ def encode_frame(payload: bytes, opcode: int = OP_BINARY, mask: bool = False) ->
     if not mask:
         return header + payload
     mask_key = os.urandom(4)
-    masked = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+    masked = _unmask(payload, mask_key)
     return header + mask_key + masked
 
 
@@ -105,7 +128,7 @@ def decode_frame(buf: bytes):
     Returns (opcode, payload, consumed_bytes) on success, or None if `buf`
     doesn't yet hold a complete frame. The caller drops `consumed_bytes`
     from the front of its buffer and calls again in case more than one
-    frame arrived in the same read.
+    frame arrived in the same read. Raises ValueError if frame exceeds MAX_FRAME_PAYLOAD.
     """
     if len(buf) < 2:
         return None
@@ -124,6 +147,8 @@ def decode_frame(buf: bytes):
             return None
         length = struct.unpack(">Q", buf[pos:pos + 8])[0]
         pos += 8
+    if length > MAX_FRAME_PAYLOAD:
+        raise ValueError(f"WebSocket frame payload too large: {length} bytes (max {MAX_FRAME_PAYLOAD})")
     mask_key = b""
     if masked:
         if len(buf) < pos + 4:
@@ -134,5 +159,6 @@ def decode_frame(buf: bytes):
         return None
     payload = buf[pos:pos + length]
     if masked:
-        payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+        payload = _unmask(payload, mask_key)
     return opcode, bytes(payload), pos + length
+

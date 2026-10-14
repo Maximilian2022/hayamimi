@@ -1349,7 +1349,7 @@
           return;
         }
         window._wsTriedFallback = false;
-        showError("WebSocket 接続エラーが発生しました。接続先 (" + curTarget + ") やポート8766の待機状態を確認してください。");
+        showError("WebSocket 接続エラーが発生しました。サーバー（ポート8766）がまだ起動準備中か、接続先 (" + curTarget + ") が拒否されました。数秒後に再度『マイク開始』をお試しください。");
         stopRecording();
       };
 
@@ -1567,6 +1567,17 @@
       } catch (e) {
         console.warn("localStorage style restore error:", e);
       }
+    }
+
+    // サーバーがまだ起動準備中の場合、バックグラウンドで自動リトライ
+    if (!serverCfgLoaded) {
+      setTimeout(() => {
+        if (!window._serverCfgRetryCount) window._serverCfgRetryCount = 0;
+        if (window._serverCfgRetryCount < 8) {
+          window._serverCfgRetryCount++;
+          loadConfigAndStyle();
+        }
+      }, 1500);
     }
 
     updatePreview();

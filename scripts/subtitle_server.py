@@ -130,14 +130,37 @@ def _save_asr_config(cfg: dict) -> None:
     except Exception as exc:
         sys.stderr.write(f"[subtitle_server] asr config save failed ({path}): {exc}\n")
 
+_MIC_HTML_CACHE = {"mtime": 0.0, "content": ""}
+
 def _get_mic_html() -> str:
     if os.path.exists(_MIC_HTML_PATH):
         try:
-            with open(_MIC_HTML_PATH, "r", encoding="utf-8") as f:
-                return f.read()
+            mtime = os.path.getmtime(_MIC_HTML_PATH)
+            if mtime != _MIC_HTML_CACHE["mtime"] or not _MIC_HTML_CACHE["content"]:
+                with open(_MIC_HTML_PATH, "r", encoding="utf-8") as f:
+                    _MIC_HTML_CACHE["content"] = f.read()
+                _MIC_HTML_CACHE["mtime"] = mtime
+            return _MIC_HTML_CACHE["content"]
         except OSError:
             pass
     return "<!doctype html><title>Mic</title><p>mic_page.html not found</p>"
+
+import urllib.parse
+
+def _is_safe_origin(origin: str | None, host_header: str | None) -> bool:
+    if not origin:
+        return True
+    parsed = urllib.parse.urlparse(origin)
+    ohost = (parsed.hostname or "").lower()
+    if ohost in ("localhost", "127.0.0.1", "::1"):
+        return True
+    if ohost.startswith("192.168.") or ohost.startswith("10.") or (ohost.startswith("172.") and 16 <= int(ohost.split(".")[1] or 0) <= 31):
+        return True
+    if host_header:
+        req_host = host_header.split(":")[0].lower()
+        if ohost == req_host:
+            return True
+    return False
 
 OVERLAY_HTML = """<!doctype html>
 <html lang="ja">
@@ -270,7 +293,10 @@ TRANSCRIPT_HTML = """<!doctype html>
     const ev = JSON.parse(e.data);
     if (ev.type !== "refine") return;
     const p = document.createElement("p");
-    p.innerHTML = '<span class="lang">[' + (ev.lang || "?") + ']</span>';
+    const langSpan = document.createElement("span");
+    langSpan.className = "lang";
+    langSpan.textContent = "[" + (ev.lang || "?") + "] ";
+    p.appendChild(langSpan);
     p.appendChild(document.createTextNode(ev.text));
     box.appendChild(p);
     while (box.children.length > 500) { box.removeChild(box.firstChild); }
@@ -280,7 +306,7 @@ TRANSCRIPT_HTML = """<!doctype html>
 """
 
 
-DASHBOARD_HTML = '<!doctype html>\n<html lang="ja">\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>hayamimi</title>\n<link rel="preconnect" href="https://fonts.googleapis.com">\n<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">\n<style>\n  :root {\n    --ink: #0d0f13; --ink-2: #14171d; --line: #2a2f3a;\n    --paper: #ece5d8; --paper-dim: #b0a898;\n    --shu: #e04f2f;\n    --c-ja: #e04f2f; --c-en: #5b7fd4; --c-zh: #d4a13c; --c-ko: #3fae9d; --c-yue: #b06bc6; --c-xx: #7a8194;\n    --mono: "IBM Plex Mono", monospace;\n  }\n  * { box-sizing: border-box; }\n  html, body { height: 100%; }\n  body {\n    margin: 0; background: var(--ink); color: var(--paper);\n    font-family: "Zen Kaku Gothic New", "Yu Gothic UI", sans-serif;\n    background-image:\n      radial-gradient(1200px 500px at 85% -10%, rgba(224,79,47,.07), transparent 60%),\n      repeating-linear-gradient(0deg, transparent 0 2px, rgba(255,255,255,.006) 2px 4px);\n    display: flex; flex-direction: column; overflow: hidden;\n  }\n  header {\n    display: flex; align-items: baseline; gap: 1.1rem;\n    padding: .9rem 1.6rem .7rem; border-bottom: 1px solid var(--line);\n    flex: none;\n  }\n  .logotype { font-family: "Shippori Mincho B1", serif; font-weight: 800;\n    font-size: 1.7rem; letter-spacing: .12em; }\n  .logotype em { font-style: normal; color: var(--shu); }\n  .romaji { font-family: var(--mono); font-size: .72rem; letter-spacing: .3em;\n    color: var(--paper-dim); }\n  .spacer { flex: 1; }\n  .chip { font-family: var(--mono); font-size: .72rem; color: var(--paper-dim);\n    border: 1px solid var(--line); border-radius: 3px; padding: .25rem .6rem; }\n  .chip b { color: var(--paper); font-weight: 600; }\n  #live-dot { width: .55rem; height: .55rem; border-radius: 50%;\n    background: var(--c-xx); align-self: center; }\n  #live-dot.on { background: var(--shu);\n    animation: pulse 1.6s ease-out infinite; }\n  @keyframes pulse {\n    from { box-shadow: 0 0 0 0 rgba(224,79,47,.5); }\n    to { box-shadow: 0 0 0 10px rgba(224,79,47,0); } }\n\n  #partial-strip {\n    flex: none; padding: 1.2rem 1.6rem 1.1rem; min-height: 5.6rem;\n    border-bottom: 1px solid var(--line); background: var(--ink-2);\n    position: relative; overflow: hidden;\n  }\n  #partial-strip::before {\n    content: "いま聞き取り中"; position: absolute; top: .55rem; left: 1.65rem;\n    font-size: .62rem; letter-spacing: .35em; color: var(--paper-dim);\n  }\n  #partial-text {\n    font-family: "Shippori Mincho B1", serif; font-weight: 600;\n    font-size: 1.5rem; line-height: 1.5; margin-top: 1rem; min-height: 2.2rem;\n  }\n  #partial-text.idle { color: var(--paper-dim); opacity: .5; }\n  .caret { display: inline-block; width: .5em; height: 1.05em;\n    background: var(--shu); vertical-align: -0.12em; margin-left: .18em;\n    animation: blink 1s steps(2) infinite; }\n  @keyframes blink { 50% { opacity: 0; } }\n\n  main { flex: 1; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);\n    min-height: 0; }\n  section { display: flex; flex-direction: column; min-height: 0; }\n  section + section { border-left: 1px solid var(--line); }\n  h2 { flex: none; margin: 0; padding: .7rem 1.6rem; font-size: .68rem;\n    font-weight: 700; letter-spacing: .35em; color: var(--paper-dim);\n    border-bottom: 1px solid var(--line); }\n  h2 span { color: var(--shu); }\n  .scroll { flex: 1; overflow-y: auto; padding: 1rem 1.6rem 2rem;\n    scrollbar-width: thin; scrollbar-color: var(--line) transparent; }\n\n  .final-card {\n    display: grid; grid-template-columns: auto 1fr auto; gap: .7rem;\n    align-items: baseline; padding: .55rem 0;\n    border-bottom: 1px dashed rgba(42,47,58,.7);\n    animation: rise .28s cubic-bezier(.2,.9,.3,1) both;\n  }\n  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }\n  .badges { display: flex; gap: .35rem; align-items: center; }\n  .lang-badge { font-family: var(--mono); font-size: .62rem; font-weight: 600;\n    padding: .12rem .42rem; border-radius: 2px; color: var(--ink);\n    letter-spacing: .08em; }\n  .spk { font-family: var(--mono); font-size: .62rem; color: var(--paper-dim);\n    border: 1px solid var(--line); padding: .1rem .34rem; border-radius: 2px; }\n  .final-text { font-size: 1.02rem; line-height: 1.65; }\n  .lat { font-family: var(--mono); font-size: .66rem; color: var(--paper-dim); }\n  .trans-line { grid-column: 2; font-size: .85rem; color: var(--paper-dim);\n    line-height: 1.5; }\n  .trans-line b { font-family: var(--mono); font-size: .6rem; font-weight: 600;\n    color: var(--shu); margin-right: .45em; letter-spacing: .1em; }\n\n  .refine-p { margin: 0 0 1rem; font-family: "Shippori Mincho B1", serif;\n    font-weight: 600; font-size: 1.02rem; line-height: 1.9;\n    animation: rise .3s ease both; }\n  .refine-p .meta { font-family: var(--mono); font-size: .62rem; font-weight: 400;\n    color: var(--paper-dim); display: block; margin-bottom: .18rem;\n    letter-spacing: .12em; }\n  .refine-p .meta i { font-style: normal; color: var(--shu); }\n\n  footer { flex: none; display: flex; gap: 1.4rem; padding: .5rem 1.6rem;\n    border-top: 1px solid var(--line); font-family: var(--mono);\n    font-size: .66rem; color: var(--paper-dim); }\n  @media (max-width: 860px) { main { grid-template-columns: 1fr; }\n    section + section { border-left: 0; border-top: 1px solid var(--line); } }\n</style>\n<body>\n<header>\n  <div id="live-dot"></div>\n  <div class="logotype">早<em>耳</em></div>\n  <div class="romaji">hayamimi</div>\n  <div class="spacer"></div>\n  <div class="chip">確定 <b id="n-finals">0</b></div>\n  <div class="chip">平均応答 <b id="mean-lat">&ndash;</b> ms</div>\n  <div class="chip">言語 <b id="langs-seen">&ndash;</b></div>\n</header>\n\n<div id="partial-strip">\n  <div id="partial-text" class="idle">マイクの音声を待っています<span class="caret"></span></div>\n</div>\n\n<main>\n  <section>\n    <h2>確定フィード <span>LIVE</span></h2>\n    <div class="scroll" id="feed"></div>\n  </section>\n  <section>\n    <h2>清書 <span>REFINED</span></h2>\n    <div class="scroll" id="refined"></div>\n  </section>\n</main>\n\n<footer>\n  <div id="conn">connecting&hellip;</div>\n  <div>overlay: /</div>\n  <div>transcript: /transcript</div>\n</footer>\n\n<script>\n  const LANG_COLOR = { ja: "var(--c-ja)", en: "var(--c-en)", zh: "var(--c-zh)",\n                       ko: "var(--c-ko)", yue: "var(--c-yue)" };\n  const feed = document.getElementById("feed");\n  const refined = document.getElementById("refined");\n  const partial = document.getElementById("partial-text");\n  const dot = document.getElementById("live-dot");\n  let finals = 0, latSum = 0, langs = new Set(), lastCard = null, idleTimer = null;\n\n  function badge(lang) {\n    const b = document.createElement("span");\n    b.className = "lang-badge";\n    b.style.background = LANG_COLOR[lang] || "var(--c-xx)";\n    b.textContent = lang || "??";\n    return b;\n  }\n  function stick(el) { el.scrollTop = el.scrollHeight; }\n\n  const es = new EventSource("/events");\n  es.onopen = () => { document.getElementById("conn").textContent = "connected"; dot.classList.add("on"); };\n  es.onerror = () => { document.getElementById("conn").textContent = "reconnecting…"; dot.classList.remove("on"); };\n  es.onmessage = (e) => {\n    const ev = JSON.parse(e.data);\n    if (ev.type === "partial") {\n      partial.classList.remove("idle");\n      partial.textContent = ev.text;\n      const c = document.createElement("span"); c.className = "caret";\n      partial.appendChild(c);\n      clearTimeout(idleTimer);\n      idleTimer = setTimeout(() => partial.classList.add("idle"), 4000);\n    } else if (ev.type === "final") {\n      const card = document.createElement("div"); card.className = "final-card";\n      const badges = document.createElement("div"); badges.className = "badges";\n      badges.appendChild(badge(ev.lang));\n      if (ev.speaker) { const s = document.createElement("span");\n        s.className = "spk"; s.textContent = ev.speaker; badges.appendChild(s); }\n      const t = document.createElement("div"); t.className = "final-text";\n      t.textContent = ev.text;\n      const lat = document.createElement("div"); lat.className = "lat";\n      lat.textContent = ev.latency_ms != null ? Math.round(ev.latency_ms) + "ms" : "";\n      card.append(badges, t, lat);\n      feed.appendChild(card); lastCard = card; stick(feed);\n      while (feed.children.length > 300) { feed.removeChild(feed.firstChild); }\n      finals++; langs.add(ev.lang);\n      if (ev.latency_ms != null) latSum += ev.latency_ms;\n      document.getElementById("n-finals").textContent = finals;\n      document.getElementById("mean-lat").textContent = Math.round(latSum / finals);\n      document.getElementById("langs-seen").textContent = [...langs].join(" ");\n    } else if (ev.type === "translation") {\n      if (!lastCard) return;\n      const tr = document.createElement("div"); tr.className = "trans-line";\n      const b = document.createElement("b"); b.textContent = "→" + ev.lang;\n      tr.appendChild(b); tr.appendChild(document.createTextNode(ev.text));\n      lastCard.appendChild(tr); stick(feed);\n    } else if (ev.type === "refine") {\n      const p = document.createElement("p"); p.className = "refine-p";\n      const meta = document.createElement("span"); meta.className = "meta";\n      const spk = ev.speaker ? ev.speaker + " · " : "";\n      meta.innerHTML = spk + "<i>" + (ev.lang || "?") + "</i>";\n      p.appendChild(meta); p.appendChild(document.createTextNode(ev.text));\n      refined.appendChild(p); stick(refined);\n      while (refined.children.length > 200) { refined.removeChild(refined.firstChild); }\n    }\n  };\n</script>\n</body>\n</html>\n'
+DASHBOARD_HTML = '<!doctype html>\n<html lang="ja">\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>hayamimi</title>\n<link rel="preconnect" href="https://fonts.googleapis.com">\n<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">\n<style>\n  :root {\n    --ink: #0d0f13; --ink-2: #14171d; --line: #2a2f3a;\n    --paper: #ece5d8; --paper-dim: #b0a898;\n    --shu: #e04f2f;\n    --c-ja: #e04f2f; --c-en: #5b7fd4; --c-zh: #d4a13c; --c-ko: #3fae9d; --c-yue: #b06bc6; --c-xx: #7a8194;\n    --mono: "IBM Plex Mono", monospace;\n  }\n  * { box-sizing: border-box; }\n  html, body { height: 100%; }\n  body {\n    margin: 0; background: var(--ink); color: var(--paper);\n    font-family: "Zen Kaku Gothic New", "Yu Gothic UI", sans-serif;\n    background-image:\n      radial-gradient(1200px 500px at 85% -10%, rgba(224,79,47,.07), transparent 60%),\n      repeating-linear-gradient(0deg, transparent 0 2px, rgba(255,255,255,.006) 2px 4px);\n    display: flex; flex-direction: column; overflow: hidden;\n  }\n  header {\n    display: flex; align-items: baseline; gap: 1.1rem;\n    padding: .9rem 1.6rem .7rem; border-bottom: 1px solid var(--line);\n    flex: none;\n  }\n  .logotype { font-family: "Shippori Mincho B1", serif; font-weight: 800;\n    font-size: 1.7rem; letter-spacing: .12em; }\n  .logotype em { font-style: normal; color: var(--shu); }\n  .romaji { font-family: var(--mono); font-size: .72rem; letter-spacing: .3em;\n    color: var(--paper-dim); }\n  .spacer { flex: 1; }\n  .chip { font-family: var(--mono); font-size: .72rem; color: var(--paper-dim);\n    border: 1px solid var(--line); border-radius: 3px; padding: .25rem .6rem; }\n  .chip b { color: var(--paper); font-weight: 600; }\n  #live-dot { width: .55rem; height: .55rem; border-radius: 50%;\n    background: var(--c-xx); align-self: center; }\n  #live-dot.on { background: var(--shu);\n    animation: pulse 1.6s ease-out infinite; }\n  @keyframes pulse {\n    from { box-shadow: 0 0 0 0 rgba(224,79,47,.5); }\n    to { box-shadow: 0 0 0 10px rgba(224,79,47,0); } }\n\n  #partial-strip {\n    flex: none; padding: 1.2rem 1.6rem 1.1rem; min-height: 5.6rem;\n    border-bottom: 1px solid var(--line); background: var(--ink-2);\n    position: relative; overflow: hidden;\n  }\n  #partial-strip::before {\n    content: "いま聞き取り中"; position: absolute; top: .55rem; left: 1.65rem;\n    font-size: .62rem; letter-spacing: .35em; color: var(--paper-dim);\n  }\n  #partial-text {\n    font-family: "Shippori Mincho B1", serif; font-weight: 600;\n    font-size: 1.5rem; line-height: 1.5; margin-top: 1rem; min-height: 2.2rem;\n  }\n  #partial-text.idle { color: var(--paper-dim); opacity: .5; }\n  .caret { display: inline-block; width: .5em; height: 1.05em;\n    background: var(--shu); vertical-align: -0.12em; margin-left: .18em;\n    animation: blink 1s steps(2) infinite; }\n  @keyframes blink { 50% { opacity: 0; } }\n\n  main { flex: 1; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);\n    min-height: 0; }\n  section { display: flex; flex-direction: column; min-height: 0; }\n  section + section { border-left: 1px solid var(--line); }\n  h2 { flex: none; margin: 0; padding: .7rem 1.6rem; font-size: .68rem;\n    font-weight: 700; letter-spacing: .35em; color: var(--paper-dim);\n    border-bottom: 1px solid var(--line); }\n  h2 span { color: var(--shu); }\n  .scroll { flex: 1; overflow-y: auto; padding: 1rem 1.6rem 2rem;\n    scrollbar-width: thin; scrollbar-color: var(--line) transparent; }\n\n  .final-card {\n    display: grid; grid-template-columns: auto 1fr auto; gap: .7rem;\n    align-items: baseline; padding: .55rem 0;\n    border-bottom: 1px dashed rgba(42,47,58,.7);\n    animation: rise .28s cubic-bezier(.2,.9,.3,1) both;\n  }\n  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }\n  .badges { display: flex; gap: .35rem; align-items: center; }\n  .lang-badge { font-family: var(--mono); font-size: .62rem; font-weight: 600;\n    padding: .12rem .42rem; border-radius: 2px; color: var(--ink);\n    letter-spacing: .08em; }\n  .spk { font-family: var(--mono); font-size: .62rem; color: var(--paper-dim);\n    border: 1px solid var(--line); padding: .1rem .34rem; border-radius: 2px; }\n  .final-text { font-size: 1.02rem; line-height: 1.65; }\n  .lat { font-family: var(--mono); font-size: .66rem; color: var(--paper-dim); }\n  .trans-line { grid-column: 2; font-size: .85rem; color: var(--paper-dim);\n    line-height: 1.5; }\n  .trans-line b { font-family: var(--mono); font-size: .6rem; font-weight: 600;\n    color: var(--shu); margin-right: .45em; letter-spacing: .1em; }\n\n  .refine-p { margin: 0 0 1rem; font-family: "Shippori Mincho B1", serif;\n    font-weight: 600; font-size: 1.02rem; line-height: 1.9;\n    animation: rise .3s ease both; }\n  .refine-p .meta { font-family: var(--mono); font-size: .62rem; font-weight: 400;\n    color: var(--paper-dim); display: block; margin-bottom: .18rem;\n    letter-spacing: .12em; }\n  .refine-p .meta i { font-style: normal; color: var(--shu); }\n\n  footer { flex: none; display: flex; gap: 1.4rem; padding: .5rem 1.6rem;\n    border-top: 1px solid var(--line); font-family: var(--mono);\n    font-size: .66rem; color: var(--paper-dim); }\n  @media (max-width: 860px) { main { grid-template-columns: 1fr; }\n    section + section { border-left: 0; border-top: 1px solid var(--line); } }\n</style>\n<body>\n<header>\n  <div id="live-dot"></div>\n  <div class="logotype">早<em>耳</em></div>\n  <div class="romaji">hayamimi</div>\n  <div class="spacer"></div>\n  <div class="chip">確定 <b id="n-finals">0</b></div>\n  <div class="chip">平均応答 <b id="mean-lat">&ndash;</b> ms</div>\n  <div class="chip">言語 <b id="langs-seen">&ndash;</b></div>\n</header>\n\n<div id="partial-strip">\n  <div id="partial-text" class="idle">マイクの音声を待っています<span class="caret"></span></div>\n</div>\n\n<main>\n  <section>\n    <h2>確定フィード <span>LIVE</span></h2>\n    <div class="scroll" id="feed"></div>\n  </section>\n  <section>\n    <h2>清書 <span>REFINED</span></h2>\n    <div class="scroll" id="refined"></div>\n  </section>\n</main>\n\n<footer>\n  <div id="conn">connecting&hellip;</div>\n  <div>overlay: /</div>\n  <div>transcript: /transcript</div>\n</footer>\n\n<script>\n  const LANG_COLOR = { ja: "var(--c-ja)", en: "var(--c-en)", zh: "var(--c-zh)",\n                       ko: "var(--c-ko)", yue: "var(--c-yue)" };\n  const feed = document.getElementById("feed");\n  const refined = document.getElementById("refined");\n  const partial = document.getElementById("partial-text");\n  const dot = document.getElementById("live-dot");\n  let finals = 0, latSum = 0, langs = new Set(), lastCard = null, idleTimer = null;\n\n  function badge(lang) {\n    const b = document.createElement("span");\n    b.className = "lang-badge";\n    b.style.background = LANG_COLOR[lang] || "var(--c-xx)";\n    b.textContent = lang || "??";\n    return b;\n  }\n  function stick(el) { el.scrollTop = el.scrollHeight; }\n\n  const es = new EventSource("/events");\n  es.onopen = () => { document.getElementById("conn").textContent = "connected"; dot.classList.add("on"); };\n  es.onerror = () => { document.getElementById("conn").textContent = "reconnecting…"; dot.classList.remove("on"); };\n  es.onmessage = (e) => {\n    const ev = JSON.parse(e.data);\n    if (ev.type === "partial") {\n      partial.classList.remove("idle");\n      partial.textContent = ev.text;\n      const c = document.createElement("span"); c.className = "caret";\n      partial.appendChild(c);\n      clearTimeout(idleTimer);\n      idleTimer = setTimeout(() => partial.classList.add("idle"), 4000);\n    } else if (ev.type === "final") {\n      const card = document.createElement("div"); card.className = "final-card";\n      const badges = document.createElement("div"); badges.className = "badges";\n      badges.appendChild(badge(ev.lang));\n      if (ev.speaker) { const s = document.createElement("span");\n        s.className = "spk"; s.textContent = ev.speaker; badges.appendChild(s); }\n      const t = document.createElement("div"); t.className = "final-text";\n      t.textContent = ev.text;\n      const lat = document.createElement("div"); lat.className = "lat";\n      lat.textContent = ev.latency_ms != null ? Math.round(ev.latency_ms) + "ms" : "";\n      card.append(badges, t, lat);\n      feed.appendChild(card); lastCard = card; stick(feed);\n      while (feed.children.length > 300) { feed.removeChild(feed.firstChild); }\n      finals++; langs.add(ev.lang);\n      if (ev.latency_ms != null) latSum += ev.latency_ms;\n      document.getElementById("n-finals").textContent = finals;\n      document.getElementById("mean-lat").textContent = Math.round(latSum / finals);\n      document.getElementById("langs-seen").textContent = [...langs].join(" ");\n    } else if (ev.type === "translation") {\n      if (!lastCard) return;\n      const tr = document.createElement("div"); tr.className = "trans-line";\n      const b = document.createElement("b"); b.textContent = "→" + ev.lang;\n      tr.appendChild(b); tr.appendChild(document.createTextNode(ev.text));\n      lastCard.appendChild(tr); stick(feed);\n    } else if (ev.type === "refine") {\n      const p = document.createElement("p"); p.className = "refine-p";\n      const meta = document.createElement("span"); meta.className = "meta";\n      const spk = ev.speaker ? ev.speaker + " · " : "";\n      if (ev.speaker) { meta.appendChild(document.createTextNode(ev.speaker + " · ")); } const itag = document.createElement("i"); itag.textContent = ev.lang || "?"; meta.appendChild(itag);\n      p.appendChild(meta); p.appendChild(document.createTextNode(ev.text));\n      refined.appendChild(p); stick(refined);\n      while (refined.children.length > 200) { refined.removeChild(refined.firstChild); }\n    }\n  };\n</script>\n</body>\n</html>\n'
 
 
 # cap on a POST body for the live-dictionary endpoints below: these are
@@ -581,7 +607,7 @@ class SubtitleServer:
     @controls.setter
     def controls(self, val):
         self._controls = val
-        if val is not None:
+        if val is not None and "PYTEST_CURRENT_TEST" not in os.environ:
             saved = _get_saved_asr_config()
             if saved:
                 try:
@@ -631,58 +657,66 @@ class SubtitleServer:
                     raise
 
             def do_GET(self):
-                if self.path == "/events":
+                req_path = urllib.parse.urlsplit(self.path).path
+                origin = self.headers.get("Origin")
+                if req_path == "/events":
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
                     self.send_header("Cache-Control", "no-cache")
-                    self.send_header("Access-Control-Allow-Origin", "*")
+                    if origin and _is_safe_origin(origin, self.headers.get("Host")):
+                        self.send_header("Access-Control-Allow-Origin", origin)
+                        self.send_header("Vary", "Origin")
                     self.end_headers()
                     q = server.subscribe()
                     try:
                         while True:
-                            data = q.get()
-                            self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
-                            self.wfile.flush()
+                            try:
+                                data = q.get(timeout=15.0)
+                                self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+                                self.wfile.flush()
+                            except queue.Empty:
+                                self.wfile.write(b": keepalive\n\n")
+                                self.wfile.flush()
                     except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError, Exception):
                         pass
                     finally:
                         server.unsubscribe(q)
-                elif self.path == "/dashboard":
+                elif req_path == "/dashboard":
                     body = DASHBOARD_HTML.encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
-                elif self.path in ("/mic", "/settings"):
+                elif req_path in ("/mic", "/settings"):
                     body = _get_mic_html().encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
-                elif self.path == "/overlay-style":
+                elif req_path == "/overlay-style":
                     self._json(200, _get_overlay_style())
-                elif self.path == "/transcript":
+                elif req_path == "/transcript":
                     body = TRANSCRIPT_HTML.encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
-                elif self.path == "/replacements":
+                elif req_path == "/replacements":
                     if server.asr is None:
                         self._json(404, {"error": "no ASR engine attached"})
                         return
                     self._json(200, dict(server.asr._replacements))
-                elif self.path == "/itn_overrides":
+                elif req_path == "/itn_overrides":
                     if server.asr is None:
                         self._json(404, {"error": "no ASR engine attached"})
                         return
                     overrides = server.asr._itn_overrides
                     self._json(200, {"exclude": sorted(overrides.exclude),
                                      "force": overrides.force})
-                elif self.path == "/config":
+                elif req_path == "/config":
                     if server.controls is None:
                         self._json(404, {"error": "no runtime controls attached"})
                         return
@@ -696,7 +730,12 @@ class SubtitleServer:
                     self.wfile.write(body)
 
             def do_POST(self):
-                if self.path == "/reset":
+                req_path = urllib.parse.urlsplit(self.path).path
+                ctype = self.headers.get("Content-Type", "").lower()
+                if not ctype.startswith("application/json") and req_path != "/reset":
+                    self._json(415, {"error": "Content-Type must be application/json"})
+                    return
+                if req_path == "/reset":
                     if server.controls is None:
                         self._json(404, {"error": "no runtime controls attached"})
                         return
@@ -714,7 +753,7 @@ class SubtitleServer:
                         # docstring) -- 202 Accepted, not a failure.
                         self._json(202, {"ok": False, "pending": True})
                     return
-                if self.path == "/overlay-style":
+                if req_path == "/overlay-style":
                     length = int(self.headers.get("Content-Length") or 0)
                     if length <= 0 or length > _MAX_DICT_BODY_BYTES:
                         self._json(400, {"error": "missing or oversized body"})
@@ -734,10 +773,10 @@ class SubtitleServer:
                     server.publish({"type": "style_update", "style": cur})
                     self._json(200, {"ok": True, "style": cur})
                     return
-                if self.path not in ("/replacements", "/itn_overrides", "/config"):
+                if req_path not in ("/replacements", "/itn_overrides", "/config"):
                     self._json(404, {"error": "not found"})
                     return
-                if self.path == "/config":
+                if req_path == "/config":
                     if server.controls is None:
                         self._json(404, {"error": "no runtime controls attached"})
                         return
@@ -757,10 +796,10 @@ class SubtitleServer:
                 if not isinstance(payload, dict):
                     self._json(400, {"error": "body must be a JSON object"})
                     return
-                if self.path == "/replacements":
+                if req_path == "/replacements":
                     server.asr.set_replacements(payload)
                     self._json(200, {"ok": True})
-                elif self.path == "/itn_overrides":
+                elif req_path == "/itn_overrides":
                     exclude = payload.get("exclude") or []
                     force = payload.get("force") or {}
                     if not isinstance(exclude, list) or not isinstance(force, dict):
@@ -782,7 +821,10 @@ class SubtitleServer:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Access-Control-Allow-Origin", "*")
+                origin = self.headers.get("Origin")
+                if origin and _is_safe_origin(origin, self.headers.get("Host")):
+                    self.send_header("Access-Control-Allow-Origin", origin)
+                    self.send_header("Vary", "Origin")
                 self.end_headers()
                 self.wfile.write(body)
 

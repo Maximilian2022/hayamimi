@@ -165,7 +165,10 @@ def download_and_extract_tarbz2(url: str, dest_dir: str, label: str) -> None:
         # e.g. omnilingual's release name differs from our shorter dir name).
         members = tf.getmembers()
         top = members[0].name.split("/")[0]
-        tf.extractall(MODELS_DIR)
+        if hasattr(tarfile, "data_filter"):
+            tf.extractall(MODELS_DIR, filter="data")
+        else:
+            tf.extractall(MODELS_DIR)
     extracted = os.path.join(MODELS_DIR, top)
     if extracted != target:
         os.replace(extracted, target)
