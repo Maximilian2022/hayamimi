@@ -64,7 +64,7 @@ Whisper系・クラウドSTT API・他のローカルモデルとの比較（hay
 
 ## オリジナル（Fork元）との主な違い・拡張機能
 
-本リポジトリ（hayamimi）は、[oboroge0/hayamimi](https://github.com/oboroge0/hayamimi) をベースに、GUI操作性を追加した Fork 版です。
+本リポジトリ（hayamimi）は、[oboroge0/hayamimi](https://github.com/oboroge0/hayamimi) をベースに、AIを用いてGUI操作性を追加した Fork 版です。
 
 | 項目 | オリジナル (Upstream) | hayamimi (本Fork版) |
 | :--- | :--- | :--- |
@@ -168,9 +168,8 @@ with RoutedASR(en_tier="v2", punct_model="4class", on_event=hub.publish) as asr:
 実機での通し確認はまだできていません。動いた・動かなかったの報告を歓迎します。~~
 
 > **【hayamimi Fork版の変更点】**  
-> **Python 3.11 〜 3.14** に対応しています（CIにて 3.11 / 3.14 両バージョンのテストを常時実行）。  
-> 本ツールは配布を想定しており、配布先マシンに Python や 3.14 が事前インストールされていなくても、付属の `setup.ps1` またはランチャー（`start.bat` / `start.vbs`）を実行することで、高速ツール `uv` を介して自動的に専用 Python 仮想環境（`.venv`）が完全自動構築されます。  
-> また、過去バージョン（Python 3.11 環境）をご利用中の既存ユーザー様も、ランチャーの「本体のアップデート」機能により、既存の `.venv` 環境を一切破壊することなく最新コードと依存関係の差分更新が安全に適用されます。
+> **Python 3.14** に対応しています。  
+> 本ツールはマシンに Python や 3.14 が事前インストールされていなくても、付属の `setup.ps1` またはランチャー（`start.bat` / `start.vbs`）を実行することで、高速ツール `uv` を介して自動的に専用 Python 仮想環境（`.venv`）が完全自動構築されます。  
 
 ## クイックスタート
 

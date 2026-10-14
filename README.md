@@ -72,7 +72,7 @@ models -- including the languages where hayamimi loses -- is in
 
 ## Differences from Upstream (Original)
 
-This repository (hayamimi) is an enhanced fork of [oboroge0/hayamimi](https://github.com/oboroge0/hayamimi), designed for turnkey distribution, zero-command-line user experience, and robust production stability for streamers and end users.
+This repository (hayamimi) is an enhanced fork of [oboroge0/hayamimi](https://github.com/oboroge0/hayamimi), designed for turnkey distribution, zero-command-line user experience, and robust production stability for streamers and end users, with using AI.
 
 | Category | Upstream (Original) | hayamimi (This Fork) |
 | :--- | :--- | :--- |
@@ -177,9 +177,8 @@ macOS/Linux are expected to work (all runtimes are cross-platform) but are
 not yet CI-tested end to end — reports welcome.~~
 
 > **[hayamimi Fork Changes]**  
-> Fully supports **Python 3.11 through 3.14** (continuously verified in CI across both 3.11 and 3.14).  
-> Designed for turnkey distribution: even if Python (or 3.14) is not installed on the destination machine, running `setup.ps1` or the GUI launcher (`start.bat` / `start.vbs`) automatically provisions a self-contained `.venv` environment using `uv`.  
-> Existing users running on Python 3.11 can safely upgrade via the GUI launcher's "Update App" feature without breaking their existing `.venv` or requiring manual reinstallation.
+> Fully supports **Python 3.14**.  
+> Designed for turnkey distribution: even if Python (or 3.14) is not installed on the  machine, running `setup.ps1` or the GUI launcher (`start.bat` / `start.vbs`) automatically provisions a self-contained `.venv` environment using `uv`.  
 
 ## Quickstart
 
