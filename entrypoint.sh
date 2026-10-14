@@ -16,11 +16,10 @@ if [ ! -d "$MODELS_DIR" ] || [ -z "$(ls -A "$MODELS_DIR" 2>/dev/null)" ] || [ ! 
     NEED_DOWNLOAD=1
 fi
 
-if [[ "$*" == *"--translate"* ]]; then
-    DOWNLOAD_ARGS+=("--translators")
-    if [ ! -d "$MODELS_DIR/mojicast-fugumt-ja-en-ct2" ] || [ ! -d "$MODELS_DIR/mojicast-m2m100-ct2" ]; then
-        NEED_DOWNLOAD=1
-    fi
+# 翻訳モデル (WebUIやダッシュボードで後から動的に有効化されるため標準準備)
+DOWNLOAD_ARGS+=("--translators")
+if [ ! -d "$MODELS_DIR/mojicast-fugumt-ja-en-ct2" ] || [ ! -d "$MODELS_DIR/mojicast-m2m100-ct2" ]; then
+    NEED_DOWNLOAD=1
 fi
 
 if [[ "$*" == *"--en-tier v2"* ]] || [[ "$*" == *"--en-tier=v2"* ]]; then

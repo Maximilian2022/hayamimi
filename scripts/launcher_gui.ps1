@@ -1,4 +1,4 @@
-﻿$version = "GUI v1.3.2"
+$version = "GUI v1.3.2"
 $script:AppVersion = "1.3.2"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -311,8 +311,14 @@ function Test-ModelsReady {
     $modelsDir = Join-Path $ProjectRoot "models"
     $coreRzKey = Join-Path $modelsDir "sherpa-onnx-zipformer-ja-en-reazonspeech-2025-01-17\tokens.txt"
     $coreLidKey = Join-Path $modelsDir "sherpa-onnx-whisper-tiny\tiny-tokens.txt"
+    $fuguKey = Join-Path $modelsDir "mojicast-fugumt-ja-en-ct2\source.spm"
+    $m2mKey = Join-Path $modelsDir "mojicast-m2m100-ct2\model.bin"
+    $punct4Key = Join-Path $modelsDir "punct-ja-4class-permissive\punct_4class.onnx"
     return (Test-Path $coreRzKey) -and ((Get-Item $coreRzKey -Force).Length -gt 0) -and `
-           (Test-Path $coreLidKey) -and ((Get-Item $coreLidKey -Force).Length -gt 0)
+           (Test-Path $coreLidKey) -and ((Get-Item $coreLidKey -Force).Length -gt 0) -and `
+           (Test-Path $fuguKey) -and ((Get-Item $fuguKey -Force).Length -gt 0) -and `
+           (Test-Path $m2mKey) -and ((Get-Item $m2mKey -Force).Length -gt 0) -and `
+           (Test-Path $punct4Key) -and ((Get-Item $punct4Key -Force).Length -gt 0)
 }
 
 # --- 案3: 自律セルフヒーリング (モデル実体サイズ検証 & 自動修復) ---
