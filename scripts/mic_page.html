@@ -809,6 +809,17 @@
           <div class="desc">通常は「自動検出」でOK。日本語のみ話す場合は固定すると切り替え処理が省かれます。</div>
         </div>
 
+        <div class="form-group" style="margin-top: 0.6rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label for="cfg-speaker-profile">話者特化プロファイル (活舌・癖補正):</label>
+            <a href="/profile" target="_blank" style="font-size: 0.72rem; color: #38BDF8; text-decoration: none;">⚙ 作成・管理 ↗</a>
+          </div>
+          <select id="cfg-speaker-profile">
+            <option value="">なし (標準認識)</option>
+          </select>
+          <div class="desc">特定の話者の発声の癖やゲーム内固有名詞を自動補正する置換辞書を適用します。</div>
+        </div>
+
         <div class="form-row">
           <div>
             <label>リアルタイム翻訳 (話した音声を翻訳):</label>
@@ -1831,7 +1842,75 @@
     }
   }
 
+  // --- 話者特化プロファイル連携 ---
+  async function loadSpeakerProfiles() {
+    const sel = document.getElementById("cfg-speaker-profile");
+    if (!sel) return;
+    try {
+      const res = await fetch("/api/profiles");
+      if (res.ok) {
+        const profs = await res.json();
+        const currentVal = localStorage.getItem("hayamimi_speaker_profile") || "";
+        sel.innerHTML = '<option value="">なし (標準認識)</option>';
+        profs.forEach(p => {
+          const opt = document.createElement("option");
+          opt.value = p.speaker_id;
+          opt.textContent = `${p.display_name} (${p.speaker_id})`;
+          if (p.speaker_id === currentVal) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        if (currentVal) {
+          applySpeakerProfile(currentVal, false);
+        }
+      }
+    } catch (e) {
+      console.warn("loadSpeakerProfiles error:", e);
+    }
+  }
+
+  async function applySpeakerProfile(speakerId, notify = true) {
+    const saveMsg = document.getElementById("save-msg");
+    if (!speakerId) {
+      try {
+        await fetch("/replacements", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        localStorage.removeItem("hayamimi_speaker_profile");
+        if (notify && saveMsg) {
+          saveMsg.textContent = "話者プロファイルを解除しました（標準辞書）";
+          saveMsg.style.display = "block";
+          setTimeout(() => { saveMsg.style.display = "none"; saveMsg.textContent = "設定を保存しました"; }, 3500);
+        }
+      } catch (e) {}
+      return;
+    }
+    try {
+      const res = await fetch("/api/profiles/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ speaker_id: speakerId }),
+      });
+      if (res.ok) {
+        localStorage.setItem("hayamimi_speaker_profile", speakerId);
+        if (notify && saveMsg) {
+          saveMsg.textContent = `話者プロファイル「${speakerId}」を適用しました！`;
+          saveMsg.style.display = "block";
+          setTimeout(() => { saveMsg.style.display = "none"; saveMsg.textContent = "設定を保存しました"; }, 3500);
+        }
+      }
+    } catch (e) {
+      console.error("applySpeakerProfile error:", e);
+    }
+  }
+
+  document.getElementById("cfg-speaker-profile").addEventListener("change", (e) => {
+    applySpeakerProfile(e.target.value, true);
+  });
+
   loadConfigAndStyle();
+  loadSpeakerProfiles();
 </script>
 
 </body>

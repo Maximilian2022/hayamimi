@@ -25,10 +25,22 @@ nginx/ssl/*
 # ==============================================================================
 scratch/
 logs/
-tools/
+tools/*
+!tools/profile_builder/
 config/*
 !config/.gitkeep
 *.log
+
+# ==============================================================================
+# Speaker Profiles & Replacements (話者特化プロファイル・置換辞書・個人データ)
+# ==============================================================================
+profiles/
+!profiles/.gitkeep
+config/profiles/
+!config/profiles/.gitkeep
+*.profile.json
+*_replace.txt
+*gemini_key*
 
 # ==============================================================================
 # ML / ASR Models & Heavy Cache (大容量モデル・重み・キャッシュ)
@@ -79,6 +91,7 @@ htmlcov/
 .claude/
 .playwright-mcp/
 .agents/
+skills-lock.json
 
 # AI Agent External Memory & Remediation History (一時外部記憶・長期記憶・履歴)
 docs/memo.md

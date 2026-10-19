@@ -1,0 +1,221 @@
+# -*- coding: utf-8 -*-
+"""Gemini Multimodal Analyzer for Speaker Profile Builder."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+from typing import Callable, Optional
+
+from google import genai
+from google.genai import types
+
+from tools.profile_builder.profile_model import ExtractedSection, ReplacementRule, SpeakerProfile
+from tools.profile_builder.youtube_fetcher import VideoMetadata
+
+logger = logging.getLogger("hayamimi.gemini_analyzer")
+
+DEFAULT_KEY_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "config",
+    "gemini_key.txt",
+)
+
+SYSTEM_INSTRUCTION = """\
+あなたは音声認識（ASR）精度向上のための専門AIアナリストです。
+hayamimi (ReazonSpeech) が話者の生音声を聞いて誤認識したテキストと、実際の生音声をマルチモーダルに突合し、
+話者の「活舌の癖・音素のズレ・特有の言い回し・ゲーム内固有名詞」を補正するための安全な置換辞書とプロファイルを生成してください。
+
+【厳格に遵守すべき4つの分析Skill】
+
+■ Skill 1: 音素・活舌のズレ検出
+・話者の実際の発音と、ローカルASRの認識テキストを耳（音声）と目（テキスト）で照合します。
+・サ行がタ行に化ける（舌足らず）、語尾の母音脱落、早口での助詞融合などのパターンを特定してください。
+
+■ Skill 2: 過剰置換ガード（副作用防止ルール）※最重要！
+・【絶対禁止】: 1〜2文字の一般的な単語や助詞（「と」→「そ」、「は」→「が」等）の単体置換は絶対に生成しないでください。他の文脈を大量に破壊します。
+・【必須原則】: 必ず前後の助詞や文脈を含んだ「3文字以上のフレーズ単位」（例: 「勝てないとうですね」→「勝てないそうですね」）で置換ルールを生成してください。
+・日常会話で頻出する正常な単語を、話者の癖と誤認して壊さないよう慎重に判定してください。
+
+■ Skill 3: ゲーム固有名詞・文脈突合
+・動画タイトルや概要欄、タグに含まれるゲームタイトル、キャラクター名、スキル名、地名等のキーワードを事前知識として突合してください。
+・固有名詞が日常的な同音異義語に誤変換されている箇所を正確に置換ルール化してください。
+
+■ Skill 4: 構造化出力
+・余計な挨拶や解説文は出力せず、指定されたJSONスキーマに厳格に従ったデータのみを出力してください。
+"""
+
+
+def load_gemini_api_key(api_key: Optional[str] = None, key_file: str = DEFAULT_KEY_FILE) -> Optional[str]:
+    """Retrieve Gemini API key from explicit argument, environment variable, or key file."""
+    if api_key and api_key.strip():
+        return api_key.strip()
+
+    env_key = os.environ.get("GEMINI_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+
+    if os.path.isfile(key_file):
+        try:
+            with open(key_file, "r", encoding="utf-8") as f:
+                k = f.read().strip()
+                if k:
+                    return k
+        except Exception as e:
+            logger.warning("Failed to read Gemini key from %s: %s", key_file, e)
+
+    return None
+
+
+def save_gemini_api_key(api_key: str, key_file: str = DEFAULT_KEY_FILE) -> None:
+    """Save Gemini API key to persistent config file."""
+    os.makedirs(os.path.dirname(os.path.abspath(key_file)), exist_ok=True)
+    with open(key_file, "w", encoding="utf-8") as f:
+        f.write(api_key.strip())
+    logger.info("Saved Gemini API key to %s", key_file)
+
+
+class GeminiProfileAnalyzer:
+    """Analyzes audio, local ASR text, and metadata using Gemini API."""
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_name: str = "gemini-2.5-flash",
+    ):
+        resolved_key = load_gemini_api_key(api_key)
+        if not resolved_key:
+            raise ValueError(
+                "Gemini API key is required. Set GEMINI_API_KEY environment variable, "
+                "save it to config/gemini_key.txt, or provide it via Web UI."
+            )
+        self.api_key = resolved_key
+        self.model_name = model_name
+        self.client = genai.Client(api_key=self.api_key)
+
+    def analyze(
+        self,
+        audio_wav_path: str,
+        local_asr_text: str,
+        metadata: VideoMetadata,
+        speaker_id: str,
+        display_name: str,
+        extracted_section: Optional[ExtractedSection] = None,
+        existing_profile: Optional[SpeakerProfile] = None,
+        status_callback: Optional[Callable[[str], None]] = None,
+    ) -> SpeakerProfile:
+        """Run multimodal analysis with Gemini API."""
+        if not os.path.isfile(audio_wav_path):
+            raise FileNotFoundError(f"Audio file not found: {audio_wav_path}")
+
+        uploaded_file = None
+        try:
+            if status_callback:
+                status_callback("音声ファイルを Gemini API にアップロード中...")
+
+            # Upload audio file to Gemini File API
+            uploaded_file = self.client.files.upload(
+                file=audio_wav_path,
+                config=types.UploadFileConfig(
+                    mime_type="audio/wav",
+                    display_name=f"speaker_{speaker_id}_sample.wav",
+                ),
+            )
+            logger.info("Uploaded audio file: %s (uri: %s)", uploaded_file.name, uploaded_file.uri)
+
+            existing_context = ""
+            if existing_profile:
+                rules_summary = "\n".join(
+                    [f"- {r.pattern} -> {r.replacement} ({r.reason or ''})" for r in existing_profile.replacements[:50]]
+                )
+                existing_context = f"""
+【既存のプロファイル情報（追加学習・プロファイル育成モード）】
+- 既存の活舌特徴: {', '.join(existing_profile.articulation_traits)}
+- 登録済みの置換ルール ({len(existing_profile.replacements)} 件):
+{rules_summary}
+
+【追加育成の注意点】
+今回の新しい動画から、既存ルールではカバーされていない「新たな活舌の癖」「ゲーム固有名詞」「人名」を発見してください。
+既存ルールと重複する場合は、より自然な助詞を含むフレーズ（3文字以上）にブラッシュアップしてください。
+"""
+
+            prompt = f"""\
+【対象話者情報】
+- 話者ID: {speaker_id}
+- 表示名: {display_name}
+{existing_context}
+【配信・動画メタデータ】
+- タイトル: {metadata.title}
+- チャンネル: {metadata.channel}
+- 概要欄抜粋: {metadata.description[:1000]}
+- タグ/キーワード: {', '.join(metadata.tags[:30])}
+
+【hayamimi (ReazonSpeech) によるテスト文字起こし結果（誤認識を含む生テキスト）】
+{local_asr_text}
+
+【指示】
+添付された生音声を聞き、上記の誤認識テキストと照合して、
+話者の「活舌の甘さ・癖」および「ゲーム固有名詞の誤変換」を補正する置換ルールを作成してください。
+必ず過剰置換ガード（1〜2文字置換の禁止、3文字以上のフレーズ化）を徹底してください。
+"""
+
+            if status_callback:
+                status_callback("Gemini Flash によるマルチモーダル音声分析・辞書生成中...")
+
+            # Candidate models in case of region/model fallback
+            candidate_models = [self.model_name, "gemini-2.0-flash", "gemini-1.5-flash"]
+            last_err = None
+            response = None
+
+            for model in candidate_models:
+                try:
+                    logger.info("Calling Gemini generate_content with model: %s", model)
+                    response = self.client.models.generate_content(
+                        model=model,
+                        contents=[
+                            uploaded_file,
+                            prompt,
+                        ],
+                        config=types.GenerateContentConfig(
+                            system_instruction=SYSTEM_INSTRUCTION,
+                            response_mime_type="application/json",
+                            response_schema=SpeakerProfile,
+                            temperature=0.2,
+                        ),
+                    )
+                    break
+                except Exception as e:
+                    logger.warning("Failed with model %s: %s", model, e)
+                    last_err = e
+
+            if response is None:
+                raise RuntimeError(f"All Gemini models failed: {last_err}")
+
+            raw_text = response.text
+            data = json.loads(raw_text)
+            profile = SpeakerProfile.model_validate(data)
+
+            # Ensure speaker_id and display_name are preserved
+            profile.speaker_id = speaker_id
+            profile.display_name = display_name
+            if extracted_section:
+                profile.extracted_section = extracted_section
+
+            # Filter out any accidentally short or dangerous patterns
+            safe_rules = profile.filter_safe_replacements(min_len=2)
+            profile.replacements = safe_rules
+
+            if status_callback:
+                status_callback(f"分析完了: {len(profile.replacements)} 件の補正ルールを生成しました。")
+
+            return profile
+
+        finally:
+            # Clean up uploaded audio file from Gemini File API
+            if uploaded_file is not None:
+                try:
+                    self.client.files.delete(name=uploaded_file.name)
+                    logger.info("Cleaned up Gemini uploaded file: %s", uploaded_file.name)
+                except Exception as e:
+                    logger.warning("Failed to delete uploaded file %s: %s", uploaded_file.name, e)

@@ -1,5 +1,5 @@
-$version = "GUI v1.3.2"
-$script:AppVersion = "1.3.2"
+﻿$version = "GUI v1.3.3"
+$script:AppVersion = "1.3.3"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -136,6 +136,7 @@ $ImageName = "hayamimi:latest"
 $MicUrl = "http://localhost:8833/mic"
 $ObsUrl = "http://localhost:8833/"
 $DashboardUrl = "http://localhost:8833/dashboard"
+$ProfileUrl = "http://localhost:8833/profile"
 
 # WPF TextBox メモリ肥大化・描画ハング防止用トリミング設定 (約1,500〜2,000行を維持)
 $script:MaxLogTextLength = 80000
@@ -462,7 +463,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi ランチャー (GUI v1.1.5)"
+        Title="hayamimi ランチャー (GUI v1.3.3)"
         Height="780" Width="780"
         MinHeight="680" MinWidth="720"
         WindowStartupLocation="CenterScreen"
@@ -540,7 +541,7 @@ function Update-ContainerLogFile {
                         <TextBlock x:Name="GpuBadge" Text="⚡ GPU: 検出中..." FontSize="11" Foreground="#10B981" FontWeight="SemiBold"/>
                     </Border>
                     <Border Background="#1E1B4B" CornerRadius="12" Padding="10,5" Margin="0,0,8,0" BorderBrush="#4338CA" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.1.5" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.3.3" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#141B2D" CornerRadius="12" Padding="10,5" BorderBrush="#253350" BorderThickness="1">
                         <TextBlock x:Name="RuntimeBadge" Text="Python venv" FontSize="11" Foreground="#38BDF8" FontWeight="SemiBold"/>
@@ -707,26 +708,32 @@ function Update-ContainerLogFile {
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="Web画面:" FontSize="12" FontWeight="SemiBold" Foreground="#64748B" VerticalAlignment="Center" Margin="0,0,14,0"/>
-                <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <Button x:Name="BtnOpenMic" Background="#152033" BorderBrush="#2563EB" BorderThickness="1" Foreground="#60A5FA" Padding="11,5" FontSize="11.5" Margin="0,0,10,0">
+                <WrapPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button x:Name="BtnOpenMic" Background="#152033" BorderBrush="#2563EB" BorderThickness="1" Foreground="#60A5FA" Padding="11,5" FontSize="11.5" Margin="0,0,10,4">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="🎤" Margin="0,0,6,0" VerticalAlignment="Center"/>
                             <TextBlock Text="マイク入力 (/mic)" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="BtnOpenObs" Background="#152033" BorderBrush="#2563EB" BorderThickness="1" Foreground="#60A5FA" Padding="11,5" FontSize="11.5" Margin="0,0,10,0">
+                    <Button x:Name="BtnOpenObs" Background="#152033" BorderBrush="#2563EB" BorderThickness="1" Foreground="#60A5FA" Padding="11,5" FontSize="11.5" Margin="0,0,10,4">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="📺" Margin="0,0,6,0" VerticalAlignment="Center"/>
                             <TextBlock Text="OBS字幕 (/)" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="BtnOpenDashboard" Background="#152033" BorderBrush="#2563EB" BorderThickness="1" Foreground="#60A5FA" Padding="11,5" FontSize="11.5">
+                    <Button x:Name="BtnOpenDashboard" Background="#152033" BorderBrush="#2563EB" BorderThickness="1" Foreground="#60A5FA" Padding="11,5" FontSize="11.5" Margin="0,0,10,4">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="📊" Margin="0,0,6,0" VerticalAlignment="Center"/>
                             <TextBlock Text="ダッシュボード (/dashboard)" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                </StackPanel>
+                    <Button x:Name="BtnOpenProfile" Background="#152033" BorderBrush="#2563EB" BorderThickness="1" Foreground="#60A5FA" Padding="11,5" FontSize="11.5" Margin="0,0,10,4">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="👤" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="話者プロファイル (/profile)" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </WrapPanel>
             </Grid>
         </Border>
 
@@ -834,6 +841,7 @@ $btnRebuild = $window.FindName("BtnRebuild")
 $btnOpenMic = $window.FindName("BtnOpenMic")
 $btnOpenObs = $window.FindName("BtnOpenObs")
 $btnOpenDashboard = $window.FindName("BtnOpenDashboard")
+$btnOpenProfile = $window.FindName("BtnOpenProfile")
 $logTextBox = $window.FindName("LogTextBox")
 $logScrollViewer = $window.FindName("LogScrollViewer")
 $btnClearLog = $window.FindName("BtnClearLog")
@@ -2994,6 +3002,9 @@ if ($btnUpdateWsl) {
 $btnOpenMic.Add_Click({ Start-Process $MicUrl })
 $btnOpenObs.Add_Click({ Start-Process $ObsUrl })
 $btnOpenDashboard.Add_Click({ Start-Process $DashboardUrl })
+if ($btnOpenProfile) {
+    $btnOpenProfile.Add_Click({ Start-Process $ProfileUrl })
+}
 $btnClearLog.Add_Click({ $logTextBox.Clear() })
 
 if ($btnOpenPythonLog) {

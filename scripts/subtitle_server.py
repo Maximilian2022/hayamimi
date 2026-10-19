@@ -29,9 +29,64 @@ import socket
 import threading
 from typing import Callable
 
+# リポジトリルートを sys.path に確実に追加 (tools モジュール等の解決用)
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 _MIC_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mic_page.html")
+_PROFILE_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profile_page.html")
 _STYLE_FILENAME = "overlay_style.json"
 _CONFIG_FILENAME = "asr_config.json"
+_GEMINI_KEY_FILENAME = "gemini_key.txt"
+
+def _get_profile_html() -> str:
+    if os.path.exists(_PROFILE_HTML_PATH):
+        try:
+            with open(_PROFILE_HTML_PATH, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception:
+            pass
+    return "<html><body><h1>Profile page not found</h1></body></html>"
+
+_generation_task = {
+    "status": "idle",
+    "progress": 0.0,
+    "message": "",
+    "done": True,
+    "error": None,
+}
+_generation_lock = threading.Lock()
+
+def _get_gemini_key() -> str:
+    storage_dir = _get_storage_dir()
+    p = os.path.join(storage_dir, _GEMINI_KEY_FILENAME)
+    if os.path.isfile(p):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except Exception:
+            pass
+    return os.environ.get("GEMINI_API_KEY", "").strip()
+
+def _save_gemini_key(key: str) -> None:
+    storage_dir = _get_storage_dir()
+    p = os.path.join(storage_dir, _GEMINI_KEY_FILENAME)
+    if not key or not key.strip():
+        if os.path.isfile(p):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+        return
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(key.strip())
+
+def _get_profiles_dir() -> str:
+    storage_dir = _get_storage_dir()
+    pdir = os.path.join(storage_dir, "profiles")
+    os.makedirs(pdir, exist_ok=True)
+    return pdir
 
 def _get_storage_dir() -> str:
     """Return a persistent storage directory.
@@ -695,6 +750,51 @@ class SubtitleServer:
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
+                elif req_path == "/profile":
+                    body = _get_profile_html().encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                elif req_path == "/api/gemini-key":
+                    k = _get_gemini_key()
+                    masked = (k[:6] + "..." + k[-4:]) if len(k) > 10 else ("設定済み" if k else "")
+                    self._json(200, {"configured": bool(k), "masked": masked})
+                elif req_path == "/api/profiles/task-status":
+                    with _generation_lock:
+                        self._json(200, dict(_generation_task))
+                elif req_path == "/api/profiles":
+                    try:
+                        from tools.profile_builder.profile_exporter import list_profiles
+                        pdir = _get_profiles_dir()
+                        profs = list_profiles(pdir)
+                        self._json(200, [p.model_dump() for p in profs])
+                    except Exception as e:
+                        self._json(500, {"error": str(e)})
+                elif req_path.startswith("/api/profiles/") and req_path.endswith("/export"):
+                    parts = req_path.split("/")
+                    if len(parts) == 5:
+                        speaker_id = urllib.parse.unquote(parts[3])
+                        try:
+                            from tools.profile_builder.profile_exporter import load_profile, export_profile_json
+                            pdir = _get_profiles_dir()
+                            prof = load_profile(speaker_id, pdir)
+                            if prof is None:
+                                self._json(404, {"error": "profile not found"})
+                                return
+                            json_str = export_profile_json(prof)
+                            body = json_str.encode("utf-8")
+                            self.send_response(200)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            self.send_header("Content-Length", str(len(body)))
+                            self.send_header("Content-Disposition", f'attachment; filename="{prof.speaker_id}.profile.json"')
+                            self.end_headers()
+                            self.wfile.write(body)
+                            return
+                        except Exception as e:
+                            self._json(500, {"error": str(e)})
+                            return
                 elif req_path == "/overlay-style":
                     self._json(200, _get_overlay_style())
                 elif req_path == "/transcript":
@@ -772,6 +872,135 @@ class SubtitleServer:
                     _save_overlay_style(cur)
                     server.publish({"type": "style_update", "style": cur})
                     self._json(200, {"ok": True, "style": cur})
+                    return
+                if req_path == "/api/gemini-key":
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length)
+                    try:
+                        payload = json.loads(raw.decode("utf-8"))
+                        _save_gemini_key(payload.get("key", ""))
+                        self._json(200, {"ok": True})
+                    except Exception as exc:
+                        self._json(400, {"error": str(exc)})
+                    return
+                if req_path == "/api/profiles/generate":
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length)
+                    try:
+                        payload = json.loads(raw.decode("utf-8"))
+                    except Exception as exc:
+                        self._json(400, {"error": f"invalid JSON: {exc}"})
+                        return
+                    url = payload.get("url")
+                    if not url:
+                        self._json(400, {"error": "url is required"})
+                        return
+                    display_name = payload.get("display_name")
+                    speaker_id = payload.get("speaker_id")
+                    existing_profile_id = payload.get("existing_profile_id")
+                    manual_start = payload.get("manual_start")
+                    duration = float(payload.get("duration") or 720.0)
+
+                    with _generation_lock:
+                        if not _generation_task["done"] and _generation_task["status"] == "running":
+                            self._json(409, {"error": "Another profile generation is already in progress"})
+                            return
+                        _generation_task["status"] = "running"
+                        _generation_task["progress"] = 0.05
+                        _generation_task["message"] = "生成タスクを開始中..."
+                        _generation_task["done"] = False
+                        _generation_task["error"] = None
+
+                    def _run_gen():
+                        try:
+                            # 確実にリポジトリルートをインポートパスに含める
+                            if _REPO_ROOT not in sys.path:
+                                sys.path.insert(0, _REPO_ROOT)
+                            from tools.profile_builder.pipeline import ProfileBuilderPipeline
+                            def _cb(stage, prog, msg):
+                                with _generation_lock:
+                                    _generation_task["progress"] = prog
+                                    _generation_task["message"] = msg
+
+                            key = _get_gemini_key()
+                            pipeline = ProfileBuilderPipeline(api_key=key)
+                            prof = pipeline.run(
+                                youtube_url=url,
+                                speaker_id=speaker_id,
+                                display_name=display_name,
+                                manual_start_sec=manual_start,
+                                duration_sec=duration,
+                                existing_profile_id=existing_profile_id,
+                                status_callback=_cb,
+                            )
+                            with _generation_lock:
+                                _generation_task["status"] = "completed"
+                                _generation_task["progress"] = 1.0
+                                _generation_task["message"] = f"完了: {prof.display_name}"
+                                _generation_task["done"] = True
+                        except Exception as e:
+                            with _generation_lock:
+                                _generation_task["status"] = "failed"
+                                _generation_task["done"] = True
+                                _generation_task["error"] = str(e)
+                                _generation_task["message"] = f"エラー: {e}"
+
+                    threading.Thread(target=_run_gen, daemon=True).start()
+                    self._json(202, {"ok": True, "message": "Generation started"})
+                    return
+                if req_path == "/api/profiles/apply":
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length)
+                    try:
+                        payload = json.loads(raw.decode("utf-8"))
+                        sid = payload.get("speaker_id")
+                        if not sid:
+                            self._json(400, {"error": "speaker_id is required"})
+                            return
+                        from tools.profile_builder.profile_exporter import load_profile
+                        pdir = _get_profiles_dir()
+                        prof = load_profile(sid, pdir)
+                        if prof is None:
+                            self._json(404, {"error": f"profile {sid} not found"})
+                            return
+                        mapping = {r.pattern: r.replacement for r in prof.replacements if r.pattern and r.replacement}
+                        if server.asr is not None:
+                            server.asr.set_replacements(mapping)
+                        self._json(200, {"ok": True, "speaker_id": sid, "rules_count": len(mapping)})
+                    except Exception as exc:
+                        self._json(400, {"error": str(exc)})
+                    return
+                if req_path == "/api/profiles/import":
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length)
+                    try:
+                        payload = json.loads(raw.decode("utf-8"))
+                        json_content = payload.get("json_content")
+                        if not json_content:
+                            self._json(400, {"error": "json_content is required"})
+                            return
+                        from tools.profile_builder.profile_exporter import import_profile_json
+                        pdir = _get_profiles_dir()
+                        prof = import_profile_json(json_content, storage_dir=pdir)
+                        self._json(200, prof.model_dump())
+                    except Exception as exc:
+                        self._json(400, {"error": str(exc)})
+                    return
+                if req_path == "/api/profiles/delete":
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length)
+                    try:
+                        payload = json.loads(raw.decode("utf-8"))
+                        sid = payload.get("speaker_id")
+                        if not sid:
+                            self._json(400, {"error": "speaker_id is required"})
+                            return
+                        from tools.profile_builder.profile_exporter import delete_profile
+                        pdir = _get_profiles_dir()
+                        deleted = delete_profile(sid, storage_dir=pdir)
+                        self._json(200, {"ok": deleted})
+                    except Exception as exc:
+                        self._json(400, {"error": str(exc)})
                     return
                 if req_path not in ("/replacements", "/itn_overrides", "/config"):
                     self._json(404, {"error": "not found"})
