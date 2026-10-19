@@ -362,4 +362,24 @@ def test_active_profile_and_apply_voiceprint(running_server, monkeypatch, tmp_pa
         assert active_data["voiceprint_samples"] == 15
 
 
+def test_get_safe_origin_header_sanitization():
+    """Verify that _get_safe_origin sanitizes CRLF sequences and only allows valid origins."""
+    from scripts.subtitle_server import _get_safe_origin
+
+    # Valid origins
+    assert _get_safe_origin("http://localhost:8833", "localhost:8833") == "http://localhost:8833"
+    assert _get_safe_origin("http://127.0.0.1:3000", "127.0.0.1:8833") == "http://127.0.0.1:3000"
+    assert _get_safe_origin("http://192.168.1.50:8080", "192.168.1.50") == "http://192.168.1.50:8080"
+
+    # CRLF injection attempts must be strictly blocked (return None)
+    assert _get_safe_origin("http://localhost\r\nInjected-Header: evil", "localhost") is None
+    assert _get_safe_origin("http://localhost\nInjected-Header: evil", "localhost") is None
+    assert _get_safe_origin("http://127.0.0.1\0evil", "127.0.0.1") is None
+
+    # Disallowed external origins
+    assert _get_safe_origin("http://evil-attacker.com", "localhost:8833") is None
+    assert _get_safe_origin("javascript:alert(1)", "localhost") is None
+    assert _get_safe_origin(None, "localhost") is None
+
+
 

@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import tempfile
+import urllib.parse
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
@@ -164,11 +165,33 @@ def extract_video_id(url: str) -> Optional[str]:
 def is_channel_url(url: str) -> bool:
     """Check if the given URL is a YouTube channel / user URL rather than a single video."""
     u = (url or "").strip()
-    if not ("youtube.com" in u or "youtu.be" in u):
+    if not u:
         return False
-    if "watch?v=" in u or "youtu.be/" in u or "/shorts/" in u:
+    try:
+        parsed = urllib.parse.urlparse(u)
+        host = (parsed.hostname or "").lower()
+        if not (host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be"):
+            return False
+        path = parsed.path or ""
+        query = parsed.query or ""
+        if "watch" in path and "v=" in query:
+            return False
+        if host == "youtu.be" and len(path.strip("/")) > 0:
+            return False
+        if "/shorts/" in path:
+            return False
+        return (
+            path.startswith("/@")
+            or path.startswith("/channel/")
+            or path.startswith("/c/")
+            or path.startswith("/user/")
+            or "/@" in path
+            or "/channel/" in path
+            or "/c/" in path
+            or "/user/" in path
+        )
+    except Exception:
         return False
-    return "/@" in u or "/channel/" in u or "/c/" in u or "/user/" in u
 
 
 class YouTubeFetcher:

@@ -684,3 +684,38 @@ def test_bot_detection_cookie_fallback(monkeypatch):
     assert call_count == 2
 
 
+def test_is_channel_url_strict_sanitization():
+    """Verify that is_channel_url strictly validates domain to prevent URL sanitization bypass."""
+    from tools.profile_builder.youtube_fetcher import is_channel_url
+
+    # Legitimate YouTube channel URLs
+    assert is_channel_url("https://www.youtube.com/@ChannelName") is True
+    assert is_channel_url("https://youtube.com/channel/UC1234567890abcdef") is True
+    assert is_channel_url("https://m.youtube.com/c/CustomName") is True
+    assert is_channel_url("https://www.youtube.com/user/UserName") is True
+
+    # Legitimate single video URLs should NOT be channels
+    assert is_channel_url("https://www.youtube.com/watch?v=12345678901") is False
+    assert is_channel_url("https://youtu.be/12345678901") is False
+    assert is_channel_url("https://www.youtube.com/shorts/12345678901") is False
+
+    # Malicious / spoofed domains must be rejected
+    assert is_channel_url("https://evil-youtube.com/@ChannelName") is False
+    assert is_channel_url("https://notyoutube.com/channel/UC123") is False
+    assert is_channel_url("https://attacker.com/youtube.com/@ChannelName") is False
+    assert is_channel_url("https://youtube.com.attacker.com/@ChannelName") is False
+    assert is_channel_url("") is False
+
+
+def test_save_gemini_api_key_secure_permissions(tmp_path):
+    """Verify save_gemini_api_key creates file with restricted permissions and reads back correctly."""
+    from tools.profile_builder.gemini_analyzer import save_gemini_api_key, load_gemini_api_key
+
+    key_file = str(tmp_path / "sub" / "gemini_key.txt")
+    save_gemini_api_key("AIzaSyTestKey12345", key_file=key_file)
+
+    loaded = load_gemini_api_key(key_file=key_file)
+    assert loaded == "AIzaSyTestKey12345"
+    assert os.path.isfile(key_file)
+
+

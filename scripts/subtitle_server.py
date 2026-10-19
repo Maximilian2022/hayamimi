@@ -215,22 +215,56 @@ def _get_mic_html() -> str:
             pass
     return "<!doctype html><title>Mic</title><p>mic_page.html not found</p>"
 
+import re
 import urllib.parse
+
+def _get_safe_origin(origin: str | None, host_header: str | None) -> str | None:
+    """Validate and sanitize Origin header against CRLF injection and untrusted hosts.
+
+    Returns reconstructed safe origin string ('scheme://hostname[:port]') if valid, else None.
+    """
+    if not origin:
+        return None
+    # Block CRLF injection attempts
+    if "\r" in origin or "\n" in origin or "\0" in origin:
+        return None
+    try:
+        parsed = urllib.parse.urlparse(origin)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in ("http", "https"):
+            return None
+        ohost = (parsed.hostname or "").lower()
+        if not ohost:
+            return None
+
+        is_allowed = False
+        if ohost in ("localhost", "127.0.0.1", "::1"):
+            is_allowed = True
+        elif ohost.startswith("192.168.") or ohost.startswith("10."):
+            is_allowed = True
+        elif ohost.startswith("172."):
+            try:
+                parts = ohost.split(".")
+                if len(parts) >= 2 and 16 <= int(parts[1]) <= 31:
+                    is_allowed = True
+            except Exception:
+                pass
+        elif host_header:
+            req_host = host_header.split(":")[0].lower()
+            if ohost == req_host:
+                is_allowed = True
+
+        if is_allowed:
+            port_suffix = f":{parsed.port}" if parsed.port else ""
+            return f"{scheme}://{ohost}{port_suffix}"
+    except Exception:
+        pass
+    return None
 
 def _is_safe_origin(origin: str | None, host_header: str | None) -> bool:
     if not origin:
         return True
-    parsed = urllib.parse.urlparse(origin)
-    ohost = (parsed.hostname or "").lower()
-    if ohost in ("localhost", "127.0.0.1", "::1"):
-        return True
-    if ohost.startswith("192.168.") or ohost.startswith("10.") or (ohost.startswith("172.") and 16 <= int(ohost.split(".")[1] or 0) <= 31):
-        return True
-    if host_header:
-        req_host = host_header.split(":")[0].lower()
-        if ohost == req_host:
-            return True
-    return False
+    return _get_safe_origin(origin, host_header) is not None
 
 OVERLAY_HTML = """<!doctype html>
 <html lang="ja">
@@ -733,8 +767,9 @@ class SubtitleServer:
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
                     self.send_header("Cache-Control", "no-cache")
-                    if origin and _is_safe_origin(origin, self.headers.get("Host")):
-                        self.send_header("Access-Control-Allow-Origin", origin)
+                    safe_origin = _get_safe_origin(origin, self.headers.get("Host"))
+                    if safe_origin:
+                        self.send_header("Access-Control-Allow-Origin", safe_origin)
                         self.send_header("Vary", "Origin")
                     self.end_headers()
                     q = server.subscribe()
@@ -815,7 +850,8 @@ class SubtitleServer:
                             self.send_response(200)
                             self.send_header("Content-Type", "application/json; charset=utf-8")
                             self.send_header("Content-Length", str(len(body)))
-                            self.send_header("Content-Disposition", f'attachment; filename="{prof.speaker_id}.profile.json"')
+                            safe_sid = re.sub(r"[^a-zA-Z0-9_\-]", "_", prof.speaker_id)
+                            self.send_header("Content-Disposition", f'attachment; filename="{safe_sid}.profile.json"')
                             self.end_headers()
                             self.wfile.write(body)
                             return
@@ -1104,8 +1140,9 @@ class SubtitleServer:
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 origin = self.headers.get("Origin")
-                if origin and _is_safe_origin(origin, self.headers.get("Host")):
-                    self.send_header("Access-Control-Allow-Origin", origin)
+                safe_origin = _get_safe_origin(origin, self.headers.get("Host"))
+                if safe_origin:
+                    self.send_header("Access-Control-Allow-Origin", safe_origin)
                     self.send_header("Vary", "Origin")
                 self.end_headers()
                 self.wfile.write(body)
