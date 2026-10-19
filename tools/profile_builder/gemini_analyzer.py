@@ -126,7 +126,7 @@ class GeminiProfileAnalyzer:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_name: str = "gemini-2.5-flash",
+        model_name: str = "gemini-3.8-flash",
     ):
         resolved_key = load_gemini_api_key(api_key)
         if not resolved_key:
@@ -216,13 +216,29 @@ class GeminiProfileAnalyzer:
             if log_callback:
                 log_callback("GEMINI", f"Gemini ({self.model_name}) に生音声と誤認識テキストを送信し推論中 (約20〜40秒程度お待ちください)...")
 
-            # Candidate models in case of region/model fallback
-            candidate_models = [self.model_name, "gemini-2.0-flash", "gemini-1.5-flash"]
+            # Candidate models in case of temporary high demand or rate limits
+            # ※ サービス終了済みの gemini-1.5-* / gemini-2.0-* は完全排除。
+            # 現在利用可能な現行アクティブモデルのみでフォールバックチェーンを構成。
+            active_fallback_models = [
+                "gemini-3.8-flash",
+                "gemini-3.5-flash",
+                "gemini-3.5-flash-lite",
+                "gemini-flash-latest",
+                "gemini-2.5-flash",
+            ]
+            candidate_models = []
+            for m in [self.model_name] + active_fallback_models:
+                if m and m not in candidate_models:
+                    candidate_models.append(m)
+
             last_err = None
             response = None
 
-            for model in candidate_models:
+            for idx, model in enumerate(candidate_models):
                 try:
+                    if idx > 0:
+                        import time
+                        time.sleep(1.5)  # 短い待機を入れて一時スパイク負荷を緩和
                     logger.info("Calling Gemini generate_content with model: %s", model)
                     response = self.client.models.generate_content(
                         model=model,

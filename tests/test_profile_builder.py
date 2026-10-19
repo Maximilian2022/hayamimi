@@ -513,6 +513,69 @@ def test_transcribe_with_voiceprint_filtering(tmp_path, monkeypatch):
     assert any("コラボ相手/他者音声を検出" in m for m in voice_logs)
 
 
+def test_gemini_models_are_active_and_no_deprecated_1_5(monkeypatch):
+    """Ensure that deprecated/terminated models (1.5, 2.0) are completely excluded and 3.8 is default."""
+    from tools.profile_builder.gemini_analyzer import GeminiProfileAnalyzer
+    from tools.profile_builder.pipeline import ProfileBuilderPipeline
 
+    # Verify default models
+    pipe = ProfileBuilderPipeline(api_key="fake-key")
+    assert pipe.model_name == "gemini-3.8-flash"
 
+    analyzer = GeminiProfileAnalyzer(api_key="fake-key")
+    assert analyzer.model_name == "gemini-3.8-flash"
 
+    # Capture candidate models during execution
+    captured_models = []
+
+    class MockModelsService:
+        def generate_content(self, model, **kwargs):
+            captured_models.append(model)
+            raise RuntimeError(f"Simulate model failure for {model}")
+
+    class MockFilesService:
+        def upload(self, **kwargs):
+            class FakeFile:
+                name = "fake_file"
+                uri = "fake_uri"
+            return FakeFile()
+
+        def delete(self, name):
+            pass
+
+    class MockClient:
+        models = MockModelsService()
+        files = MockFilesService()
+
+    analyzer.client = MockClient()
+
+    # Create dummy wav
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        dummy_wav = f.name
+        f.write(b"RIFF....WAVEfmt ....data....")
+
+    try:
+        from tools.profile_builder.youtube_fetcher import VideoMetadata
+        meta = VideoMetadata(video_id="dummy_vid", title="Test", channel="Ch", description="", tags=[], duration_sec=60.0)
+        try:
+            analyzer.analyze(
+                audio_wav_path=dummy_wav,
+                local_asr_text="テストテキスト",
+                metadata=meta,
+                speaker_id="test_spk",
+                display_name="テスト話者",
+            )
+        except RuntimeError:
+            pass  # Expected since mock raises
+
+        # Verify candidate models: must NOT contain 1.5 or 2.0
+        assert len(captured_models) > 0
+        for m in captured_models:
+            assert "1.5" not in m, f"Deprecated model {m} found in candidate models!"
+            assert "2.0" not in m, f"Deprecated model {m} found in candidate models!"
+
+        # Must start with 3.8-flash
+        assert captured_models[0] == "gemini-3.8-flash"
+    finally:
+        if os.path.exists(dummy_wav):
+            os.remove(dummy_wav)

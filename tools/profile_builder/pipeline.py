@@ -38,7 +38,7 @@ class ProfileBuilderPipeline:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_name: str = "gemini-2.5-flash",
+        model_name: str = "gemini-3.8-flash",
     ):
         self.api_key = load_gemini_api_key(api_key)
         self.model_name = model_name
@@ -362,7 +362,7 @@ def main():
     parser.add_argument("--start", type=float, default=None, help="Manual start offset in seconds")
     parser.add_argument("--duration", type=float, default=720.0, help="Duration in seconds (default: 720 = 12min)")
     parser.add_argument("--key", default=None, help="Gemini API Key")
-    parser.add_argument("--model", default="gemini-2.5-flash", help="Gemini model name")
+    parser.add_argument("--model", default="gemini-3.8-flash", help="Gemini model name")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
