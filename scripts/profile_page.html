@@ -1,321 +1,403 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>話者プロファイル管理 - hayamimi</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>早耳 - 話者特化プロファイル管理 (Speaker Profile Studio)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-base: #0B0F17;
-      --bg-surface: rgba(19, 25, 36, 0.75);
-      --bg-surface-hover: rgba(26, 34, 48, 0.85);
-      --bg-card: rgba(15, 20, 30, 0.65);
-      --border-subtle: rgba(255, 255, 255, 0.08);
-      --border-focus: #0284C7;
-      --text-main: #F8FAFC;
-      --text-muted: #94A3B8;
-      --text-dim: #64748B;
-      --primary: #0284C7;
-      --primary-hover: #0369A1;
-      --primary-glow: rgba(2, 132, 199, 0.3);
-      --success: #10B981;
-      --success-glow: rgba(16, 185, 129, 0.25);
-      --danger: #EF4444;
-      --danger-hover: #DC2626;
-      --radius-sm: 6px;
-      --radius-md: 10px;
-      --radius-lg: 14px;
-      --font-sans: 'Inter', 'Noto Sans JP', sans-serif;
+      --ink: #0d0f13;
+      --ink-2: #14171d;
+      --ink-card: #1a1e26;
+      --line: #2a2f3a;
+      --line-subtle: rgba(255, 255, 255, 0.08);
+      --paper: #ece5d8;
+      --paper-dim: #b0a898;
+      --paper-muted: #7d8494;
+      --shu: #e04f2f;
+      --shu-glow: rgba(224, 79, 47, 0.35);
+      --green: #2ecc71;
+      --green-glow: rgba(46, 204, 113, 0.35);
+      --blue: #5b7fd4;
+      --blue-glow: rgba(91, 127, 212, 0.35);
+      --gold: #d4a75b;
+      --mono: "IBM Plex Mono", monospace;
+      --radius-sm: 4px;
+      --radius-md: 6px;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
     body {
-      background-color: var(--bg-base);
-      color: var(--text-main);
-      font-family: var(--font-sans);
-      min-height: 100vh;
-      padding: 24px;
-      line-height: 1.5;
-      background-image: 
-        radial-gradient(circle at 15% 15%, rgba(2, 132, 199, 0.08) 0%, transparent 40%),
-        radial-gradient(circle at 85% 85%, rgba(16, 185, 129, 0.05) 0%, transparent 40%);
-      background-attachment: fixed;
-    }
-
-    .container {
-      max-width: 1080px;
-      margin: 0 auto;
+      background: var(--ink);
+      color: var(--paper);
+      font-family: "Zen Kaku Gothic New", "Yu Gothic UI", sans-serif;
+      background-image:
+        radial-gradient(1200px 500px at 85% -10%, rgba(224,79,47,.08), transparent 60%),
+        repeating-linear-gradient(0deg, transparent 0 2px, rgba(255,255,255,.005) 2px 4px);
       display: flex;
       flex-direction: column;
-      gap: 24px;
+      overflow-x: hidden;
+      line-height: 1.5;
     }
 
-    /* Header */
+    /* 全幅ヘッダー (mic_page.html と統一) */
     header {
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      padding: 18px 24px;
-      background: var(--bg-surface);
-      backdrop-filter: blur(12px);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-lg);
+      gap: 1.2rem;
+      padding: 0.8rem 1.6rem;
+      border-bottom: 1px solid var(--line);
+      background: var(--ink-2);
+      flex: none;
+      flex-wrap: wrap;
     }
-    .header-title {
-      display: flex;
-      align-items: center;
-      gap: 12px;
+    .logotype {
+      font-family: "Shippori Mincho B1", serif;
+      font-weight: 800;
+      font-size: 1.5rem;
+      letter-spacing: .12em;
     }
-    .header-title h1 {
-      font-size: 1.25rem;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      background: linear-gradient(135deg, #F8FAFC 0%, #94A3B8 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+    .logotype em { font-style: normal; color: var(--shu); }
+    .romaji {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: .25em;
+      color: var(--paper-dim);
     }
-    .badge {
-      font-size: 0.75rem;
-      padding: 2px 8px;
-      border-radius: 9999px;
-      font-weight: 600;
-      background: rgba(2, 132, 199, 0.15);
-      color: #38BDF8;
-      border: 1px solid rgba(2, 132, 199, 0.3);
-    }
-    .btn-nav {
+    .header-badge {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 8px 16px;
+      gap: 0.4rem;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      padding: 0.25rem 0.65rem;
       border-radius: var(--radius-sm);
-      font-size: 0.875rem;
-      font-weight: 500;
-      color: var(--text-main);
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--border-subtle);
-      text-decoration: none;
-      transition: all 0.2s ease;
-      cursor: pointer;
+      border: 1px solid var(--line);
+      background: var(--ink);
+      color: var(--paper-dim);
     }
-    .btn-nav:hover {
-      background: rgba(255, 255, 255, 0.1);
-      border-color: rgba(255, 255, 255, 0.2);
+    .spacer { flex: 1; }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      flex-wrap: wrap;
+    }
+    .nav-chip {
+      color: var(--paper-dim);
+      text-decoration: none;
+      font-size: 0.75rem;
+      font-family: var(--mono);
+      padding: 0.35rem 0.75rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--ink);
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .nav-chip:hover {
+      color: var(--paper);
+      border-color: var(--shu);
+      box-shadow: 0 0 8px var(--shu-glow);
+    }
+    .nav-chip.active {
+      color: #fff;
+      border-color: var(--shu);
+      background: rgba(224, 79, 47, 0.15);
     }
 
-    /* Cards */
-    .card {
-      background: var(--bg-surface);
-      backdrop-filter: blur(12px);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-lg);
-      padding: 24px;
+    /* メインコンテナ */
+    main {
+      flex: 1;
+      max-width: 1100px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1.5rem 1.2rem 3rem 1.2rem;
       display: flex;
       flex-direction: column;
-      gap: 18px;
-      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+      gap: 1.4rem;
+    }
+
+    /* カード */
+    .card {
+      background: var(--ink-card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 1.4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.2rem;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
     }
     .card-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid var(--border-subtle);
-      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 0.8rem;
+      flex-wrap: wrap;
+      gap: 0.6rem;
     }
     .card-title {
-      font-size: 1.05rem;
-      font-weight: 600;
+      font-family: "Shippori Mincho B1", serif;
+      font-size: 1.15rem;
+      font-weight: 700;
       display: flex;
       align-items: center;
-      gap: 8px;
-      color: var(--text-main);
+      gap: 0.6rem;
+      color: var(--paper);
+      letter-spacing: 0.04em;
     }
     .card-desc {
-      font-size: 0.85rem;
-      color: var(--text-muted);
+      font-size: 0.82rem;
+      color: var(--paper-dim);
     }
 
-    /* Form controls */
+    /* 汎用バッジ */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--line);
+      background: var(--ink);
+      color: var(--paper-dim);
+    }
+
+    /* フォーム部品 */
     .form-group {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 0.4rem;
     }
     .form-label {
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
+      color: var(--paper-dim);
+      letter-spacing: 0.04em;
     }
     .input-text {
       width: 100%;
-      padding: 10px 14px;
-      background: rgba(11, 15, 23, 0.8);
-      border: 1px solid var(--border-subtle);
+      padding: 0.65rem 0.9rem;
+      background: var(--ink);
+      border: 1px solid var(--line);
       border-radius: var(--radius-sm);
-      color: var(--text-main);
+      color: var(--paper);
       font-family: inherit;
-      font-size: 0.9rem;
+      font-size: 0.88rem;
       outline: none;
-      transition: border-color 0.2s;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
     .input-text:focus {
-      border-color: var(--border-focus);
-      box-shadow: 0 0 0 2px var(--primary-glow);
+      border-color: var(--shu);
+      box-shadow: 0 0 8px var(--shu-glow);
     }
+    .input-text::placeholder {
+      color: var(--paper-muted);
+    }
+
+    /* ボタン */
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
-      padding: 10px 18px;
+      gap: 0.4rem;
+      padding: 0.6rem 1.1rem;
       border-radius: var(--radius-sm);
-      font-size: 0.875rem;
+      font-size: 0.85rem;
       font-weight: 600;
+      font-family: inherit;
       cursor: pointer;
-      border: none;
+      border: 1px solid transparent;
       transition: all 0.2s;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
     }
     .btn-primary {
-      background: var(--primary);
+      background: var(--shu);
       color: #fff;
+      border-color: var(--shu);
+      box-shadow: 0 0 10px var(--shu-glow);
     }
-    .btn-primary:hover {
-      background: var(--primary-hover);
-      box-shadow: 0 0 15px var(--primary-glow);
-    }
-    .btn-success {
-      background: var(--success);
-      color: #fff;
-    }
-    .btn-success:hover {
-      background: #059669;
-      box-shadow: 0 0 15px var(--success-glow);
-    }
-    .btn-danger {
-      background: var(--danger);
-      color: #fff;
-    }
-    .btn-danger:hover {
-      background: var(--danger-hover);
+    .btn-primary:hover:not(:disabled) {
+      background: #eb5c3c;
+      border-color: #eb5c3c;
+      box-shadow: 0 0 16px var(--shu-glow);
     }
     .btn-secondary {
-      background: rgba(255, 255, 255, 0.06);
-      color: var(--text-main);
-      border: 1px solid var(--border-subtle);
+      background: var(--ink-2);
+      color: var(--paper);
+      border: 1px solid var(--line);
     }
-    .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.12);
+    .btn-secondary:hover:not(:disabled) {
+      background: #252a35;
+      border-color: var(--paper-dim);
+      color: #fff;
+    }
+    .btn-success {
+      background: #27ae60;
+      color: #fff;
+      border-color: #27ae60;
+      box-shadow: 0 0 10px var(--green-glow);
+    }
+    .btn-success:hover:not(:disabled) {
+      background: #2ecc71;
+      box-shadow: 0 0 16px var(--green-glow);
+    }
+    .btn-danger {
+      background: rgba(224, 79, 47, 0.15);
+      color: #ff8b73;
+      border: 1px solid rgba(224, 79, 47, 0.4);
+    }
+    .btn-danger:hover:not(:disabled) {
+      background: var(--shu);
+      color: #fff;
+      border-color: var(--shu);
+    }
+    .btn-sm {
+      padding: 0.35rem 0.65rem;
+      font-size: 0.75rem;
     }
 
-    /* Progress bar */
+    /* タブ切り替えピル */
+    .tab-bar {
+      display: inline-flex;
+      align-items: center;
+      background: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 3px;
+      gap: 4px;
+    }
+
+    /* プログレスバー */
     .progress-box {
-      background: var(--bg-card);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      padding: 16px;
+      background: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 1rem;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 0.6rem;
     }
     .progress-track {
       width: 100%;
       height: 8px;
-      background: rgba(255, 255, 255, 0.06);
-      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px;
       overflow: hidden;
+      border: 1px solid var(--line);
     }
     .progress-bar {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, #0284C7, #10B981);
+      background: linear-gradient(90deg, var(--green) 0%, var(--gold) 70%, var(--shu) 100%);
+      box-shadow: 0 0 8px var(--shu-glow);
       transition: width 0.3s ease;
     }
     .progress-text {
       display: flex;
       justify-content: space-between;
-      font-size: 0.8rem;
-      color: var(--text-muted);
+      font-size: 0.78rem;
+      font-family: var(--mono);
+      color: var(--paper-dim);
     }
 
-    /* Profiles list */
+    /* プロファイル一覧カード */
     .profile-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-      gap: 16px;
+      gap: 14px;
     }
     .profile-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      padding: 16px;
+      background: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 1.1rem;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      gap: 14px;
-      transition: border-color 0.2s, transform 0.2s;
+      gap: 12px;
+      transition: all 0.2s;
     }
     .profile-card:hover {
-      border-color: rgba(255, 255, 255, 0.18);
+      border-color: var(--shu);
       transform: translateY(-2px);
+      box-shadow: 0 4px 15px rgba(0,0,0,0.4);
     }
     .profile-card.active {
-      border-color: var(--success);
-      box-shadow: 0 0 16px var(--success-glow);
+      border-color: var(--green);
+      box-shadow: 0 0 12px var(--green-glow);
     }
     .profile-card-header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
+      gap: 0.6rem;
     }
     .profile-card-name {
-      font-size: 1.05rem;
+      font-family: "Shippori Mincho B1", serif;
+      font-size: 1.1rem;
       font-weight: 700;
-      color: var(--text-main);
+      color: var(--paper);
     }
     .profile-card-id {
-      font-size: 0.75rem;
-      color: var(--text-dim);
-      font-family: monospace;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--paper-dim);
     }
     .profile-stats {
       display: flex;
       gap: 12px;
-      font-size: 0.8rem;
-      color: var(--text-muted);
+      font-size: 0.78rem;
+      color: var(--paper-dim);
+      flex-wrap: wrap;
     }
     .profile-actions {
       display: flex;
       gap: 6px;
       flex-wrap: wrap;
+      border-top: 1px solid var(--line);
+      padding-top: 0.7rem;
     }
 
-    /* Import Dropzone */
+    /* ドロップゾーン */
     .dropzone {
-      border: 2px dashed rgba(255, 255, 255, 0.15);
-      border-radius: var(--radius-md);
-      padding: 20px;
+      border: 2px dashed var(--line);
+      border-radius: var(--radius-sm);
+      padding: 1.4rem;
       text-align: center;
       cursor: pointer;
       transition: all 0.2s;
-      background: rgba(0, 0, 0, 0.2);
+      background: rgba(0, 0, 0, 0.25);
+      color: var(--paper-dim);
+      font-size: 0.85rem;
     }
     .dropzone:hover, .dropzone.dragover {
-      border-color: var(--primary);
-      background: rgba(2, 132, 199, 0.05);
+      border-color: var(--shu);
+      background: rgba(224, 79, 47, 0.06);
+      color: var(--paper);
     }
 
-    /* Modal / Editor */
+    /* モーダル */
     .modal-overlay {
       position: fixed;
       top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.75);
-      backdrop-filter: blur(8px);
+      background: rgba(13, 15, 19, 0.85);
+      backdrop-filter: blur(6px);
       display: none;
       align-items: center;
       justify-content: center;
@@ -324,79 +406,98 @@
     }
     .modal-overlay.open { display: flex; }
     .modal-card {
-      background: #111722;
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-lg);
+      background: var(--ink-card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
       width: 100%;
       max-width: 780px;
       max-height: 85vh;
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+      box-shadow: 0 20px 50px rgba(0,0,0,0.7);
     }
     .modal-header {
-      padding: 18px 24px;
-      border-bottom: 1px solid var(--border-subtle);
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--line);
       display: flex;
       justify-content: space-between;
       align-items: center;
+      background: var(--ink-2);
+    }
+    .modal-header h2 {
+      font-family: "Shippori Mincho B1", serif;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--paper);
+      margin: 0;
     }
     .modal-body {
-      padding: 24px;
+      padding: 18px 20px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 14px;
     }
     .modal-footer {
-      padding: 16px 24px;
-      border-top: 1px solid var(--border-subtle);
+      padding: 12px 20px;
+      border-top: 1px solid var(--line);
       display: flex;
       justify-content: flex-end;
       gap: 10px;
-      background: rgba(0,0,0,0.2);
+      background: var(--ink-2);
     }
     .rule-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.85rem;
+      font-size: 0.82rem;
     }
     .rule-table th, .rule-table td {
-      padding: 8px 12px;
+      padding: 8px 10px;
       text-align: left;
-      border-bottom: 1px solid var(--border-subtle);
+      border-bottom: 1px solid var(--line);
     }
     .rule-table th {
-      color: var(--text-dim);
+      color: var(--paper-dim);
       font-weight: 600;
-      text-transform: uppercase;
-      font-size: 0.75rem;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.05em;
     }
     .rule-table input {
       width: 100%;
-      background: rgba(0,0,0,0.4);
-      border: 1px solid var(--border-subtle);
-      border-radius: 4px;
-      color: #fff;
+      background: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      color: var(--paper);
       padding: 6px 8px;
+      font-family: inherit;
+      font-size: 0.82rem;
+      outline: none;
+    }
+    .rule-table input:focus {
+      border-color: var(--shu);
     }
   </style>
 </head>
 <body>
 
-<div class="container">
-  <!-- Header -->
-  <header>
-    <div class="header-title">
-      <h1>話者特化プロファイル管理</h1>
-      <span class="badge">Gemini Flash 連動</span>
-    </div>
-    <a href="/mic" class="btn-nav">
-      <span>🎤 マイク入力画面へ戻る</span>
-    </a>
-  </header>
+<!-- 全幅ヘッダー -->
+<header>
+  <div style="display: flex; align-items: baseline; gap: 0.8rem;">
+    <div class="logotype">早<em>耳</em></div>
+    <div class="romaji">HAYAMIMI</div>
+    <div class="header-badge">話者特化プロファイル STUDIO</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="header-right">
+    <a href="/mic" class="nav-chip">🎤 Webマイク</a>
+    <a href="/" class="nav-chip">📺 OBS字幕</a>
+    <a href="/dashboard" class="nav-chip">📊 ダッシュボード</a>
+  </div>
+</header>
 
+<main>
   <!-- 1. Gemini API Key Card -->
   <div class="card">
     <div class="card-header">
@@ -406,12 +507,12 @@
       </div>
       <div class="card-desc">Google AI Studio の API キー (無料枠で利用可能)</div>
     </div>
-    <div style="display: flex; gap: 10px; align-items: center;">
-      <input type="password" id="inputApiKey" class="input-text" placeholder="AIzaSy... から始まる API キーを入力" style="flex: 1;">
+    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+      <input type="password" id="inputApiKey" class="input-text" placeholder="AIzaSy... から始まる API キーを入力" style="flex: 1; min-width: 260px;">
       <button id="btnSaveKey" class="btn btn-primary">保存する</button>
       <button id="btnDeleteKey" class="btn btn-secondary">削除</button>
     </div>
-    <div style="font-size: 0.75rem; color: var(--text-dim);">
+    <div style="font-size: 0.75rem; color: var(--paper-muted); font-family: var(--mono);">
       ※ 入力されたキーはローカル環境（<code>config/gemini_key.txt</code>）に安全に保存され、Gitリポジトリ等へ外部送信されることはありません。
     </div>
   </div>
@@ -426,7 +527,7 @@
     </div>
 
     <!-- Mode Tabs: Create vs Grow -->
-    <div style="display: flex; gap: 8px; margin-bottom: 4px;">
+    <div class="tab-bar">
       <button type="button" id="tabModeCreate" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.8rem;">
         ✨ 新規プロファイル作成
       </button>
@@ -436,12 +537,12 @@
     </div>
 
     <!-- Grow Target Selector (Only in Grow mode) -->
-    <div id="growTargetGroup" class="form-group" style="display: none; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: var(--radius-sm); padding: 12px;">
-      <label class="form-label" style="color: var(--primary-glow);">🌱 追加学習する対象プロファイル</label>
-      <select id="selectGrowTarget" class="input-text" style="background: rgba(15, 23, 42, 0.95); color: #fff;">
+    <div id="growTargetGroup" class="form-group" style="display: none; background: rgba(91, 127, 212, 0.08); border: 1px solid rgba(91, 127, 212, 0.25); border-radius: var(--radius-sm); padding: 12px;">
+      <label class="form-label" style="color: #8da6e8;">🌱 追加学習する対象プロファイル</label>
+      <select id="selectGrowTarget" class="input-text" style="background: var(--ink-2); color: var(--paper);">
         <option value="">-- 対象プロファイルを選択してください --</option>
       </select>
-      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
+      <div style="font-size: 0.75rem; color: var(--paper-dim); margin-top: 4px;">
         ※ 新しい動画から抽出した誤認識や固有名詞を既存プロファイルに安全にマージし、より高精度に育てます。
       </div>
     </div>
@@ -450,7 +551,7 @@
       <div class="form-group">
         <label class="form-label">YouTube 配信/動画 URL または チャンネルURL</label>
         <input type="text" id="inputYtUrl" class="input-text" placeholder="https://www.youtube.com/watch?v=... または https://www.youtube.com/@チャンネル名">
-        <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 4px;">
+        <div style="font-size: 0.75rem; color: var(--paper-dim); margin-top: 4px;">
           💡 <b>チャンネルURL（@チャンネル名）</b> を指定すると、最近の人気動画・配信アーカイブから自動で一括学習します。過去に学習済みの動画は自動で重複スキップされます。
         </div>
       </div>
@@ -460,18 +561,18 @@
       </div>
     </div>
 
-    <details style="font-size: 0.85rem; color: var(--text-muted);">
+    <details style="font-size: 0.82rem; color: var(--paper-dim);">
       <summary style="cursor: pointer; user-select: none;">⚙ 詳細設定（チャンネル取得本数・抽出時間の調整）</summary>
-      <div style="display: flex; gap: 16px; margin-top: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: var(--radius-sm);">
-        <div class="form-group" style="flex: 1;">
+      <div style="display: flex; gap: 16px; margin-top: 10px; padding: 12px; background: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-sm); flex-wrap: wrap;">
+        <div class="form-group" style="flex: 1; min-width: 180px;">
           <label class="form-label">チャンネル一括学習本数 (人気上位N本)</label>
           <input type="number" id="inputMaxVideos" class="input-text" value="10" min="1" max="30">
         </div>
-        <div class="form-group" style="flex: 1;">
+        <div class="form-group" style="flex: 1; min-width: 180px;">
           <label class="form-label">1本あたりの抽出時間 (秒)</label>
           <input type="number" id="inputDuration" class="input-text" value="720">
         </div>
-        <div class="form-group" style="flex: 1;">
+        <div class="form-group" style="flex: 1; min-width: 180px;">
           <label class="form-label">開始位置 (秒、単一動画時のみ有効)</label>
           <input type="number" id="inputManualStart" class="input-text" placeholder="自動検出 (推奨)">
         </div>
@@ -485,7 +586,7 @@
     </div>
 
     <!-- Reconnect Banner (shown if restored after F5 or re-opening tab) -->
-    <div id="reconnectBanner" style="display: none; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.4); border-radius: var(--radius-sm); padding: 10px 14px; font-size: 0.85rem; color: #93C5FD; align-items: center; gap: 8px;">
+    <div id="reconnectBanner" style="display: none; background: rgba(91, 127, 212, 0.12); border: 1px solid rgba(91, 127, 212, 0.4); border-radius: var(--radius-sm); padding: 10px 14px; font-size: 0.85rem; color: #b4c7f7; align-items: center; gap: 8px;">
       <span style="font-size: 1.1rem;">🔄</span>
       <span id="reconnectBannerText">進行中の学習タスクに再接続しました。ページをリロードしても裏で安全に継続処理されています。</span>
     </div>
@@ -502,17 +603,17 @@
     </div>
 
     <!-- Live Subprocess / Console Log Box -->
-    <div id="consoleCard" style="margin-top: 10px; padding: 12px 16px; background: #0b0f19; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: var(--radius-md);">
+    <div id="consoleCard" style="margin-top: 10px; padding: 12px 16px; background: #090b0e; border: 1px solid var(--line); border-radius: var(--radius-sm);">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="display: inline-flex; gap: 5px;">
-            <span style="width: 10px; height: 10px; border-radius: 50%; background: #EF4444; display: inline-block;"></span>
-            <span style="width: 10px; height: 10px; border-radius: 50%; background: #F59E0B; display: inline-block;"></span>
-            <span style="width: 10px; height: 10px; border-radius: 50%; background: #10B981; display: inline-block;"></span>
+            <span style="width: 9px; height: 9px; border-radius: 50%; background: #e04f2f; display: inline-block;"></span>
+            <span style="width: 9px; height: 9px; border-radius: 50%; background: #d4a75b; display: inline-block;"></span>
+            <span style="width: 9px; height: 9px; border-radius: 50%; background: #2ecc71; display: inline-block;"></span>
           </span>
-          <span style="font-size: 0.85rem; font-weight: 700; color: #E2E8F0; font-family: monospace;">🖥️ サブプロセス実行ログ (リアルタイム)</span>
+          <span style="font-size: 0.82rem; font-weight: 700; color: var(--paper); font-family: var(--mono);">🖥️ サブプロセス実行ログ (リアルタイム)</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 12px; font-size: 0.75rem; color: var(--text-muted);">
+        <div style="display: flex; align-items: center; gap: 12px; font-size: 0.75rem; color: var(--paper-dim);">
           <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none;">
             <input type="checkbox" id="chkAutoScroll" checked style="cursor: pointer;">
             <span>自動スクロール</span>
@@ -523,18 +624,18 @@
       <div id="consoleLogBox" style="
         height: 220px;
         overflow-y: auto;
-        font-family: 'Cascadia Code', Consolas, 'Fira Code', monospace;
-        font-size: 0.8rem;
+        font-family: var(--mono);
+        font-size: 0.78rem;
         line-height: 1.5;
-        background: rgba(0, 0, 0, 0.45);
-        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: rgba(0, 0, 0, 0.55);
+        border: 1px solid var(--line);
         border-radius: var(--radius-sm);
         padding: 10px 12px;
-        color: #CBD5E1;
+        color: #cbd5e1;
         white-space: pre-wrap;
         word-break: break-all;
       ">
-        <div style="color: #64748B;">[待機中] プロファイル生成または育成を開始すると、ここに yt-dlp ダウンロード進捗、ASR音声認識推論、Gemini API 解析ログがリアルタイムに流れます...</div>
+        <div style="color: var(--paper-muted);">[待機中] プロファイル生成または育成を開始すると、ここに yt-dlp ダウンロード進捗、ASR音声認識推論、Gemini API 解析ログがリアルタイムに流れます...</div>
       </div>
     </div>
   </div>
@@ -564,13 +665,13 @@
       <!-- Dynamic populated -->
     </div>
   </div>
-</div>
+</main>
 
 <!-- Edit Profile Modal -->
 <div id="editModal" class="modal-overlay">
   <div class="modal-card">
     <div class="modal-header">
-      <h2 style="font-size: 1.1rem; font-weight: 700;">プロファイル編集: <span id="modalTitle"></span></h2>
+      <h2>プロファイル編集: <span id="modalTitle"></span></h2>
       <button id="btnCloseModal" class="btn btn-secondary" style="padding: 4px 10px;">✕</button>
     </div>
     <div class="modal-body">
@@ -680,14 +781,14 @@
       const badge = document.getElementById("keyStatusBadge");
       if (data.configured) {
         badge.textContent = `設定済み (${data.masked})`;
-        badge.style.color = "#10B981";
-        badge.style.background = "rgba(16, 185, 129, 0.15)";
-        badge.style.borderColor = "rgba(16, 185, 129, 0.3)";
+        badge.style.color = "var(--green)";
+        badge.style.background = "rgba(46, 204, 113, 0.15)";
+        badge.style.borderColor = "rgba(46, 204, 113, 0.35)";
       } else {
         badge.textContent = "未設定";
-        badge.style.color = "#F59E0B";
-        badge.style.background = "rgba(245, 158, 11, 0.15)";
-        badge.style.borderColor = "rgba(245, 158, 11, 0.3)";
+        badge.style.color = "var(--gold)";
+        badge.style.background = "rgba(212, 167, 91, 0.15)";
+        badge.style.borderColor = "rgba(212, 167, 91, 0.35)";
       }
     } catch (e) {
       console.error("Failed to check Gemini key:", e);
@@ -807,7 +908,7 @@
     const grid = document.getElementById("profileGrid");
     grid.innerHTML = "";
     if (profiles.length === 0) {
-      grid.innerHTML = '<div style="color: var(--text-dim); font-size: 0.9rem; grid-column: 1 / -1; text-align: center; padding: 24px;">保存済みの話者プロファイルはありません。上のフォームから自動生成するかインポートしてください。</div>';
+      grid.innerHTML = '<div style="color: var(--paper-muted); font-size: 0.88rem; grid-column: 1 / -1; text-align: center; padding: 28px;">保存済みの話者プロファイルはありません。上のフォームから自動生成するかインポートしてください。</div>';
       return;
     }
 
@@ -823,28 +924,28 @@
               <div class="profile-card-id">${escapeHtml(p.speaker_id)}</div>
             </div>
             <div style="display:flex; gap:6px; align-items:center;">
-              ${p.voiceprint && p.voiceprint.length ? '<span class="badge" style="background:rgba(2, 132, 199, 0.2); color:#38BDF8; border:1px solid rgba(56, 189, 248, 0.4); font-size:0.7rem; padding: 2px 7px;">🎙️ 声紋 (512次元)</span>' : ''}
-              ${p.speaker_id === activeProfileId ? '<span class="badge" style="background:#10B981; color:#fff;">適用中</span>' : ''}
+              ${p.voiceprint && p.voiceprint.length ? '<span class="badge" style="background:rgba(91, 127, 212, 0.15); color:#8da6e8; border:1px solid rgba(91, 127, 212, 0.35); font-size:0.7rem; padding: 2px 7px;">🎙️ 声紋 (512次元)</span>' : ''}
+              ${p.speaker_id === activeProfileId ? '<span class="badge" style="background:var(--green); color:#fff; box-shadow:0 0 8px var(--green-glow); font-size:0.7rem; padding: 2px 7px;">適用中</span>' : ''}
             </div>
           </div>
           <div class="profile-stats" style="margin-top: 10px;">
             <span>補正ルール: <b>${p.replacements ? p.replacements.length : 0}</b> 件</span>
-            <span style="color: var(--primary-glow);">学習動画: <b>${vCount}</b> 本</span>
-            <span>声紋: <b style="color: ${p.voiceprint && p.voiceprint.length ? '#38BDF8' : 'var(--text-muted)'}">${p.voiceprint && p.voiceprint.length ? '学習済' : '未学習'}</b></span>
+            <span style="color: var(--gold);">学習動画: <b>${vCount}</b> 本</span>
+            <span>声紋: <b style="color: ${p.voiceprint && p.voiceprint.length ? 'var(--blue)' : 'var(--paper-muted)'}">${p.voiceprint && p.voiceprint.length ? '学習済' : '未学習'}</b></span>
             ${p.extracted_section ? `<span>直近抽出: ${p.extracted_section.duration_sec}秒</span>` : ''}
           </div>
           ${p.articulation_traits && p.articulation_traits.length ? `
-            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">
+            <div style="font-size: 0.75rem; color: var(--paper-dim); margin-top: 6px;">
               特徴: ${escapeHtml(p.articulation_traits.join(" / "))}
             </div>
           ` : ''}
         </div>
         <div class="profile-actions">
-          <button class="btn btn-success btn-sm" onclick="applyProfile('${p.speaker_id}')" style="font-size:0.75rem; padding: 6px 10px;">⚡ 適用</button>
-          <button class="btn btn-primary btn-sm" onclick="startGrowProfile('${p.speaker_id}')" style="font-size:0.75rem; padding: 6px 10px;">🌱 育てる</button>
-          <button class="btn btn-secondary btn-sm" onclick="exportProfile('${p.speaker_id}')" style="font-size:0.75rem; padding: 6px 10px;">📤 出力</button>
-          <button class="btn btn-secondary btn-sm" onclick="openEditModal('${p.speaker_id}')" style="font-size:0.75rem; padding: 6px 10px;">✏ 編集</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteProfile('${p.speaker_id}')" style="font-size:0.75rem; padding: 6px 10px;">🗑</button>
+          <button class="btn btn-success btn-sm" onclick="applyProfile('${p.speaker_id}')" style="font-size:0.75rem; padding: 5px 10px;">⚡ 適用</button>
+          <button class="btn btn-primary btn-sm" onclick="startGrowProfile('${p.speaker_id}')" style="font-size:0.75rem; padding: 5px 10px;">🌱 育てる</button>
+          <button class="btn btn-secondary btn-sm" onclick="exportProfile('${p.speaker_id}')" style="font-size:0.75rem; padding: 5px 10px;">📤 出力</button>
+          <button class="btn btn-secondary btn-sm" onclick="openEditModal('${p.speaker_id}')" style="font-size:0.75rem; padding: 5px 10px;">✏ 編集</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteProfile('${p.speaker_id}')" style="font-size:0.75rem; padding: 5px 10px;">🗑</button>
         </div>
       `;
       grid.appendChild(card);
@@ -928,7 +1029,7 @@
 
     renderedLogCount = 0;
     const logBox = document.getElementById("consoleLogBox");
-    if (logBox) logBox.innerHTML = '<div style="color: #38BDF8;">[起動中] タスクをバックグラウンドで開始しています...</div>';
+    if (logBox) logBox.innerHTML = '<div style="color: var(--blue);">[起動中] タスクをバックグラウンドで開始しています...</div>';
 
     try {
       const res = await fetch("/api/profiles/generate", {
@@ -984,36 +1085,36 @@
       const div = document.createElement("div");
       div.style.padding = "2px 0";
       div.style.borderBottom = "1px solid rgba(255, 255, 255, 0.03)";
-      div.style.fontFamily = "'Cascadia Code', Consolas, 'Fira Code', monospace";
+      div.style.fontFamily = "var(--mono)";
 
       let color = "#CBD5E1";
       let tagBg = "rgba(255, 255, 255, 0.08)";
       const lvl = (entry.level || "INFO").toUpperCase();
 
       if (lvl === "YTDL") {
-        color = "#38BDF8";
-        tagBg = "rgba(56, 189, 248, 0.15)";
+        color = "#8da6e8";
+        tagBg = "rgba(91, 127, 212, 0.18)";
       } else if (lvl === "ASR") {
-        color = "#34D399";
-        tagBg = "rgba(52, 211, 153, 0.15)";
+        color = "#5eead4";
+        tagBg = "rgba(46, 204, 113, 0.15)";
       } else if (lvl === "GEMINI") {
-        color = "#A78BFA";
-        tagBg = "rgba(167, 139, 250, 0.15)";
+        color = "#c084fc";
+        tagBg = "rgba(192, 132, 252, 0.15)";
       } else if (lvl === "RULE") {
-        color = "#FCD34D";
-        tagBg = "rgba(252, 211, 77, 0.15)";
+        color = "#fde047";
+        tagBg = "rgba(253, 224, 71, 0.15)";
       } else if (lvl === "SUCCESS") {
-        color = "#4ADE80";
+        color = "#4ade80";
         tagBg = "rgba(74, 222, 128, 0.2)";
       } else if (lvl === "WARN") {
-        color = "#FB923C";
+        color = "#fb923c";
         tagBg = "rgba(251, 146, 60, 0.2)";
       } else if (lvl === "ERROR") {
-        color = "#F87171";
-        tagBg = "rgba(248, 113, 113, 0.2)";
+        color = "#ff8b73";
+        tagBg = "rgba(224, 79, 47, 0.2)";
       } else if (lvl === "STEP" || lvl === "BATCH") {
-        color = "#93C5FD";
-        tagBg = "rgba(147, 197, 253, 0.15)";
+        color = "#b4c7f7";
+        tagBg = "rgba(91, 127, 212, 0.15)";
       }
 
       div.innerHTML = `
