@@ -250,12 +250,39 @@ class ProfileBuilderPipeline:
                 log_callback=log_callback,
             )
 
+            # 3.5 Voiceprint preparation for speaker verification
+            target_voiceprint = None
+            vp_threshold = 0.40
+            voice_extractor = VoiceprintExtractor()
+            extracted_current_vp = None
+            extracted_current_vp_count = 0
+
+            if existing_profile and existing_profile.voiceprint:
+                target_voiceprint = existing_profile.voiceprint
+                vp_threshold = existing_profile.voiceprint_threshold or 0.40
+                log("VOICE", f"既存プロファイルの話者声紋を適用 (閾値: {vp_threshold:.2f})。本人の発話のみを厳選して文字起こしします。")
+            elif voice_extractor.is_available:
+                report("voiceprint", 0.42, "動画内の支配的話者から初期声紋を抽出中...")
+                try:
+                    extracted_current_vp, extracted_current_vp_count = voice_extractor.extract_voiceprint(
+                        wav_path=wav_path,
+                        log_callback=log_callback,
+                    )
+                    if extracted_current_vp:
+                        target_voiceprint = extracted_current_vp
+                        vp_threshold = 0.38
+                        log("VOICE", f"初期声紋を抽出完了。メイン話者の発話区間を優先抽出します。")
+                except Exception as e:
+                    logger.warning("Initial voiceprint extraction failed: %s", e)
+
             # 4. Local transcription with hayamimi ReazonSpeech
             report("transcribe", 0.45, "hayamimi (ReazonSpeech) によるテスト文字起こしを開始...")
             transcriber = LocalTranscriber()
             try:
                 trans_res = transcriber.transcribe_file(
                     wav_path=wav_path,
+                    target_voiceprint=target_voiceprint,
+                    voiceprint_threshold=vp_threshold,
                     status_callback=lambda msg, prog: report("transcribe", 0.45 + (prog * 0.25), msg),
                     log_callback=log_callback,
                 )
@@ -288,20 +315,19 @@ class ProfileBuilderPipeline:
             if vid_id and vid_id not in profile.processed_video_ids:
                 profile.processed_video_ids.append(vid_id)
 
-            # 5.5 Extract Voiceprint (CAM++ 512-dim embedding)
-            report("voiceprint", 0.88, "CAM++ による話者声紋（512次元ベクトル）を抽出中...")
+            # 5.5 Extract/Save Voiceprint (CAM++ 512-dim embedding)
+            report("voiceprint", 0.88, "CAM++ による話者声紋（512次元ベクトル）を確定中...")
             try:
-                voice_extractor = VoiceprintExtractor()
-                if voice_extractor.is_available:
-                    v_vec, v_count = voice_extractor.extract_voiceprint(
+                if extracted_current_vp is None and voice_extractor.is_available:
+                    extracted_current_vp, extracted_current_vp_count = voice_extractor.extract_voiceprint(
                         wav_path=wav_path,
                         log_callback=log_callback,
                     )
-                    if v_vec:
-                        profile.voiceprint = v_vec
-                        profile.voiceprint_sample_count = v_count
-                        log("VOICE", f"声紋登録完了: {v_count} サンプルから話者特徴量を学習しました。")
-                else:
+                if extracted_current_vp:
+                    profile.voiceprint = extracted_current_vp
+                    profile.voiceprint_sample_count = extracted_current_vp_count
+                    log("VOICE", f"声紋登録完了: {extracted_current_vp_count} サンプルから話者特徴量を学習しました。")
+                elif not voice_extractor.is_available:
                     log("INFO", "声紋モデル (campplus_sv.onnx) が未検出のため声紋抽出はスキップされました。")
             except Exception as e:
                 logger.warning("Voiceprint extraction failed: %s", e)

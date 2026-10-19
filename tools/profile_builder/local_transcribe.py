@@ -15,6 +15,7 @@ import soundfile as sf
 # Add scripts directory to path to import asr_engine
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts"))
 from asr_engine import RoutedASR  # noqa: E402
+from tools.profile_builder.voiceprint_extractor import VoiceprintExtractor  # noqa: E402
 
 logger = logging.getLogger("hayamimi.local_transcribe")
 
@@ -59,10 +60,15 @@ class LocalTranscriber:
         self,
         wav_path: str,
         chunk_sec: float = 12.0,
+        target_voiceprint: Optional[List[float]] = None,
+        voiceprint_threshold: float = 0.40,
         status_callback: Optional[Callable[[str, float], None]] = None,
         log_callback: Optional[Callable[[str, str], None]] = None,
     ) -> LocalTranscriptionResult:
-        """Transcribe a 16kHz mono WAV file in chunks to produce test recognition output."""
+        """Transcribe a 16kHz mono WAV file in chunks to produce test recognition output.
+        If target_voiceprint is provided, chunks from other speakers (e.g. collabs, game voices)
+        are automatically filtered out before transcription.
+        """
         if not os.path.isfile(wav_path):
             raise FileNotFoundError(f"Audio file not found: {wav_path}")
 
@@ -73,6 +79,15 @@ class LocalTranscriber:
         total_samples = len(data)
         duration_sec = float(total_samples) / float(sr)
         total_chunks = max(1, int(np.ceil(duration_sec / chunk_sec)))
+
+        voice_extractor = None
+        if target_voiceprint:
+            voice_extractor = VoiceprintExtractor()
+            if log_callback:
+                if voice_extractor.is_available:
+                    log_callback("VOICE", f"話者声紋フィルタ有効 (閾値: {voiceprint_threshold:.2f})。本人の発話区間のみを厳選して文字起こしします。")
+                else:
+                    log_callback("WARN", "声紋モデルが未配備のため、全発話区間を文字起こしします。")
 
         if log_callback:
             log_callback("ASR", f"hayamimi (ReazonSpeech) モデル準備完了。音声長: {int(duration_sec)}秒 (全 {total_chunks} チャンク) を順次推論開始...")
@@ -104,6 +119,20 @@ class LocalTranscriber:
             # Skip chunks that are practically silence
             rms = np.sqrt(np.mean(chunk**2)) if len(chunk) > 0 else 0.0
             if rms > 0.005 and len(chunk) > int(0.5 * sr):
+                # Voiceprint filter: check if this chunk belongs to target speaker
+                if target_voiceprint and voice_extractor and voice_extractor.is_available:
+                    chunk_emb = voice_extractor.compute_chunk_embedding(chunk, sr)
+                    if chunk_emb is not None:
+                        sim = VoiceprintExtractor.cosine_similarity(chunk_emb, target_voiceprint)
+                        if sim < voiceprint_threshold:
+                            if log_callback:
+                                log_callback(
+                                    "VOICE",
+                                    f"[{chunk_idx}/{total_chunks}] {time_label}: コラボ相手/他者音声を検出 (類似度: {sim:.2f} < {voiceprint_threshold:.2f})、除外しました。"
+                                )
+                            cur_pos = end_pos
+                            continue
+
                 try:
                     res = engine.transcribe(chunk, sr, known_lang="ja", live=False)
                     text = (res.get("text") or "").strip()

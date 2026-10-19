@@ -313,7 +313,7 @@ def test_pipeline_logging_callback(monkeypatch, tmp_path):
     class MockTranscriber:
         def __init__(self, *args, **kwargs):
             pass
-        def transcribe_file(self, wav_path, status_callback=None, log_callback=None):
+        def transcribe_file(self, wav_path, status_callback=None, log_callback=None, **kwargs):
             if log_callback:
                 log_callback("ASR", "推論チャンク [00:00 - 00:12]: 「テスト音声」")
             return LocalTranscriptionResult(
@@ -450,6 +450,68 @@ def test_voiceprint_extractor_availability(tmp_path):
     v, count = extractor.extract_voiceprint(str(tmp_path / "non_existent.wav"))
     assert v is None
     assert count == 0
+
+
+def test_transcribe_with_voiceprint_filtering(tmp_path, monkeypatch):
+    """Verify that chunks from other speakers are skipped during local transcription."""
+    import soundfile as sf
+    import numpy as np
+    from tools.profile_builder.local_transcribe import LocalTranscriber
+    from tools.profile_builder.voiceprint_extractor import VoiceprintExtractor
+
+    # 1. Create a dummy WAV file with 2 chunks (24s = two 12s chunks)
+    sr = 16000
+    duration_s = 24
+    t = np.linspace(0, duration_s, duration_s * sr, endpoint=False)
+    # Sine wave tone so rms > 0.005
+    audio = (0.2 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    wav_path = str(tmp_path / "test_filter.wav")
+    sf.write(wav_path, audio, sr)
+
+    # 2. Target voiceprint
+    target_vp = [1.0] + [0.0] * 511
+
+    # 3. Mock VoiceprintExtractor to return matching embedding for chunk 1, non-matching for chunk 2
+    call_count = {"count": 0}
+    def mock_compute_chunk_emb(self, chunk, chunk_sr=16000):
+        call_count["count"] += 1
+        emb = np.zeros(512, dtype=np.float32)
+        if call_count["count"] == 1:
+            emb[0] = 1.0  # similarity = 1.0 (match!)
+        else:
+            emb[1] = 1.0  # similarity = 0.0 (other speaker/game voice!)
+        return emb
+
+    monkeypatch.setattr(VoiceprintExtractor, "is_available", True)
+    monkeypatch.setattr(VoiceprintExtractor, "compute_chunk_embedding", mock_compute_chunk_emb)
+
+    # 4. Mock RoutedASR engine
+    class MockEngine:
+        def transcribe(self, chunk, sr, known_lang="ja", live=False):
+            return {"text": f"認識テキスト_{call_count['count']}"}
+
+    transcriber = LocalTranscriber()
+    monkeypatch.setattr(transcriber, "_get_engine", lambda: MockEngine())
+
+    captured_logs = []
+    def on_log(lvl, msg):
+        captured_logs.append((lvl, msg))
+
+    res = transcriber.transcribe_file(
+        wav_path=wav_path,
+        chunk_sec=12.0,
+        target_voiceprint=target_vp,
+        voiceprint_threshold=0.40,
+        log_callback=on_log,
+    )
+
+    # Chunk 1 was transcribed, Chunk 2 was filtered out!
+    assert len(res.segments) == 1
+    assert res.segments[0].text == "認識テキスト_1"
+    # Verify VOICE skip log was emitted
+    voice_logs = [msg for lvl, msg in captured_logs if lvl == "VOICE"]
+    assert any("コラボ相手/他者音声を検出" in m for m in voice_logs)
+
 
 
 

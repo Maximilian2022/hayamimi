@@ -39,6 +39,46 @@ class VoiceprintExtractor:
     def is_available(self) -> bool:
         return self._extractor is not None
 
+    def compute_chunk_embedding(self, chunk: np.ndarray, sr: int = 16000) -> Optional[np.ndarray]:
+        """Compute L2-normalized 512-dim embedding for a single audio chunk."""
+        if not self.is_available or len(chunk) < int(0.5 * sr):
+            return None
+        try:
+            # Resample if needed
+            if sr != 16000:
+                from scipy import signal
+                num_samples = int(len(chunk) * 16000 / sr)
+                chunk = signal.resample(chunk, num_samples)
+                sr = 16000
+
+            # Cap length to 6s
+            max_len = 6 * sr
+            if len(chunk) > max_len:
+                chunk = chunk[:max_len]
+
+            stream = self._extractor.create_stream()
+            stream.accept_waveform(sr, chunk)
+            stream.input_finished()
+            emb = np.asarray(self._extractor.compute(stream), dtype=np.float32)
+            norm = np.linalg.norm(emb)
+            if norm > 1e-9:
+                return emb / norm
+            return None
+        except Exception as e:
+            logger.debug("Failed to compute embedding for chunk: %s", e)
+            return None
+
+    @staticmethod
+    def cosine_similarity(v1: np.ndarray | List[float], v2: np.ndarray | List[float]) -> float:
+        """Calculate cosine similarity between two L2-normalized vectors."""
+        a = np.asarray(v1, dtype=np.float32)
+        b = np.asarray(v2, dtype=np.float32)
+        norm_a = np.linalg.norm(a)
+        norm_b = np.linalg.norm(b)
+        if norm_a < 1e-9 or norm_b < 1e-9:
+            return 0.0
+        return float(np.dot(a, b) / (norm_a * norm_b))
+
     def extract_voiceprint(
         self,
         wav_path: str,
