@@ -900,6 +900,7 @@ class SubtitleServer:
                     existing_profile_id = payload.get("existing_profile_id")
                     manual_start = payload.get("manual_start")
                     duration = float(payload.get("duration") or 720.0)
+                    max_videos = int(payload.get("max_videos") or 10)
 
                     with _generation_lock:
                         if not _generation_task["done"] and _generation_task["status"] == "running":
@@ -930,13 +931,15 @@ class SubtitleServer:
                                 display_name=display_name,
                                 manual_start_sec=manual_start,
                                 duration_sec=duration,
+                                max_videos=max_videos,
                                 existing_profile_id=existing_profile_id,
                                 status_callback=_cb,
                             )
                             with _generation_lock:
                                 _generation_task["status"] = "completed"
                                 _generation_task["progress"] = 1.0
-                                _generation_task["message"] = f"完了: {prof.display_name}"
+                                v_cnt = len(prof.processed_video_ids) or len(prof.source_video_urls) or 1
+                                _generation_task["message"] = f"完了: {prof.display_name} (学習動画: {v_cnt}本, ルール: {len(prof.replacements)}件)"
                                 _generation_task["done"] = True
                         except Exception as e:
                             with _generation_lock:

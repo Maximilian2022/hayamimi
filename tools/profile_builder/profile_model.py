@@ -46,6 +46,10 @@ class SpeakerProfile(BaseModel):
         default_factory=list,
         description="List of YouTube video URLs processed to train this profile",
     )
+    processed_video_ids: List[str] = Field(
+        default_factory=list,
+        description="List of processed YouTube Video IDs to prevent duplicate training",
+    )
     extracted_section: Optional[ExtractedSection] = Field(None, description="Extracted section info")
     articulation_traits: List[str] = Field(
         default_factory=list,
@@ -64,7 +68,7 @@ class SpeakerProfile(BaseModel):
         """Merge another profile's findings (from an additional YouTube video) into this profile.
         - Preserves existing rules and appends new unique rules.
         - Combines articulation traits without duplicates.
-        - Keeps full training history of source video URLs.
+        - Keeps full training history of source video URLs and video IDs (prevents duplicate runs).
         - Updates updated_at timestamp.
         """
         urls = list(self.source_video_urls)
@@ -78,6 +82,18 @@ class SpeakerProfile(BaseModel):
         self.source_video_urls = urls
         if other.source_video_url:
             self.source_video_url = other.source_video_url
+
+        # Merge processed video IDs for duplicate prevention
+        vids = list(self.processed_video_ids)
+        for vid in other.processed_video_ids:
+            if vid and vid not in vids:
+                vids.append(vid)
+        # Extract video IDs from all URLs
+        for u in self.source_video_urls:
+            m = re.search(r"(?:[?&]v=|youtu\.be/|/live/|/shorts/)([a-zA-Z0-9_-]{11})", u)
+            if m and m.group(1) not in vids:
+                vids.append(m.group(1))
+        self.processed_video_ids = vids
 
         existing_traits = list(self.articulation_traits)
         for t in other.articulation_traits:

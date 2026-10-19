@@ -448,8 +448,11 @@
 
     <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 14px;">
       <div class="form-group">
-        <label class="form-label">YouTube 配信/動画 URL</label>
-        <input type="text" id="inputYtUrl" class="input-text" placeholder="https://www.youtube.com/watch?v=... または /live/...">
+        <label class="form-label">YouTube 配信/動画 URL または チャンネルURL</label>
+        <input type="text" id="inputYtUrl" class="input-text" placeholder="https://www.youtube.com/watch?v=... または https://www.youtube.com/@チャンネル名">
+        <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 4px;">
+          💡 <b>チャンネルURL（@チャンネル名）</b> を指定すると、最近の人気動画・配信アーカイブから自動で一括学習します。過去に学習済みの動画は自動で重複スキップされます。
+        </div>
       </div>
       <div class="form-group" id="displayNameGroup">
         <label class="form-label">話者表示名 (省略時はチャンネル名)</label>
@@ -458,15 +461,19 @@
     </div>
 
     <details style="font-size: 0.85rem; color: var(--text-muted);">
-      <summary style="cursor: pointer; user-select: none;">⚙ 詳細設定（抽出開始位置・時間の微調整）</summary>
+      <summary style="cursor: pointer; user-select: none;">⚙ 詳細設定（チャンネル取得本数・抽出時間の調整）</summary>
       <div style="display: flex; gap: 16px; margin-top: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: var(--radius-sm);">
         <div class="form-group" style="flex: 1;">
-          <label class="form-label">開始位置 (秒、空欄で最高密度区間を自動選定)</label>
-          <input type="number" id="inputManualStart" class="input-text" placeholder="自動検出 (推奨)">
+          <label class="form-label">チャンネル一括学習本数 (人気上位N本)</label>
+          <input type="number" id="inputMaxVideos" class="input-text" value="10" min="1" max="30">
         </div>
         <div class="form-group" style="flex: 1;">
-          <label class="form-label">抽出時間 (秒)</label>
+          <label class="form-label">1本あたりの抽出時間 (秒)</label>
           <input type="number" id="inputDuration" class="input-text" value="720">
+        </div>
+        <div class="form-group" style="flex: 1;">
+          <label class="form-label">開始位置 (秒、単一動画時のみ有効)</label>
+          <input type="number" id="inputManualStart" class="input-text" placeholder="自動検出 (推奨)">
         </div>
       </div>
     </details>
@@ -711,7 +718,7 @@
     }
 
     profiles.forEach(p => {
-      const vCount = (p.source_video_urls && p.source_video_urls.length) ? p.source_video_urls.length : (p.source_video_url ? 1 : 0);
+      const vCount = (p.processed_video_ids && p.processed_video_ids.length) ? p.processed_video_ids.length : ((p.source_video_urls && p.source_video_urls.length) ? p.source_video_urls.length : (p.source_video_url ? 1 : 0));
       const card = document.createElement("div");
       card.className = "profile-card" + (p.speaker_id === activeProfileId ? " active" : "");
       card.innerHTML = `
@@ -809,6 +816,7 @@
 
     const manualStart = document.getElementById("inputManualStart").value;
     const duration = parseFloat(document.getElementById("inputDuration").value) || 720;
+    const maxVideos = parseInt(document.getElementById("inputMaxVideos").value, 10) || 10;
 
     const btn = document.getElementById("btnStartGenerate");
     btn.disabled = true;
@@ -828,6 +836,7 @@
           existing_profile_id: existingProfileId,
           manual_start: manualStart ? parseFloat(manualStart) : null,
           duration,
+          max_videos: maxVideos,
         }),
       });
       const data = await res.json();

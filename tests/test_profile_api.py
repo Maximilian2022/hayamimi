@@ -201,3 +201,44 @@ def test_generate_api_with_grow_mode(running_server, monkeypatch):
     assert captured_call.get("youtube_url") == "https://www.youtube.com/watch?v=grow_test"
     assert captured_call.get("existing_profile_id") == "test_speaker"
 
+
+def test_generate_api_with_channel_url(running_server, monkeypatch):
+    base_url, _ = running_server
+
+    captured_call = {}
+
+    class MockPipeline:
+        def __init__(self, api_key=None):
+            captured_call["api_key"] = api_key
+        def run(self, **kwargs):
+            captured_call.update(kwargs)
+            return SpeakerProfile(
+                speaker_id="channel_speaker",
+                display_name="チャンネル話者",
+                processed_video_ids=["vid_1", "vid_2"],
+            )
+
+    monkeypatch.setattr("tools.profile_builder.pipeline.ProfileBuilderPipeline", MockPipeline)
+
+    payload = json.dumps({
+        "url": "https://www.youtube.com/@ValChannel",
+        "max_videos": 5,
+        "display_name": "チャンネル話者",
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{base_url}/api/profiles/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as res:
+        assert res.status == 202
+
+    import time
+    time.sleep(0.3)
+
+    assert captured_call.get("youtube_url") == "https://www.youtube.com/@ValChannel"
+    assert captured_call.get("max_videos") == 5
+
+

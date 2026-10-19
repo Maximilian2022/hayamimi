@@ -22,7 +22,9 @@ from tools.profile_builder.profile_exporter import (
 from tools.profile_builder.youtube_fetcher import (
     SubtitleSegment,
     YouTubeFetcher,
+    extract_video_id,
     format_seconds_to_timestamp,
+    is_channel_url,
     parse_vtt_content,
     parse_vtt_timestamp,
 )
@@ -220,4 +222,70 @@ def test_profile_merge_and_grow():
     # 4. Hints merged
     assert "動画1の文脈" in (prof1.second_pass_hints or "")
     assert "動画2の文脈" in (prof1.second_pass_hints or "")
+
+
+def test_url_type_detection_and_video_id():
+    """Verify URL classifier and Video ID extractor."""
+    # Video ID extraction
+    assert extract_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+    assert extract_video_id("https://youtu.be/dQw4w9WgXcQ?t=10") == "dQw4w9WgXcQ"
+    assert extract_video_id("https://www.youtube.com/live/dQw4w9WgXcQ?feature=share") == "dQw4w9WgXcQ"
+    assert extract_video_id("https://www.youtube.com/shorts/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+    assert extract_video_id("https://www.youtube.com/@ValChannel") is None
+
+    # Channel URL classification
+    assert is_channel_url("https://www.youtube.com/@ValChannel") is True
+    assert is_channel_url("https://www.youtube.com/@ValChannel/streams") is True
+    assert is_channel_url("https://www.youtube.com/@ValChannel/videos") is True
+    assert is_channel_url("https://www.youtube.com/channel/UC1234567890abcdef") is True
+    assert is_channel_url("https://www.youtube.com/c/SomeCreator") is True
+    assert is_channel_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ") is False
+    assert is_channel_url("https://youtu.be/dQw4w9WgXcQ") is False
+
+
+def test_fetch_channel_videos_duplicate_prevention(monkeypatch):
+    """Verify channel videos are sorted by view_count and duplicates are filtered out."""
+    fetcher = YouTubeFetcher()
+
+    fake_entries = [
+        # Video 1: Popular but already trained
+        {"id": "vid_already1", "title": "配信1 (既学習)", "view_count": 50000, "duration": 7200, "channel": "Ch"},
+        # Video 2: Recent, 20k views
+        {"id": "vid_new_pop", "title": "人気配信2", "view_count": 20000, "duration": 5400, "channel": "Ch"},
+        # Video 3: Recent, 5k views
+        {"id": "vid_new_norm", "title": "通常配信3", "view_count": 5000, "duration": 3600, "channel": "Ch"},
+        # Video 4: Short video (< 3min, should be skipped)
+        {"id": "vid_short", "title": "告知ショート", "view_count": 100000, "duration": 45, "channel": "Ch"},
+        # Video 5: Recent, 30k views
+        {"id": "vid_new_top", "title": "最高再生配信5", "view_count": 30000, "duration": 6000, "channel": "Ch"},
+    ]
+
+    import subprocess
+    fake_jsonl = "\n".join([json.dumps(e) for e in fake_entries])
+
+    class MockCompletedProcess:
+        returncode = 0
+        stdout = fake_jsonl
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: MockCompletedProcess())
+
+    # Exclude vid_already1
+    videos = fetcher.fetch_channel_videos(
+        channel_url="https://www.youtube.com/@ValChannel",
+        limit=2,
+        candidate_pool=10,
+        exclude_video_ids={"vid_already1"},
+    )
+
+    # vid_already1 must be excluded (duplicate prevention)
+    # vid_short must be excluded (too short)
+    # Remaining candidates: vid_new_top (30k), vid_new_pop (20k), vid_new_norm (5k)
+    # Sorted by view_count descending, top 2
+    assert len(videos) == 2
+    assert videos[0]["id"] == "vid_new_top"
+    assert videos[1]["id"] == "vid_new_pop"
+    assert videos[0]["view_count"] == 30000
+    assert videos[1]["view_count"] == 20000
+
 

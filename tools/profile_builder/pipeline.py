@@ -17,10 +17,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from tools.profile_builder.gemini_analyzer import GeminiProfileAnalyzer, load_gemini_api_key
 from tools.profile_builder.local_transcribe import LocalTranscriber
 from tools.profile_builder.profile_exporter import load_profile, save_profile
+from tools.profile_builder.gemini_analyzer import GeminiProfileAnalyzer, load_gemini_api_key
+from tools.profile_builder.local_transcribe import LocalTranscriber
+from tools.profile_builder.profile_exporter import load_profile, save_profile
 from tools.profile_builder.profile_model import ExtractedSection, SpeakerProfile
 from tools.profile_builder.youtube_fetcher import (
     YouTubeFetcher,
+    extract_video_id,
     format_seconds_to_timestamp,
+    is_channel_url,
 )
 
 logger = logging.getLogger("hayamimi.profile_pipeline")
@@ -29,6 +34,7 @@ logger = logging.getLogger("hayamimi.profile_pipeline")
 class ProfileBuilderPipeline:
     """Orchestrates YouTube metadata fetching, section extraction, local transcription,
     and Gemini multimodal analysis to produce a complete speaker profile.
+    Supports both individual video URLs and channel URLs (batch learning recent popular videos).
     """
 
     def __init__(
@@ -47,10 +53,12 @@ class ProfileBuilderPipeline:
         display_name: Optional[str] = None,
         manual_start_sec: Optional[float] = None,
         duration_sec: float = 720.0,  # 12 minutes
+        max_videos: int = 10,
         existing_profile_id: Optional[str] = None,
         status_callback: Optional[Callable[[str, float, str], None]] = None,
     ) -> SpeakerProfile:
         """Execute end-to-end profile generation or incremental training.
+        If youtube_url is a channel URL, fetches recent popular videos and processes them in batch.
         Callback signature: (stage: str, progress: float, message: str)
         """
         def report(stage: str, progress: float, msg: str):
@@ -58,9 +66,102 @@ class ProfileBuilderPipeline:
             if status_callback:
                 status_callback(stage, progress, msg)
 
-        # Check if we are growing an existing profile
         target_pid = existing_profile_id or speaker_id
         existing_profile = load_profile(target_pid) if target_pid else None
+
+        # Check if URL is a YouTube channel URL
+        if is_channel_url(youtube_url):
+            report("channel", 0.02, f"チャンネルURLを検出しました。最新・人気動画をスキャン中: {youtube_url}")
+
+            # Collect already processed video IDs to prevent duplicate work
+            exclude_ids = set()
+            if existing_profile:
+                exclude_ids.update(existing_profile.processed_video_ids)
+                for u in existing_profile.source_video_urls:
+                    vid = extract_video_id(u)
+                    if vid:
+                        exclude_ids.add(vid)
+
+            videos = self.fetcher.fetch_channel_videos(
+                channel_url=youtube_url,
+                limit=max_videos,
+                candidate_pool=50,
+                exclude_video_ids=exclude_ids,
+            )
+
+            if not videos:
+                if exclude_ids:
+                    msg = f"チャンネル内の最近の人気動画はすべて学習済みです（学習済み: {len(exclude_ids)}本、スキップ完了）。"
+                else:
+                    msg = "チャンネルから対象動画が見つかりませんでした。"
+                report("complete", 1.0, msg)
+                if existing_profile:
+                    return existing_profile
+                raise ValueError(msg)
+
+            total_vids = len(videos)
+            report(
+                "channel",
+                0.05,
+                f"チャンネルから直近の人気動画 {total_vids} 本を抽出しました（重複 {len(exclude_ids)} 本は自動除外）。一括学習を開始します...",
+            )
+
+            cur_prof = existing_profile
+            for idx, vid_info in enumerate(videos):
+                v_url = vid_info["url"]
+                v_title = vid_info.get("title", "動画")
+                v_chan = vid_info.get("channel", "")
+
+                p_start = (idx / total_vids) * 0.95
+                p_end = ((idx + 1) / total_vids) * 0.95
+
+                def _sub_cb(stage: str, sub_prog: float, msg: str):
+                    overall = p_start + (sub_prog * (p_end - p_start))
+                    report(stage, overall, f"[{idx+1}/{total_vids}本目] 『{v_title[:22]}...』: {msg}")
+
+                cur_prof = self._process_single_video(
+                    youtube_url=v_url,
+                    speaker_id=speaker_id or (cur_prof.speaker_id if cur_prof else None),
+                    display_name=display_name or (cur_prof.display_name if cur_prof else v_chan),
+                    duration_sec=duration_sec,
+                    existing_profile=cur_prof,
+                    status_callback=_sub_cb,
+                )
+
+            learned_count = len(cur_prof.processed_video_ids) or len(cur_prof.source_video_urls)
+            report(
+                "complete",
+                1.0,
+                f"🎉 チャンネル一括学習が完了しました！ (累計学習: {learned_count}本, 置換ルール: {len(cur_prof.replacements)}件)",
+            )
+            return cur_prof
+
+        # Single video URL processing
+        return self._process_single_video(
+            youtube_url=youtube_url,
+            speaker_id=speaker_id,
+            display_name=display_name,
+            manual_start_sec=manual_start_sec,
+            duration_sec=duration_sec,
+            existing_profile=existing_profile,
+            status_callback=status_callback,
+        )
+
+    def _process_single_video(
+        self,
+        youtube_url: str,
+        speaker_id: Optional[str] = None,
+        display_name: Optional[str] = None,
+        manual_start_sec: Optional[float] = None,
+        duration_sec: float = 720.0,
+        existing_profile: Optional[SpeakerProfile] = None,
+        status_callback: Optional[Callable[[str, float, str], None]] = None,
+    ) -> SpeakerProfile:
+        """Process a single YouTube video end-to-end and merge into existing profile if given."""
+        def report(stage: str, progress: float, msg: str):
+            logger.info("[%s] (%.0f%%) %s", stage, progress * 100, msg)
+            if status_callback:
+                status_callback(stage, progress, msg)
 
         temp_dir = tempfile.mkdtemp(prefix="hayamimi_prof_")
         try:
@@ -72,13 +173,13 @@ class ProfileBuilderPipeline:
             if existing_profile:
                 speaker_id = existing_profile.speaker_id
                 display_name = existing_profile.display_name
-                report("metadata", 0.15, f"🌱 既存プロファイル '{display_name}' に新動画を追加学習します: {metadata.title}")
+                report("metadata", 0.15, f"🌱 既存プロファイル '{display_name}' に新動画を追加学習: {metadata.title}")
             else:
                 if not display_name:
                     display_name = metadata.channel or metadata.title[:20]
                 if not speaker_id:
                     speaker_id = SpeakerProfile.sanitize_speaker_id(display_name)
-                report("metadata", 0.15, f"新規プロファイル生成: {metadata.title} (話者: {display_name})")
+                report("metadata", 0.15, f"プロファイル生成: {metadata.title} (話者: {display_name})")
 
             # 2. Determine best audio section
             if manual_start_sec is not None and manual_start_sec >= 0:
@@ -149,6 +250,11 @@ class ProfileBuilderPipeline:
             )
             profile.source_video_url = youtube_url
 
+            # Track video ID for duplicate prevention
+            vid_id = metadata.video_id or extract_video_id(youtube_url)
+            if vid_id and vid_id not in profile.processed_video_ids:
+                profile.processed_video_ids.append(vid_id)
+
             # 6. Save Profile (with merge if growing)
             if existing_profile:
                 report("save", 0.92, "既存プロファイルに新動画の知見を統合・マージ中...")
@@ -159,13 +265,12 @@ class ProfileBuilderPipeline:
 
             report("save", 0.95, "プロファイルおよび置換辞書を保存中...")
             saved_path = save_profile(final_profile)
-            v_count = len(final_profile.source_video_urls) or (1 if final_profile.source_video_url else 0)
-            report("complete", 1.0, f"プロファイル育成が完了しました！ ({saved_path} - 学習動画: {v_count}本, 置換ルール: {len(final_profile.replacements)}件)")
+            v_count = len(final_profile.processed_video_ids) or len(final_profile.source_video_urls) or (1 if final_profile.source_video_url else 0)
+            report("complete", 1.0, f"完了: {saved_path} (学習動画: {v_count}本, 置換ルール: {len(final_profile.replacements)}件)")
 
             return final_profile
 
         finally:
-            # Clean up temporary directory
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
