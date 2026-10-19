@@ -787,6 +787,18 @@ class SubtitleServer:
                         self._json(200, [p.model_dump() for p in profs])
                     except Exception as e:
                         self._json(500, {"error": str(e)})
+                elif req_path == "/api/profiles/active":
+                    act = getattr(server, "_active_profile", None)
+                    if act:
+                        self._json(200, {
+                            "active": True,
+                            "speaker_id": act.speaker_id,
+                            "display_name": act.display_name,
+                            "has_voiceprint": bool(act.voiceprint and len(act.voiceprint) > 0),
+                            "voiceprint_samples": act.voiceprint_sample_count or 0,
+                        })
+                    else:
+                        self._json(200, {"active": False, "speaker_id": None})
                 elif req_path.startswith("/api/profiles/") and req_path.endswith("/export"):
                     parts = req_path.split("/")
                     if len(parts) == 5:
@@ -998,7 +1010,16 @@ class SubtitleServer:
                         mapping = {r.pattern: r.replacement for r in prof.replacements if r.pattern and r.replacement}
                         if server.asr is not None:
                             server.asr.set_replacements(mapping)
-                        self._json(200, {"ok": True, "speaker_id": sid, "rules_count": len(mapping)})
+                        server._active_profile = prof
+                        has_vp = bool(prof.voiceprint and len(prof.voiceprint) > 0)
+                        self._json(200, {
+                            "ok": True,
+                            "speaker_id": sid,
+                            "display_name": prof.display_name,
+                            "rules_count": len(mapping),
+                            "has_voiceprint": has_vp,
+                            "voiceprint_samples": prof.voiceprint_sample_count or 0,
+                        })
                     except Exception as exc:
                         self._json(400, {"error": str(exc)})
                     return

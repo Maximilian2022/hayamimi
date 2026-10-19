@@ -6,6 +6,7 @@ from __future__ import annotations
 import datetime
 import re
 from typing import List, Optional
+import numpy as np
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -63,11 +64,24 @@ class SpeakerProfile(BaseModel):
         None,
         description="Context hints for 2nd-pass refinement models",
     )
+    voiceprint: Optional[List[float]] = Field(
+        None,
+        description="L2-normalized 512-dimensional speaker embedding centroid (CAM++)",
+    )
+    voiceprint_threshold: float = Field(
+        0.45,
+        description="Cosine similarity threshold for speaker verification",
+    )
+    voiceprint_sample_count: int = Field(
+        0,
+        description="Total speech segments used to compute/refine this voiceprint centroid",
+    )
 
     def merge_profile(self, other: "SpeakerProfile") -> "SpeakerProfile":
         """Merge another profile's findings (from an additional YouTube video) into this profile.
         - Preserves existing rules and appends new unique rules.
         - Combines articulation traits without duplicates.
+        - Merges voiceprint embeddings with weighted vector average and L2-normalization.
         - Keeps full training history of source video URLs and video IDs (prevents duplicate runs).
         - Updates updated_at timestamp.
         """
@@ -122,6 +136,25 @@ class SpeakerProfile(BaseModel):
         if other.second_pass_hints and other.second_pass_hints.strip() not in hints:
             hints.append(other.second_pass_hints.strip())
         self.second_pass_hints = "\n".join(hints) if hints else None
+
+        # Merge voiceprint embeddings (weighted centroid average + L2 normalization)
+        if other.voiceprint:
+            if not self.voiceprint:
+                self.voiceprint = list(other.voiceprint)
+                self.voiceprint_sample_count = other.voiceprint_sample_count or 1
+                self.voiceprint_threshold = other.voiceprint_threshold or 0.45
+            else:
+                n1 = max(1, self.voiceprint_sample_count)
+                n2 = max(1, other.voiceprint_sample_count)
+                total_n = n1 + n2
+                vec1 = np.array(self.voiceprint, dtype=np.float32)
+                vec2 = np.array(other.voiceprint, dtype=np.float32)
+                merged_vec = (vec1 * n1 + vec2 * n2) / total_n
+                norm = float(np.linalg.norm(merged_vec))
+                if norm > 1e-9:
+                    merged_vec = merged_vec / norm
+                self.voiceprint = merged_vec.tolist()
+                self.voiceprint_sample_count = total_n
 
         self.updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         return self

@@ -365,3 +365,92 @@ def test_pipeline_logging_callback(monkeypatch, tmp_path):
     assert "SUCCESS" in levels
 
 
+def test_safe_parse_json_with_unterminated_string():
+    from tools.profile_builder.gemini_analyzer import safe_parse_json
+
+    # 1. Normal valid JSON
+    valid_json = '{"speaker_id": "test", "display_name": "Test", "replacements": [{"pattern": "aaa", "replacement": "bbb"}]}'
+    res = safe_parse_json(valid_json)
+    assert res["speaker_id"] == "test"
+    assert len(res["replacements"]) == 1
+
+    # 2. Markdown fenced JSON
+    fenced_json = "```json\n" + valid_json + "\n```"
+    res = safe_parse_json(fenced_json)
+    assert res["speaker_id"] == "test"
+
+    # 3. Truncated / Unterminated string JSON (e.g. cut off at char 4995)
+    # The output cuts off mid-string in the second replacement rule
+    truncated_json = """{
+  "speaker_id": "test_speaker",
+  "display_name": "テスト話者",
+  "articulation_traits": ["サ行が甘い"],
+  "replacements": [
+    {
+      "pattern": "勝てないとうですね",
+      "replacement": "勝てないそうですね",
+      "reason": "サ行化け"
+    },
+    {
+      "pattern": "ロードライン",
+      "replacement": "ロードナイン",
+      "reason": "ゲーム固有
+"""
+    # Without safe_parse_json, json.loads raises JSONDecodeError: Unterminated string starting at line...
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(truncated_json)
+
+    # With safe_parse_json, it auto-repairs and recovers the first complete rule!
+    logs = []
+    repaired = safe_parse_json(truncated_json, log_callback=lambda lvl, msg: logs.append((lvl, msg)))
+    assert repaired["speaker_id"] == "test_speaker"
+    assert len(repaired["replacements"]) == 1
+    assert repaired["replacements"][0]["pattern"] == "勝てないとうですね"
+    assert any("救出" in msg for lvl, msg in logs)
+
+
+def test_voiceprint_model_merging():
+    import numpy as np
+
+    # Create dummy 512-dim unit vectors
+    v1 = np.zeros(512, dtype=np.float32)
+    v1[0] = 1.0  # (1, 0, 0, ...)
+    v2 = np.zeros(512, dtype=np.float32)
+    v2[1] = 1.0  # (0, 1, 0, ...)
+
+    prof1 = SpeakerProfile(
+        speaker_id="speaker_a",
+        display_name="話者A",
+        voiceprint=v1.tolist(),
+        voiceprint_sample_count=10,
+    )
+
+    prof2 = SpeakerProfile(
+        speaker_id="speaker_a",
+        display_name="話者A",
+        voiceprint=v2.tolist(),
+        voiceprint_sample_count=10,
+    )
+
+    prof1.merge_profile(prof2)
+
+    assert prof1.voiceprint is not None
+    assert prof1.voiceprint_sample_count == 20
+    merged_np = np.array(prof1.voiceprint, dtype=np.float32)
+    # L2 norm must be approximately 1.0
+    assert abs(np.linalg.norm(merged_np) - 1.0) < 1e-5
+    # Equal weights: v1[0] and v2[1] should be equal
+    assert abs(merged_np[0] - merged_np[1]) < 1e-5
+
+
+def test_voiceprint_extractor_availability(tmp_path):
+    from tools.profile_builder.voiceprint_extractor import VoiceprintExtractor
+    extractor = VoiceprintExtractor(model_path=str(tmp_path / "non_existent.onnx"))
+    assert not extractor.is_available
+    v, count = extractor.extract_voiceprint(str(tmp_path / "non_existent.wav"))
+    assert v is None
+    assert count == 0
+
+
+
+

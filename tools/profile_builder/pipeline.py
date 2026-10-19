@@ -17,10 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from tools.profile_builder.gemini_analyzer import GeminiProfileAnalyzer, load_gemini_api_key
 from tools.profile_builder.local_transcribe import LocalTranscriber
 from tools.profile_builder.profile_exporter import load_profile, save_profile
-from tools.profile_builder.gemini_analyzer import GeminiProfileAnalyzer, load_gemini_api_key
-from tools.profile_builder.local_transcribe import LocalTranscriber
-from tools.profile_builder.profile_exporter import load_profile, save_profile
 from tools.profile_builder.profile_model import ExtractedSection, SpeakerProfile
+from tools.profile_builder.voiceprint_extractor import VoiceprintExtractor
 from tools.profile_builder.youtube_fetcher import (
     YouTubeFetcher,
     extract_video_id,
@@ -290,9 +288,28 @@ class ProfileBuilderPipeline:
             if vid_id and vid_id not in profile.processed_video_ids:
                 profile.processed_video_ids.append(vid_id)
 
+            # 5.5 Extract Voiceprint (CAM++ 512-dim embedding)
+            report("voiceprint", 0.88, "CAM++ による話者声紋（512次元ベクトル）を抽出中...")
+            try:
+                voice_extractor = VoiceprintExtractor()
+                if voice_extractor.is_available:
+                    v_vec, v_count = voice_extractor.extract_voiceprint(
+                        wav_path=wav_path,
+                        log_callback=log_callback,
+                    )
+                    if v_vec:
+                        profile.voiceprint = v_vec
+                        profile.voiceprint_sample_count = v_count
+                        log("VOICE", f"声紋登録完了: {v_count} サンプルから話者特徴量を学習しました。")
+                else:
+                    log("INFO", "声紋モデル (campplus_sv.onnx) が未検出のため声紋抽出はスキップされました。")
+            except Exception as e:
+                logger.warning("Voiceprint extraction failed: %s", e)
+                log("WARN", f"声紋抽出で例外が発生したためスキップしました: {e}")
+
             # 6. Save Profile (with merge if growing)
             if existing_profile:
-                report("save", 0.92, "既存プロファイルに新動画の知見を統合・マージ中...")
+                report("save", 0.92, "既存プロファイルに新動画の知見（辞書・活舌・声紋）を統合・マージ中...")
                 existing_profile.merge_profile(profile)
                 final_profile = existing_profile
             else:

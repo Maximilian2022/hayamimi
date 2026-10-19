@@ -76,6 +76,50 @@ def save_gemini_api_key(api_key: str, key_file: str = DEFAULT_KEY_FILE) -> None:
     logger.info("Saved Gemini API key to %s", key_file)
 
 
+def safe_parse_json(raw_text: str, log_callback: Optional[Callable[[str, str], None]] = None) -> dict:
+    """Safely parse JSON text from LLM, auto-repairing truncated/unterminated JSON strings."""
+    if not raw_text:
+        raise ValueError("Empty response text from Gemini")
+
+    text = raw_text.strip()
+    # Remove markdown code fences if present
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    # Fast path: try standard json.loads
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as initial_err:
+        logger.warning("Initial JSON parse failed (%s). Attempting safe truncation repair...", initial_err)
+        if log_callback:
+            log_callback("WARN", f"Geminiの出力がトークン制限で途中切断された形跡を検出 ({initial_err})。末尾の安全修復を試行します...")
+
+    # Heuristic repair for truncated JSON arrays/objects:
+    # Look backward for the last completely closed object '}'
+    last_brace = text.rfind("}")
+    while last_brace > 0:
+        candidate = text[:last_brace + 1].strip()
+        for suffix in ("", "\n]}", "\n}"):
+            try:
+                repaired = json.loads(candidate + suffix)
+                if isinstance(repaired, dict):
+                    logger.info("Successfully repaired truncated JSON by trimming to valid boundary.")
+                    if log_callback:
+                        log_callback("GEMINI", "末尾の未完了ルールを安全に除外し、それまでに生成された全ルールを100%救出しました！")
+                    return repaired
+            except json.JSONDecodeError:
+                pass
+        last_brace = text.rfind("}", 0, last_brace)
+
+    # Re-raise original error if heuristic could not rescue
+    raise initial_err
+
+
 class GeminiProfileAnalyzer:
     """Analyzes audio, local ASR text, and metadata using Gemini API."""
 
@@ -164,6 +208,7 @@ class GeminiProfileAnalyzer:
 添付された生音声を聞き、上記の誤認識テキストと照合して、
 話者の「活舌の甘さ・癖」および「ゲーム固有名詞の誤変換」を補正する置換ルールを作成してください。
 必ず過剰置換ガード（1〜2文字置換の禁止、3文字以上のフレーズ化）を徹底してください。
+※重要度の高い頻出ルールを最大40〜50件程度厳選して出力してください。
 """
 
             if status_callback:
@@ -189,6 +234,7 @@ class GeminiProfileAnalyzer:
                             system_instruction=SYSTEM_INSTRUCTION,
                             response_mime_type="application/json",
                             response_schema=SpeakerProfile,
+                            max_output_tokens=16384,
                             temperature=0.2,
                         ),
                     )
@@ -203,7 +249,7 @@ class GeminiProfileAnalyzer:
                 raise RuntimeError(f"All Gemini models failed: {last_err}")
 
             raw_text = response.text
-            data = json.loads(raw_text)
+            data = safe_parse_json(raw_text, log_callback=log_callback)
             profile = SpeakerProfile.model_validate(data)
 
             # Ensure speaker_id and display_name are preserved

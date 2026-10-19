@@ -7,6 +7,7 @@ import urllib.error
 import pytest
 
 from scripts.subtitle_server import SubtitleServer
+from tools.profile_builder.profile_exporter import save_profile
 from tools.profile_builder.profile_model import ReplacementRule, SpeakerProfile
 
 
@@ -306,5 +307,59 @@ def test_generate_task_status_metadata(running_server, monkeypatch):
     finally:
         block_event.set()
         time.sleep(0.2)
+
+
+def test_active_profile_and_apply_voiceprint(running_server, monkeypatch, tmp_path):
+    """Verify /api/profiles/active and /api/profiles/apply return voiceprint status."""
+    import numpy as np
+    base_url, _ = running_server
+
+    # 1. Initially inactive
+    with urllib.request.urlopen(f"{base_url}/api/profiles/active") as res:
+        assert res.status == 200
+        data = json.loads(res.read().decode("utf-8"))
+        assert data["active"] is False
+
+    # 2. Create a profile with voiceprint in storage
+    v = np.zeros(512, dtype=np.float32)
+    v[0] = 1.0
+    prof = SpeakerProfile(
+        speaker_id="vp_test_speaker",
+        display_name="声紋テスト話者",
+        voiceprint=v.tolist(),
+        voiceprint_sample_count=15,
+        replacements=[ReplacementRule(pattern="かてないとう", replacement="勝てないそう")],
+    )
+
+    pdir = str(tmp_path / "profiles")
+    save_profile(prof, storage_dir=pdir)
+    monkeypatch.setattr("scripts.subtitle_server._get_profiles_dir", lambda: pdir)
+
+    # 3. Apply profile
+    apply_payload = json.dumps({"speaker_id": "vp_test_speaker"}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url}/api/profiles/apply",
+        data=apply_payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as res:
+        assert res.status == 200
+        apply_data = json.loads(res.read().decode("utf-8"))
+        assert apply_data["ok"] is True
+        assert apply_data["has_voiceprint"] is True
+        assert apply_data["voiceprint_samples"] == 15
+        assert apply_data["display_name"] == "声紋テスト話者"
+
+    # 4. Check active endpoint now reports active profile
+    with urllib.request.urlopen(f"{base_url}/api/profiles/active") as res:
+        assert res.status == 200
+        active_data = json.loads(res.read().decode("utf-8"))
+        assert active_data["active"] is True
+        assert active_data["speaker_id"] == "vp_test_speaker"
+        assert active_data["display_name"] == "声紋テスト話者"
+        assert active_data["has_voiceprint"] is True
+        assert active_data["voiceprint_samples"] == 15
+
 
 

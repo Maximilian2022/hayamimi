@@ -1855,7 +1855,8 @@
         profs.forEach(p => {
           const opt = document.createElement("option");
           opt.value = p.speaker_id;
-          opt.textContent = `${p.display_name} (${p.speaker_id})`;
+          const vpIcon = (p.voiceprint && p.voiceprint.length) ? " 🎙️[声紋済]" : "";
+          opt.textContent = `${p.display_name} (${p.speaker_id})${vpIcon}`;
           if (p.speaker_id === currentVal) opt.selected = true;
           sel.appendChild(opt);
         });
@@ -1893,9 +1894,11 @@
         body: JSON.stringify({ speaker_id: speakerId }),
       });
       if (res.ok) {
+        const data = await res.json();
         localStorage.setItem("hayamimi_speaker_profile", speakerId);
         if (notify && saveMsg) {
-          saveMsg.textContent = `話者プロファイル「${speakerId}」を適用しました！`;
+          const vpInfo = data.has_voiceprint ? " (🎙️ 声紋特徴量 512次元を認識)" : "";
+          saveMsg.textContent = `話者プロファイル「${data.display_name || speakerId}」を適用しました！${vpInfo}`;
           saveMsg.style.display = "block";
           setTimeout(() => { saveMsg.style.display = "none"; saveMsg.textContent = "設定を保存しました"; }, 3500);
         }

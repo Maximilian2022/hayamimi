@@ -822,11 +822,15 @@
               <div class="profile-card-name">${escapeHtml(p.display_name)}</div>
               <div class="profile-card-id">${escapeHtml(p.speaker_id)}</div>
             </div>
-            ${p.speaker_id === activeProfileId ? '<span class="badge" style="background:#10B981; color:#fff;">適用中</span>' : ''}
+            <div style="display:flex; gap:6px; align-items:center;">
+              ${p.voiceprint && p.voiceprint.length ? '<span class="badge" style="background:rgba(2, 132, 199, 0.2); color:#38BDF8; border:1px solid rgba(56, 189, 248, 0.4); font-size:0.7rem; padding: 2px 7px;">🎙️ 声紋 (512次元)</span>' : ''}
+              ${p.speaker_id === activeProfileId ? '<span class="badge" style="background:#10B981; color:#fff;">適用中</span>' : ''}
+            </div>
           </div>
           <div class="profile-stats" style="margin-top: 10px;">
             <span>補正ルール: <b>${p.replacements ? p.replacements.length : 0}</b> 件</span>
             <span style="color: var(--primary-glow);">学習動画: <b>${vCount}</b> 本</span>
+            <span>声紋: <b style="color: ${p.voiceprint && p.voiceprint.length ? '#38BDF8' : 'var(--text-muted)'}">${p.voiceprint && p.voiceprint.length ? '学習済' : '未学習'}</b></span>
             ${p.extracted_section ? `<span>直近抽出: ${p.extracted_section.duration_sec}秒</span>` : ''}
           </div>
           ${p.articulation_traits && p.articulation_traits.length ? `
