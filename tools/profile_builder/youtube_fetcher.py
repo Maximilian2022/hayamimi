@@ -123,6 +123,7 @@ class YouTubeFetcher:
         limit: int = 10,
         candidate_pool: int = 50,
         exclude_video_ids: Optional[set[str]] = None,
+        log_callback: Optional[Callable[[str, str], None]] = None,
     ) -> List[dict]:
         """Fetch recent videos from a channel, filter out duplicates, and sort by view_count descending.
         
@@ -131,6 +132,7 @@ class YouTubeFetcher:
             limit: Maximum number of videos to return (default: 10)
             candidate_pool: Number of recent videos to fetch for evaluation (default: 50)
             exclude_video_ids: Set of video IDs already trained to prevent duplicate processing.
+            log_callback: Optional callback for streaming log messages.
         """
         exclude_video_ids = exclude_video_ids or set()
         clean_url = channel_url.strip()
@@ -145,6 +147,8 @@ class YouTubeFetcher:
 
         entries = []
         for target_url in candidate_urls:
+            if log_callback:
+                log_callback("YTDL", f"チャンネル動画をスキャン中: {target_url} (最大{candidate_pool}件)")
             cmd = [
                 self.yt_dlp_cmd,
                 "--flat-playlist",
@@ -203,7 +207,14 @@ class YouTubeFetcher:
 
         # Sort by view_count descending (最も再生数が多い人気動画順)
         valid_videos.sort(key=lambda x: x["view_count"], reverse=True)
-        return valid_videos[:limit]
+        chosen = valid_videos[:limit]
+        if log_callback:
+            dup_cnt = len(seen_ids & exclude_video_ids)
+            log_callback(
+                "YTDL",
+                f"スキャン完了: 取得候補 {len(entries)} 件中、既学習 {dup_cnt} 件をスキップし、再生数上位 {len(chosen)} 件を一括学習対象に決定。"
+            )
+        return chosen
 
     def fetch_metadata(self, url: str) -> VideoMetadata:
         """Fetch video metadata without downloading video."""
@@ -355,6 +366,9 @@ class YouTubeFetcher:
 
         cmd = [
             self.yt_dlp_cmd,
+            "--newline",
+            "--progress",
+            "--progress-delta", "0.5",
             "--no-playlist",
             "--download-sections", section_arg,
             "-x",
@@ -384,11 +398,16 @@ class YouTubeFetcher:
                     continue
                 output_lines.append(line_clean)
                 logger.debug("[yt-dlp] %s", line_clean)
-                if log_callback:
-                    # 進捗表示、ffmpeg変換、抽出先などの有用な行をリアルタイム通知
-                    if any(k in line_clean for k in ("[download]", "[ExtractAudio]", "Destination", "ffmpeg", "[info]")):
+                if "[download]" in line_clean:
+                    if log_callback:
                         log_callback("YTDL", line_clean)
-                    elif "ERROR" in line_clean or "WARNING" in line_clean:
+                    if status_callback:
+                        status_callback(line_clean)
+                elif any(k in line_clean for k in ("[ExtractAudio]", "Destination", "ffmpeg", "[info]")):
+                    if log_callback:
+                        log_callback("YTDL", line_clean)
+                elif "ERROR" in line_clean or "WARNING" in line_clean:
+                    if log_callback:
                         log_callback("WARN" if "WARNING" in line_clean else "ERROR", line_clean)
 
         ret = proc.wait()

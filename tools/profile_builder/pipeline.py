@@ -94,6 +94,7 @@ class ProfileBuilderPipeline:
                 limit=max_videos,
                 candidate_pool=50,
                 exclude_video_ids=exclude_ids,
+                log_callback=log,
             )
 
             if not videos:
@@ -230,12 +231,24 @@ class ProfileBuilderPipeline:
             # 3. Download audio section
             wav_path = os.path.join(temp_dir, f"{speaker_id}_raw.wav")
             report("download", 0.35, "該当区間の音声のみをピンポイント取得中...")
+
+            def _dl_status(msg: str):
+                import re
+                m = re.search(r"(\d+(\.\d+)?)%", msg)
+                if m:
+                    pct = float(m.group(1)) / 100.0
+                    overall = 0.35 + (pct * 0.10)
+                    clean_dl = msg.replace("[download]", "").strip()
+                    report("download", overall, f"音声区間をDL中: {clean_dl}")
+                else:
+                    report("download", 0.38, msg)
+
             self.fetcher.download_audio_section(
                 url=youtube_url,
                 start_sec=best_start,
                 end_sec=best_end,
                 output_wav_path=wav_path,
-                status_callback=lambda msg: report("download", 0.40, msg),
+                status_callback=_dl_status,
                 log_callback=log_callback,
             )
 
