@@ -223,6 +223,7 @@ class YouTubeFetcher:
             "--dump-json",
             "--no-playlist",
             "--skip-download",
+            "--extractor-args", "youtube:player_client=android,web",
             url,
         ]
         res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", check=True)
@@ -245,6 +246,7 @@ class YouTubeFetcher:
             "--write-auto-sub",
             "--sub-lang", "ja",
             "--sub-format", "vtt",
+            "--extractor-args", "youtube:player_client=android,web",
             "-o", out_template,
             url,
         ]
@@ -370,6 +372,7 @@ class YouTubeFetcher:
             "--progress",
             "--progress-delta", "0.5",
             "--no-playlist",
+            "--extractor-args", "youtube:player_client=android,web",
             "--download-sections", section_arg,
             "-x",
             "--audio-format", "wav",
@@ -412,7 +415,20 @@ class YouTubeFetcher:
 
         ret = proc.wait()
         if ret != 0:
-            err_text = "\n".join(output_lines[-10:])
+            err_text = "\n".join(output_lines[-15:])
+            # If 403 Forbidden or ffmpeg access denied occurred, trigger fallback
+            if any(term in err_text for term in ("403", "Forbidden", "access denied", "ffmpeg exited with code")):
+                if log_callback:
+                    log_callback("WARN", "YouTube から 403/Forbidden を検知しました。ネイティブダウンローダーによる安定取得へ自動フォールバックします...")
+                logger.warning("Download section failed with 403 or stream error, falling back to full audio download and local trim: %s", err_text)
+                return self._download_and_trim_locally(
+                    url=url,
+                    start_sec=start_sec,
+                    end_sec=end_sec,
+                    output_wav_path=output_wav_path,
+                    status_callback=status_callback,
+                    log_callback=log_callback,
+                )
             logger.error("Download failed (code %d): %s", ret, err_text)
             raise RuntimeError(f"yt-dlp failed (code {ret}): {err_text}")
 
@@ -428,3 +444,102 @@ class YouTubeFetcher:
         if log_callback:
             log_callback("YTDL", f"音声抽出完了: {output_wav_path}")
         return output_wav_path
+
+    def _download_and_trim_locally(
+        self,
+        url: str,
+        start_sec: float,
+        end_sec: float,
+        output_wav_path: str,
+        status_callback: Optional[Callable[[str], None]] = None,
+        log_callback: Optional[Callable[[str, str], None]] = None,
+    ) -> str:
+        """Fallback method: Download audio stream via native yt-dlp downloader and trim locally with ffmpeg.
+        Bypasses remote ffmpeg HTTP connection to googlevideo CDN, eliminating 403 Forbidden completely.
+        """
+        import tempfile
+        import shutil
+
+        start_ts = format_seconds_to_timestamp(start_sec)
+        end_ts = format_seconds_to_timestamp(end_sec)
+        dur = max(1.0, end_sec - start_sec)
+
+        temp_dir = tempfile.mkdtemp(prefix="hayamimi_ytdl_fallback_")
+        temp_audio = os.path.join(temp_dir, "full_audio.%(ext)s")
+
+        try:
+            if status_callback:
+                status_callback("音声ストリームを安全に取得中（403回避フォールバック）...")
+            if log_callback:
+                log_callback("YTDL", "ネイティブダウンローダーで音声ストリームを取得中（403回避）...")
+
+            cmd = [
+                self.yt_dlp_cmd,
+                "--newline",
+                "--progress",
+                "--progress-delta", "0.5",
+                "--no-playlist",
+                "--extractor-args", "youtube:player_client=android,web",
+                "-f", "ba/ba*",
+                "-o", temp_audio,
+                url,
+            ]
+
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+
+            if proc.stdout:
+                for line in proc.stdout:
+                    line_clean = line.strip()
+                    if not line_clean:
+                        continue
+                    if "[download]" in line_clean:
+                        if log_callback:
+                            log_callback("YTDL", line_clean)
+                        if status_callback:
+                            status_callback(line_clean)
+
+            ret = proc.wait()
+            if ret != 0:
+                raise RuntimeError(f"Fallback full audio download failed with code {ret}")
+
+            # Find downloaded file
+            candidates = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if os.path.isfile(os.path.join(temp_dir, f))]
+            if not candidates:
+                raise FileNotFoundError("Downloaded full audio file not found in temp directory")
+            downloaded_file = candidates[0]
+
+            if log_callback:
+                log_callback("YTDL", f"ローカル音声の切り出し処理中 ({start_ts} 〜 {end_ts})...")
+            if status_callback:
+                status_callback("ローカル音声から指定区間を高速切り出し中...")
+
+            # Trim with local ffmpeg (16kHz mono WAV)
+            trim_cmd = [
+                "ffmpeg",
+                "-y",
+                "-ss", str(start_sec),
+                "-t", str(dur),
+                "-i", downloaded_file,
+                "-ar", "16000",
+                "-ac", "1",
+                output_wav_path,
+            ]
+            res = subprocess.run(trim_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if res.returncode != 0:
+                raise RuntimeError(f"Local ffmpeg trimming failed: {res.stderr}")
+
+            if log_callback:
+                log_callback("YTDL", f"音声抽出完了: {output_wav_path}")
+            return output_wav_path
+
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+

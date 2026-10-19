@@ -579,3 +579,49 @@ def test_gemini_models_are_active_and_no_deprecated_1_5(monkeypatch):
     finally:
         if os.path.exists(dummy_wav):
             os.remove(dummy_wav)
+
+
+def test_download_audio_section_403_fallback(monkeypatch, tmp_path):
+    """Verify that download_audio_section triggers _download_and_trim_locally upon 403 Forbidden."""
+    import subprocess
+    fetcher = YouTubeFetcher()
+
+    # Mock Popen to simulate yt-dlp failing with 403 Forbidden on download-sections
+    class Mock403Process:
+        def __init__(self, *args, **kwargs):
+            self.stdout = [
+                "[youtube] Downloading visionos player API JSON\n",
+                "[download] Destination: raw.webm\n",
+                "HTTP error 403 Forbidden\n",
+                "Error opening input: Server returned 403 Forbidden (access denied)\n",
+                "ERROR: ffmpeg exited with code 3436169992\n",
+            ]
+
+        def wait(self):
+            return 1
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: Mock403Process())
+
+    fallback_called = []
+
+    def mock_fallback(url, start_sec, end_sec, output_wav_path, **kwargs):
+        fallback_called.append(True)
+        # Create dummy output file
+        with open(output_wav_path, "wb") as f:
+            f.write(b"RIFF....WAVEfmt ....data....")
+        return output_wav_path
+
+    monkeypatch.setattr(fetcher, "_download_and_trim_locally", mock_fallback)
+
+    out_file = str(tmp_path / "section.wav")
+    res = fetcher.download_audio_section(
+        url="https://youtube.com/watch?v=y13nXFk6D34",
+        start_sec=1200.0,
+        end_sec=1920.0,
+        output_wav_path=out_file,
+    )
+
+    assert len(fallback_called) == 1
+    assert res == out_file
+    assert os.path.exists(out_file)
+
