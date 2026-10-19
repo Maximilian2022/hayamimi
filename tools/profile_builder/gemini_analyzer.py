@@ -104,6 +104,7 @@ class GeminiProfileAnalyzer:
         extracted_section: Optional[ExtractedSection] = None,
         existing_profile: Optional[SpeakerProfile] = None,
         status_callback: Optional[Callable[[str], None]] = None,
+        log_callback: Optional[Callable[[str, str], None]] = None,
     ) -> SpeakerProfile:
         """Run multimodal analysis with Gemini API."""
         if not os.path.isfile(audio_wav_path):
@@ -111,8 +112,11 @@ class GeminiProfileAnalyzer:
 
         uploaded_file = None
         try:
+            wav_size_mb = os.path.getsize(audio_wav_path) / (1024 * 1024)
             if status_callback:
                 status_callback("音声ファイルを Gemini API にアップロード中...")
+            if log_callback:
+                log_callback("GEMINI", f"音声ファイル ({wav_size_mb:.1f} MB) を Google AI Studio (Gemini File API) にアップロード中...")
 
             # Upload audio file to Gemini File API
             uploaded_file = self.client.files.upload(
@@ -123,6 +127,8 @@ class GeminiProfileAnalyzer:
                 ),
             )
             logger.info("Uploaded audio file: %s (uri: %s)", uploaded_file.name, uploaded_file.uri)
+            if log_callback:
+                log_callback("GEMINI", f"アップロード完了 (ファイル名: {uploaded_file.name})。AI によるマルチモーダル照合へ進みます。")
 
             existing_context = ""
             if existing_profile:
@@ -162,6 +168,8 @@ class GeminiProfileAnalyzer:
 
             if status_callback:
                 status_callback("Gemini Flash によるマルチモーダル音声分析・辞書生成中...")
+            if log_callback:
+                log_callback("GEMINI", f"Gemini ({self.model_name}) に生音声と誤認識テキストを送信し推論中 (約20〜40秒程度お待ちください)...")
 
             # Candidate models in case of region/model fallback
             candidate_models = [self.model_name, "gemini-2.0-flash", "gemini-1.5-flash"]
@@ -187,6 +195,8 @@ class GeminiProfileAnalyzer:
                     break
                 except Exception as e:
                     logger.warning("Failed with model %s: %s", model, e)
+                    if log_callback:
+                        log_callback("WARN", f"モデル {model} での呼び出し失敗、フォールバック試行中: {e}")
                     last_err = e
 
             if response is None:
@@ -206,6 +216,13 @@ class GeminiProfileAnalyzer:
             safe_rules = profile.filter_safe_replacements(min_len=2)
             profile.replacements = safe_rules
 
+            if log_callback:
+                log_callback("GEMINI", f"AI分析完了！ 補正ルール {len(profile.replacements)} 件、活舌特徴 {len(profile.articulation_traits)} 件を抽出しました。")
+                for r in profile.replacements[:5]:
+                    log_callback("RULE", f"  補正例: 『{r.pattern}』 -> 『{r.replacement}』 ({r.reason or ''})")
+                if len(profile.replacements) > 5:
+                    log_callback("RULE", f"  ...他 {len(profile.replacements) - 5} 件")
+
             if status_callback:
                 status_callback(f"分析完了: {len(profile.replacements)} 件の補正ルールを生成しました。")
 
@@ -217,5 +234,7 @@ class GeminiProfileAnalyzer:
                 try:
                     self.client.files.delete(name=uploaded_file.name)
                     logger.info("Cleaned up Gemini uploaded file: %s", uploaded_file.name)
+                    if log_callback:
+                        log_callback("GEMINI", "Google AI Studio 上の一時音声ファイルを安全に削除（クリーンアップ完了）。")
                 except Exception as e:
                     logger.warning("Failed to delete uploaded file %s: %s", uploaded_file.name, e)

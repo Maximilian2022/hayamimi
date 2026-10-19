@@ -55,8 +55,23 @@ _generation_task = {
     "message": "",
     "done": True,
     "error": None,
+    "url": None,
+    "speaker_id": None,
+    "display_name": None,
+    "mode": None,
+    "logs": [],
 }
 _generation_lock = threading.Lock()
+
+def _append_generation_log(level: str, text: str) -> None:
+    import datetime
+    now_str = datetime.datetime.now().strftime("%H:%M:%S")
+    with _generation_lock:
+        logs = _generation_task.setdefault("logs", [])
+        logs.append({"time": now_str, "level": level, "text": text})
+        if len(logs) > 300:
+            _generation_task["logs"] = logs[-300:]
+
 
 def _get_gemini_key() -> str:
     storage_dir = _get_storage_dir()
@@ -915,6 +930,9 @@ class SubtitleServer:
                         _generation_task["speaker_id"] = speaker_id or existing_profile_id
                         _generation_task["display_name"] = display_name
                         _generation_task["mode"] = "grow" if existing_profile_id else "create"
+                        _generation_task["logs"] = []
+
+                    _append_generation_log("INIT", f"タスク初期化: モード={_generation_task['mode']}, URL={url}")
 
                     def _run_gen():
                         try:
@@ -927,6 +945,9 @@ class SubtitleServer:
                                     _generation_task["progress"] = prog
                                     _generation_task["message"] = msg
 
+                            def _log_cb(level, text):
+                                _append_generation_log(level, text)
+
                             key = _get_gemini_key()
                             pipeline = ProfileBuilderPipeline(api_key=key)
                             prof = pipeline.run(
@@ -938,19 +959,23 @@ class SubtitleServer:
                                 max_videos=max_videos,
                                 existing_profile_id=existing_profile_id,
                                 status_callback=_cb,
+                                log_callback=_log_cb,
                             )
                             with _generation_lock:
                                 _generation_task["status"] = "completed"
                                 _generation_task["progress"] = 1.0
                                 v_cnt = len(prof.processed_video_ids) or len(prof.source_video_urls) or 1
-                                _generation_task["message"] = f"完了: {prof.display_name} (学習動画: {v_cnt}本, ルール: {len(prof.replacements)}件)"
+                                msg = f"完了: {prof.display_name} (学習動画: {v_cnt}本, ルール: {len(prof.replacements)}件)"
+                                _generation_task["message"] = msg
                                 _generation_task["done"] = True
+                            _append_generation_log("SUCCESS", msg)
                         except Exception as e:
                             with _generation_lock:
                                 _generation_task["status"] = "failed"
                                 _generation_task["done"] = True
                                 _generation_task["error"] = str(e)
                                 _generation_task["message"] = f"エラー: {e}"
+                            _append_generation_log("ERROR", f"タスク失敗: {e}")
 
                     threading.Thread(target=_run_gen, daemon=True).start()
                     self._json(202, {"ok": True, "message": "Generation started"})

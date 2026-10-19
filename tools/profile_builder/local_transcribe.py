@@ -60,6 +60,7 @@ class LocalTranscriber:
         wav_path: str,
         chunk_sec: float = 12.0,
         status_callback: Optional[Callable[[str, float], None]] = None,
+        log_callback: Optional[Callable[[str, str], None]] = None,
     ) -> LocalTranscriptionResult:
         """Transcribe a 16kHz mono WAV file in chunks to produce test recognition output."""
         if not os.path.isfile(wav_path):
@@ -71,20 +72,28 @@ class LocalTranscriber:
 
         total_samples = len(data)
         duration_sec = float(total_samples) / float(sr)
+        total_chunks = max(1, int(np.ceil(duration_sec / chunk_sec)))
+
+        if log_callback:
+            log_callback("ASR", f"hayamimi (ReazonSpeech) モデル準備完了。音声長: {int(duration_sec)}秒 (全 {total_chunks} チャンク) を順次推論開始...")
 
         engine = self._get_engine()
         chunk_samples = int(chunk_sec * sr)
 
         segments: List[TranscribedSegment] = []
         cur_pos = 0
+        chunk_idx = 0
 
         while cur_pos < total_samples:
             end_pos = min(cur_pos + chunk_samples, total_samples)
             chunk = data[cur_pos:end_pos]
+            chunk_idx += 1
 
             start_s = float(cur_pos) / float(sr)
             end_s = float(end_pos) / float(sr)
             progress = min(1.0, end_s / max(0.1, duration_sec))
+
+            time_label = f"{int(start_s // 60):02d}:{int(start_s % 60):02d} - {int(end_s // 60):02d}:{int(end_s % 60):02d}"
 
             if status_callback:
                 status_callback(
@@ -100,13 +109,22 @@ class LocalTranscriber:
                     text = (res.get("text") or "").strip()
                     if text:
                         segments.append(TranscribedSegment(start_sec=start_s, end_sec=end_s, text=text))
+                        if log_callback:
+                            log_callback("ASR", f"[{chunk_idx}/{total_chunks}] {time_label}: 「{text}」")
                 except Exception as e:
                     logger.warning("Error transcribing chunk [%.1f - %.1f]: %s", start_s, end_s, e)
+                    if log_callback:
+                        log_callback("WARN", f"[{chunk_idx}/{total_chunks}] {time_label} 推論エラー: {e}")
+            else:
+                if log_callback and (chunk_idx % 5 == 0 or chunk_idx == total_chunks):
+                    log_callback("ASR", f"[{chunk_idx}/{total_chunks}] {time_label}: (無音区間をスキップ)")
 
             cur_pos = end_pos
 
         full_text = "\n".join(f"[{s.start_sec:.1f}s - {s.end_sec:.1f}s] {s.text}" for s in segments)
 
+        if log_callback:
+            log_callback("ASR", f"ローカル文字起こし完了: 全 {len(segments)} 個の発話セグメント（誤認識含む生テキスト）を抽出しました。")
         if status_callback:
             status_callback("ローカル文字起こし完了", 1.0)
 

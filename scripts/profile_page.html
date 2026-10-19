@@ -500,6 +500,43 @@
         <span id="progressPercent">0%</span>
       </div>
     </div>
+
+    <!-- Live Subprocess / Console Log Box -->
+    <div id="consoleCard" style="margin-top: 10px; padding: 12px 16px; background: #0b0f19; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: var(--radius-md);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="display: inline-flex; gap: 5px;">
+            <span style="width: 10px; height: 10px; border-radius: 50%; background: #EF4444; display: inline-block;"></span>
+            <span style="width: 10px; height: 10px; border-radius: 50%; background: #F59E0B; display: inline-block;"></span>
+            <span style="width: 10px; height: 10px; border-radius: 50%; background: #10B981; display: inline-block;"></span>
+          </span>
+          <span style="font-size: 0.85rem; font-weight: 700; color: #E2E8F0; font-family: monospace;">🖥️ サブプロセス実行ログ (リアルタイム)</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; font-size: 0.75rem; color: var(--text-muted);">
+          <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none;">
+            <input type="checkbox" id="chkAutoScroll" checked style="cursor: pointer;">
+            <span>自動スクロール</span>
+          </label>
+          <button type="button" id="btnClearLog" class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;">クリア</button>
+        </div>
+      </div>
+      <div id="consoleLogBox" style="
+        height: 220px;
+        overflow-y: auto;
+        font-family: 'Cascadia Code', Consolas, 'Fira Code', monospace;
+        font-size: 0.8rem;
+        line-height: 1.5;
+        background: rgba(0, 0, 0, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: var(--radius-sm);
+        padding: 10px 12px;
+        color: #CBD5E1;
+        white-space: pre-wrap;
+        word-break: break-all;
+      ">
+        <div style="color: #64748B;">[待機中] プロファイル生成または育成を開始すると、ここに yt-dlp ダウンロード進捗、ASR音声認識推論、Gemini API 解析ログがリアルタイムに流れます...</div>
+      </div>
+    </div>
   </div>
 
   <!-- 3. Profiles List & Import/Export -->
@@ -623,6 +660,10 @@
         pBox.style.display = "flex";
         updateProgress(status.progress || 0.05, status.message || "タスク処理を継続中...");
         document.getElementById("btnStartGenerate").disabled = true;
+
+        if (status.logs && status.logs.length) {
+          renderTaskLogs(status.logs);
+        }
 
         pollTaskStatus(status.mode || "create");
       }
@@ -881,6 +922,10 @@
     pBox.style.display = "flex";
     updateProgress(0.05, "タスクを起動中...");
 
+    renderedLogCount = 0;
+    const logBox = document.getElementById("consoleLogBox");
+    if (logBox) logBox.innerHTML = '<div style="color: #38BDF8;">[起動中] タスクをバックグラウンドで開始しています...</div>';
+
     try {
       const res = await fetch("/api/profiles/generate", {
         method: "POST",
@@ -911,6 +956,85 @@
     }
   };
 
+  let renderedLogCount = 0;
+
+  function renderTaskLogs(logs) {
+    if (!logs || !Array.isArray(logs)) return;
+    const box = document.getElementById("consoleLogBox");
+    if (!box) return;
+
+    if (renderedLogCount === 0 && logs.length > 0) {
+      box.innerHTML = "";
+    }
+
+    if (logs.length < renderedLogCount) {
+      box.innerHTML = "";
+      renderedLogCount = 0;
+    }
+
+    if (logs.length === renderedLogCount) return;
+
+    const fragment = document.createDocumentFragment();
+    for (let i = renderedLogCount; i < logs.length; i++) {
+      const entry = logs[i];
+      const div = document.createElement("div");
+      div.style.padding = "2px 0";
+      div.style.borderBottom = "1px solid rgba(255, 255, 255, 0.03)";
+      div.style.fontFamily = "'Cascadia Code', Consolas, 'Fira Code', monospace";
+
+      let color = "#CBD5E1";
+      let tagBg = "rgba(255, 255, 255, 0.08)";
+      const lvl = (entry.level || "INFO").toUpperCase();
+
+      if (lvl === "YTDL") {
+        color = "#38BDF8";
+        tagBg = "rgba(56, 189, 248, 0.15)";
+      } else if (lvl === "ASR") {
+        color = "#34D399";
+        tagBg = "rgba(52, 211, 153, 0.15)";
+      } else if (lvl === "GEMINI") {
+        color = "#A78BFA";
+        tagBg = "rgba(167, 139, 250, 0.15)";
+      } else if (lvl === "RULE") {
+        color = "#FCD34D";
+        tagBg = "rgba(252, 211, 77, 0.15)";
+      } else if (lvl === "SUCCESS") {
+        color = "#4ADE80";
+        tagBg = "rgba(74, 222, 128, 0.2)";
+      } else if (lvl === "WARN") {
+        color = "#FB923C";
+        tagBg = "rgba(251, 146, 60, 0.2)";
+      } else if (lvl === "ERROR") {
+        color = "#F87171";
+        tagBg = "rgba(248, 113, 113, 0.2)";
+      } else if (lvl === "STEP" || lvl === "BATCH") {
+        color = "#93C5FD";
+        tagBg = "rgba(147, 197, 253, 0.15)";
+      }
+
+      div.innerHTML = `
+        <span style="color: #64748B; font-size: 0.75rem;">[${escapeHtml(entry.time || '')}]</span>
+        <span style="display: inline-block; padding: 1px 5px; font-size: 0.7rem; font-weight: 700; border-radius: 3px; background: ${tagBg}; color: ${color}; margin: 0 4px;">${escapeHtml(lvl)}</span>
+        <span style="color: ${color};">${escapeHtml(entry.text || '')}</span>
+      `;
+      fragment.appendChild(div);
+    }
+
+    box.appendChild(fragment);
+    renderedLogCount = logs.length;
+
+    const chk = document.getElementById("chkAutoScroll");
+    if (chk && chk.checked) {
+      box.scrollTop = box.scrollHeight;
+    }
+  }
+
+  document.getElementById("btnClearLog").onclick = () => {
+    const box = document.getElementById("consoleLogBox");
+    if (box) box.innerHTML = '<div style="color: #64748B;">[ログをクリアしました]</div>';
+    renderedLogCount = 0;
+  };
+
   function pollTaskStatus(mode = "create") {
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(async () => {
@@ -918,6 +1042,9 @@
         const res = await fetch("/api/profiles/task-status");
         const status = await res.json();
         updateProgress(status.progress || 0, status.message || "");
+        if (status.logs && status.logs.length) {
+          renderTaskLogs(status.logs);
+        }
 
         if (status.done) {
           clearInterval(pollTimer);

@@ -251,6 +251,9 @@ def test_generate_task_status_metadata(running_server, monkeypatch):
         def __init__(self, api_key=None):
             pass
         def run(self, **kwargs):
+            log_cb = kwargs.get("log_callback")
+            if log_cb:
+                log_cb("ASR", "テスト音声認識ログを出力中...")
             # Wait until signaled so we can inspect status while running
             block_event.wait(timeout=2.0)
             return SpeakerProfile(
@@ -290,6 +293,16 @@ def test_generate_task_status_metadata(running_server, monkeypatch):
             assert data["mode"] == "grow"
             assert data["display_name"] == "復帰テスト話者"
             assert data["speaker_id"] == "recover_speaker"
+            # Verify real-time logs
+            assert "logs" in data
+            assert isinstance(data["logs"], list)
+            assert len(data["logs"]) >= 1
+            log_levels = [l["level"] for l in data["logs"]]
+            assert "INIT" in log_levels or "ASR" in log_levels
+            for log_item in data["logs"]:
+                assert "time" in log_item
+                assert "level" in log_item
+                assert "text" in log_item
     finally:
         block_event.set()
         time.sleep(0.2)

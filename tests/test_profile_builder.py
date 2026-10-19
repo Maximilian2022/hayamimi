@@ -289,3 +289,79 @@ def test_fetch_channel_videos_duplicate_prevention(monkeypatch):
     assert videos[1]["view_count"] == 20000
 
 
+def test_pipeline_logging_callback(monkeypatch, tmp_path):
+    """Verify Pipeline runs and logs subprocess steps via log_callback."""
+    from tools.profile_builder.pipeline import ProfileBuilderPipeline
+    from tools.profile_builder.youtube_fetcher import VideoMetadata
+    from tools.profile_builder.local_transcribe import LocalTranscriptionResult, TranscribedSegment
+
+    pipeline = ProfileBuilderPipeline(api_key="test_key")
+
+    # Mock fetcher
+    monkeypatch.setattr(pipeline.fetcher, "fetch_metadata", lambda url: VideoMetadata(
+        video_id="vid_test",
+        title="テスト配信",
+        channel="テストCh",
+        description="概要",
+        duration_sec=600.0,
+        tags=["テスト", "ゲーム"],
+    ))
+    monkeypatch.setattr(pipeline.fetcher, "fetch_subtitles", lambda url, tmp: [])
+    monkeypatch.setattr(pipeline.fetcher, "download_audio_section", lambda **kwargs: str(tmp_path / "audio.wav"))
+
+    # Mock transcriber
+    class MockTranscriber:
+        def __init__(self, *args, **kwargs):
+            pass
+        def transcribe_file(self, wav_path, status_callback=None, log_callback=None):
+            if log_callback:
+                log_callback("ASR", "推論チャンク [00:00 - 00:12]: 「テスト音声」")
+            return LocalTranscriptionResult(
+                audio_path=wav_path,
+                duration_sec=12.0,
+                segments=[TranscribedSegment(0, 12, "テスト音声")],
+                full_text="[0.0s - 12.0s] テスト音声",
+            )
+        def close(self):
+            pass
+
+    monkeypatch.setattr("tools.profile_builder.pipeline.LocalTranscriber", MockTranscriber)
+
+    # Mock analyzer
+    class MockAnalyzer:
+        def __init__(self, *args, **kwargs):
+            pass
+        def analyze(self, **kwargs):
+            log_cb = kwargs.get("log_callback")
+            if log_cb:
+                log_cb("GEMINI", "Gemini 推論完了")
+            return SpeakerProfile(
+                speaker_id="test_speaker",
+                display_name="テスト話者",
+                replacements=[ReplacementRule(pattern="かてないとう", replacement="勝てないそう", reason="テスト")],
+            )
+
+    monkeypatch.setattr("tools.profile_builder.pipeline.GeminiProfileAnalyzer", MockAnalyzer)
+    monkeypatch.setattr("tools.profile_builder.pipeline.save_profile", lambda prof: str(tmp_path / "prof.json"))
+
+    captured_logs = []
+    def on_log(level, msg):
+        captured_logs.append((level, msg))
+
+    prof = pipeline.run(
+        youtube_url="https://www.youtube.com/watch?v=vid_test",
+        speaker_id="test_speaker",
+        display_name="テスト話者",
+        log_callback=on_log,
+    )
+
+    assert prof.speaker_id == "test_speaker"
+    assert len(captured_logs) > 0
+    levels = [lvl for lvl, msg in captured_logs]
+    assert "STEP" in levels
+    assert "INFO" in levels
+    assert "ASR" in levels
+    assert "GEMINI" in levels
+    assert "SUCCESS" in levels
+
+

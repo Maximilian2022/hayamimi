@@ -338,15 +338,16 @@ class YouTubeFetcher:
         end_sec: float,
         output_wav_path: str,
         status_callback: Optional[Callable[[str], None]] = None,
+        log_callback: Optional[Callable[[str, str], None]] = None,
     ) -> str:
         """Download only the specified section as 16kHz mono WAV for hayamimi."""
-        if status_callback:
-            start_str = format_seconds_to_timestamp(start_sec)
-            end_str = format_seconds_to_timestamp(end_sec)
-            status_callback(f"音声区間 ({start_str} 〜 {end_str}) をピンポイント取得中...")
-
         start_ts = format_seconds_to_timestamp(start_sec)
         end_ts = format_seconds_to_timestamp(end_sec)
+        if status_callback:
+            status_callback(f"音声区間 ({start_ts} 〜 {end_ts}) をピンポイント取得中...")
+        if log_callback:
+            log_callback("YTDL", f"yt-dlp による部分音声取得を開始: 区間 {start_ts} 〜 {end_ts}")
+
         section_arg = f"*{start_ts}-{end_ts}"
 
         # Ensure directory exists
@@ -364,16 +365,47 @@ class YouTubeFetcher:
         ]
 
         logger.info("Executing download: %s", " ".join(cmd))
-        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-        if res.returncode != 0:
-            logger.error("Download failed: %s", res.stderr)
-            raise RuntimeError(f"yt-dlp failed: {res.stderr}")
+        
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+
+        output_lines = []
+        if proc.stdout:
+            for line in proc.stdout:
+                line_clean = line.strip()
+                if not line_clean:
+                    continue
+                output_lines.append(line_clean)
+                logger.debug("[yt-dlp] %s", line_clean)
+                if log_callback:
+                    # 進捗表示、ffmpeg変換、抽出先などの有用な行をリアルタイム通知
+                    if any(k in line_clean for k in ("[download]", "[ExtractAudio]", "Destination", "ffmpeg", "[info]")):
+                        log_callback("YTDL", line_clean)
+                    elif "ERROR" in line_clean or "WARNING" in line_clean:
+                        log_callback("WARN" if "WARNING" in line_clean else "ERROR", line_clean)
+
+        ret = proc.wait()
+        if ret != 0:
+            err_text = "\n".join(output_lines[-10:])
+            logger.error("Download failed (code %d): %s", ret, err_text)
+            raise RuntimeError(f"yt-dlp failed (code {ret}): {err_text}")
 
         # yt-dlp might append .wav if output_wav_path didn't have it or slight variation
         if not os.path.exists(output_wav_path):
             alt_path = output_wav_path + ".wav"
             if os.path.exists(alt_path):
+                if log_callback:
+                    log_callback("YTDL", f"音声抽出完了: {alt_path}")
                 return alt_path
             raise FileNotFoundError(f"Downloaded audio not found at {output_wav_path}")
 
+        if log_callback:
+            log_callback("YTDL", f"音声抽出完了: {output_wav_path}")
         return output_wav_path

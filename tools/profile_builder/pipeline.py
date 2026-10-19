@@ -56,15 +56,22 @@ class ProfileBuilderPipeline:
         max_videos: int = 10,
         existing_profile_id: Optional[str] = None,
         status_callback: Optional[Callable[[str, float, str], None]] = None,
+        log_callback: Optional[Callable[[str, str], None]] = None,
     ) -> SpeakerProfile:
         """Execute end-to-end profile generation or incremental training.
         If youtube_url is a channel URL, fetches recent popular videos and processes them in batch.
         Callback signature: (stage: str, progress: float, message: str)
         """
+        def log(level: str, msg: str):
+            logger.info("[%s] %s", level, msg)
+            if log_callback:
+                log_callback(level, msg)
+
         def report(stage: str, progress: float, msg: str):
             logger.info("[%s] (%.0f%%) %s", stage, progress * 100, msg)
             if status_callback:
                 status_callback(stage, progress, msg)
+            log("STEP", f"({int(progress * 100)}%) {msg}")
 
         target_pid = existing_profile_id or speaker_id
         existing_profile = load_profile(target_pid) if target_pid else None
@@ -119,6 +126,7 @@ class ProfileBuilderPipeline:
                     overall = p_start + (sub_prog * (p_end - p_start))
                     report(stage, overall, f"[{idx+1}/{total_vids}本目] 『{v_title[:22]}...』: {msg}")
 
+                log("BATCH", f"========== [{idx+1}/{total_vids}本目] 『{v_title}』 の処理を開始 ==========")
                 cur_prof = self._process_single_video(
                     youtube_url=v_url,
                     speaker_id=speaker_id or (cur_prof.speaker_id if cur_prof else None),
@@ -126,6 +134,7 @@ class ProfileBuilderPipeline:
                     duration_sec=duration_sec,
                     existing_profile=cur_prof,
                     status_callback=_sub_cb,
+                    log_callback=log_callback,
                 )
 
             learned_count = len(cur_prof.processed_video_ids) or len(cur_prof.source_video_urls)
@@ -145,6 +154,7 @@ class ProfileBuilderPipeline:
             duration_sec=duration_sec,
             existing_profile=existing_profile,
             status_callback=status_callback,
+            log_callback=log_callback,
         )
 
     def _process_single_video(
@@ -156,18 +166,26 @@ class ProfileBuilderPipeline:
         duration_sec: float = 720.0,
         existing_profile: Optional[SpeakerProfile] = None,
         status_callback: Optional[Callable[[str, float, str], None]] = None,
+        log_callback: Optional[Callable[[str, str], None]] = None,
     ) -> SpeakerProfile:
         """Process a single YouTube video end-to-end and merge into existing profile if given."""
+        def log(level: str, msg: str):
+            logger.info("[%s] %s", level, msg)
+            if log_callback:
+                log_callback(level, msg)
+
         def report(stage: str, progress: float, msg: str):
             logger.info("[%s] (%.0f%%) %s", stage, progress * 100, msg)
             if status_callback:
                 status_callback(stage, progress, msg)
+            log("STEP", f"({int(progress * 100)}%) {msg}")
 
         temp_dir = tempfile.mkdtemp(prefix="hayamimi_prof_")
         try:
             # 1. Fetch metadata
             report("metadata", 0.05, "動画メタデータを取得中...")
             metadata = self.fetcher.fetch_metadata(youtube_url)
+            log("INFO", f"メタデータ取得完了: タイトル『{metadata.title}』 / チャンネル: {metadata.channel} / 長さ: {int(metadata.duration_sec)}秒")
 
             # Determine speaker_id and display_name
             if existing_profile:
@@ -191,6 +209,7 @@ class ProfileBuilderPipeline:
                 sub_dir = os.path.join(temp_dir, "subtitles")
                 os.makedirs(sub_dir, exist_ok=True)
                 sub_segments = self.fetcher.fetch_subtitles(youtube_url, sub_dir)
+                log("INFO", f"字幕メタデータ取得完了: {len(sub_segments)} 件の字幕セグメント")
 
                 report("section", 0.25, "スライディングウィンドウ法で最高発話密度区間を計算中...")
                 best_start, best_end, score = self.fetcher.find_best_speech_section(
@@ -217,6 +236,7 @@ class ProfileBuilderPipeline:
                 end_sec=best_end,
                 output_wav_path=wav_path,
                 status_callback=lambda msg: report("download", 0.40, msg),
+                log_callback=log_callback,
             )
 
             # 4. Local transcription with hayamimi ReazonSpeech
@@ -226,6 +246,7 @@ class ProfileBuilderPipeline:
                 trans_res = transcriber.transcribe_file(
                     wav_path=wav_path,
                     status_callback=lambda msg, prog: report("transcribe", 0.45 + (prog * 0.25), msg),
+                    log_callback=log_callback,
                 )
             finally:
                 transcriber.close()
@@ -247,6 +268,7 @@ class ProfileBuilderPipeline:
                 extracted_section=extracted_section,
                 existing_profile=existing_profile,
                 status_callback=lambda msg: report("analyze", 0.85, msg),
+                log_callback=log_callback,
             )
             profile.source_video_url = youtube_url
 
@@ -267,11 +289,13 @@ class ProfileBuilderPipeline:
             saved_path = save_profile(final_profile)
             v_count = len(final_profile.processed_video_ids) or len(final_profile.source_video_urls) or (1 if final_profile.source_video_url else 0)
             report("complete", 1.0, f"完了: {saved_path} (学習動画: {v_count}本, 置換ルール: {len(final_profile.replacements)}件)")
+            log("SUCCESS", f"プロファイルを正常に保存しました: {final_profile.display_name} ({len(final_profile.replacements)} 件の置換ルール)")
 
             return final_profile
 
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
 
 
 def main():
