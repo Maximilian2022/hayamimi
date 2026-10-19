@@ -484,6 +484,12 @@
       </button>
     </div>
 
+    <!-- Reconnect Banner (shown if restored after F5 or re-opening tab) -->
+    <div id="reconnectBanner" style="display: none; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.4); border-radius: var(--radius-sm); padding: 10px 14px; font-size: 0.85rem; color: #93C5FD; align-items: center; gap: 8px;">
+      <span style="font-size: 1.1rem;">🔄</span>
+      <span id="reconnectBannerText">進行中の学習タスクに再接続しました。ページをリロードしても裏で安全に継続処理されています。</span>
+    </div>
+
     <!-- Progress box (hidden initially) -->
     <div id="progressBox" class="progress-box" style="display: none;">
       <div class="progress-track">
@@ -571,11 +577,58 @@
   let activeProfileId = null;
   let editingProfile = null;
   let pollTimer = null;
+  let isTaskRunning = false;
+
+  // 誤ってタブを閉じる/リロードする操作への離脱ガード
+  window.addEventListener("beforeunload", (e) => {
+    if (isTaskRunning) {
+      e.preventDefault();
+      e.returnValue = "プロファイル学習処理が進行中です。ページを離れても裏で安全に継続しますが、画面を移動しますか？";
+      return e.returnValue;
+    }
+  });
 
   async function init() {
     await checkApiKey();
     await loadProfiles();
     setupDropzone();
+    await checkActiveTask(); // F5やタブ再オープン時の自動復旧
+  }
+
+  // --- Session Recovery (F5 / Tab Re-open) ---
+  async function checkActiveTask() {
+    try {
+      const res = await fetch("/api/profiles/task-status");
+      const status = await res.json();
+      if (!status.done && status.status === "running") {
+        isTaskRunning = true;
+
+        // 再接続バナーを表示
+        const rBanner = document.getElementById("reconnectBanner");
+        if (rBanner) rBanner.style.display = "flex";
+
+        // モードや入力情報を復元
+        if (status.mode) {
+          setGeneratorMode(status.mode, status.speaker_id);
+        }
+        if (status.url && !document.getElementById("inputYtUrl").value) {
+          document.getElementById("inputYtUrl").value = status.url;
+        }
+        if (status.display_name && !document.getElementById("inputDisplayName").value) {
+          document.getElementById("inputDisplayName").value = status.display_name;
+        }
+
+        // プログレスバー表示とポーリング再開
+        const pBox = document.getElementById("progressBox");
+        pBox.style.display = "flex";
+        updateProgress(status.progress || 0.05, status.message || "タスク処理を継続中...");
+        document.getElementById("btnStartGenerate").disabled = true;
+
+        pollTaskStatus(status.mode || "create");
+      }
+    } catch (e) {
+      console.error("Failed to check active task:", e);
+    }
   }
 
   // --- API Key Management ---
@@ -820,6 +873,9 @@
 
     const btn = document.getElementById("btnStartGenerate");
     btn.disabled = true;
+    isTaskRunning = true;
+    const rBanner = document.getElementById("reconnectBanner");
+    if (rBanner) rBanner.style.display = "none";
 
     const pBox = document.getElementById("progressBox");
     pBox.style.display = "flex";
@@ -842,6 +898,7 @@
       const data = await res.json();
       if (!res.ok) {
         btn.disabled = false;
+        isTaskRunning = false;
         return alert("生成開始エラー: " + (data.error || ""));
       }
 
@@ -849,6 +906,7 @@
       pollTaskStatus(currentMode);
     } catch (e) {
       btn.disabled = false;
+      isTaskRunning = false;
       alert("通信エラー: " + e.message);
     }
   };
@@ -863,6 +921,11 @@
 
         if (status.done) {
           clearInterval(pollTimer);
+          pollTimer = null;
+          isTaskRunning = false;
+          const rBanner = document.getElementById("reconnectBanner");
+          if (rBanner) rBanner.style.display = "none";
+
           document.getElementById("btnStartGenerate").disabled = false;
           if (status.error) {
             alert("プロファイル処理中にエラーが発生しました:\n" + status.error);

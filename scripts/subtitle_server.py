@@ -911,6 +911,10 @@ class SubtitleServer:
                         _generation_task["message"] = "生成タスクを開始中..."
                         _generation_task["done"] = False
                         _generation_task["error"] = None
+                        _generation_task["url"] = url
+                        _generation_task["speaker_id"] = speaker_id or existing_profile_id
+                        _generation_task["display_name"] = display_name
+                        _generation_task["mode"] = "grow" if existing_profile_id else "create"
 
                     def _run_gen():
                         try:

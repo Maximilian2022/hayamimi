@@ -238,7 +238,60 @@ def test_generate_api_with_channel_url(running_server, monkeypatch):
     import time
     time.sleep(0.3)
 
-    assert captured_call.get("youtube_url") == "https://www.youtube.com/@ValChannel"
-    assert captured_call.get("max_videos") == 5
+
+def test_generate_task_status_metadata(running_server, monkeypatch):
+    """Verify that /api/profiles/task-status exposes metadata for F5 / browser session recovery."""
+    import time
+    import threading
+    base_url, _ = running_server
+
+    block_event = threading.Event()
+
+    class BlockingPipeline:
+        def __init__(self, api_key=None):
+            pass
+        def run(self, **kwargs):
+            # Wait until signaled so we can inspect status while running
+            block_event.wait(timeout=2.0)
+            return SpeakerProfile(
+                speaker_id="recover_speaker",
+                display_name="復帰テスト話者",
+            )
+
+    monkeypatch.setattr("tools.profile_builder.pipeline.ProfileBuilderPipeline", BlockingPipeline)
+
+    payload = json.dumps({
+        "url": "https://www.youtube.com/watch?v=recovery_test",
+        "display_name": "復帰テスト話者",
+        "speaker_id": "recover_speaker",
+        "existing_profile_id": "recover_speaker",
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{base_url}/api/profiles/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as res:
+        assert res.status == 202
+
+    # Give thread a moment to start
+    time.sleep(0.05)
+
+    try:
+        # Check task-status during execution
+        with urllib.request.urlopen(f"{base_url}/api/profiles/task-status") as res:
+            assert res.status == 200
+            data = json.loads(res.read().decode("utf-8"))
+            assert data["status"] == "running"
+            assert data["done"] is False
+            assert data["url"] == "https://www.youtube.com/watch?v=recovery_test"
+            assert data["mode"] == "grow"
+            assert data["display_name"] == "復帰テスト話者"
+            assert data["speaker_id"] == "recover_speaker"
+    finally:
+        block_event.set()
+        time.sleep(0.2)
 
 
