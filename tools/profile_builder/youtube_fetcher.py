@@ -14,6 +14,66 @@ from typing import Callable, List, Optional, Tuple
 
 logger = logging.getLogger("hayamimi.youtube_fetcher")
 
+_KNOWN_BROWSERS = ["firefox", "chrome", "edge", "brave", "opera", "vivaldi"]
+_WORKING_COOKIE_BROWSER: Optional[str] = None
+
+
+def get_cookie_args(prefer_cache: bool = True) -> List[str]:
+    """Return yt-dlp cookie options.
+    
+    Priority:
+    1. config/cookies.txt (or cookies.txt)
+    2. Cached working browser (_WORKING_COOKIE_BROWSER)
+    3. Empty list
+    """
+    global _WORKING_COOKIE_BROWSER
+    for cookie_file in ["config/cookies.txt", "cookies.txt"]:
+        if os.path.exists(cookie_file) and os.path.getsize(cookie_file) > 0:
+            return ["--cookies", os.path.abspath(cookie_file)]
+    if prefer_cache and _WORKING_COOKIE_BROWSER:
+        return ["--cookies-from-browser", _WORKING_COOKIE_BROWSER]
+    return []
+
+
+def is_bot_detection_error(text: str) -> bool:
+    """Check if yt-dlp stderr/stdout indicates YouTube bot detection (Sign in required)."""
+    t = (text or "").lower()
+    return (
+        "sign in to confirm you" in t
+        or "sign in to confirm you’re not a bot" in t
+        or "use --cookies" in t
+    )
+
+
+def discover_working_browser(test_url: str, yt_dlp_cmd: str = "yt-dlp") -> Optional[str]:
+    """Probe installed browsers with yt-dlp to find one that bypasses YouTube bot detection."""
+    global _WORKING_COOKIE_BROWSER
+    for b in _KNOWN_BROWSERS:
+        cmd = [
+            yt_dlp_cmd,
+            "--dump-json",
+            "--no-playlist",
+            "--skip-download",
+            "--cookies-from-browser", b,
+            test_url,
+        ]
+        try:
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+            )
+            if res.returncode == 0 and "id" in (res.stdout or ""):
+                logger.info("Auto-discovered working browser cookies from: %s", b)
+                _WORKING_COOKIE_BROWSER = b
+                return b
+        except Exception:
+            continue
+    return None
+
 
 @dataclass
 class SubtitleSegment:
@@ -117,6 +177,64 @@ class YouTubeFetcher:
     def __init__(self, yt_dlp_cmd: str = "yt-dlp"):
         self.yt_dlp_cmd = yt_dlp_cmd
 
+    def _run_ytdl_command(
+        self,
+        cmd: List[str],
+        log_callback: Optional[Callable[[str, str], None]] = None,
+        test_url: Optional[str] = None,
+    ) -> subprocess.CompletedProcess:
+        """Run yt-dlp command with automatic bot-detection recovery and cookie injection."""
+        global _WORKING_COOKIE_BROWSER
+
+        cookie_args = get_cookie_args()
+        full_cmd = list(cmd)
+        if cookie_args and not any(arg in full_cmd for arg in ("--cookies", "--cookies-from-browser")):
+            # Insert before target URL (last argument)
+            full_cmd = full_cmd[:-1] + cookie_args + [full_cmd[-1]]
+
+        res = subprocess.run(
+            full_cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        out_err = (res.stderr or "") + (res.stdout or "")
+
+        if res.returncode != 0 and is_bot_detection_error(out_err):
+            target_url = test_url or full_cmd[-1]
+            if log_callback:
+                log_callback("WARN", "YouTubeボット判定(Sign in)を検知。利用可能なブラウザからCookieを自動取得して再試行中...")
+            logger.warning("YouTube bot detection encountered. Probing browsers for valid session cookies...")
+
+            working_browser = discover_working_browser(target_url, yt_dlp_cmd=self.yt_dlp_cmd)
+            if working_browser:
+                if log_callback:
+                    log_callback("YTDL", f"ブラウザ [{working_browser}] のYouTube認証情報を自動適用して再実行します。")
+                logger.info("Retrying command with browser cookies from: %s", working_browser)
+
+                clean_cmd = [
+                    arg for arg in cmd
+                    if arg not in ("--cookies", "--cookies-from-browser") and arg not in _KNOWN_BROWSERS
+                ]
+                retry_cmd = clean_cmd[:-1] + ["--cookies-from-browser", working_browser] + [clean_cmd[-1]]
+                res = subprocess.run(
+                    retry_cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            else:
+                if log_callback:
+                    log_callback(
+                        "ERROR",
+                        "YouTubeボット判定の自動回避に失敗しました。ブラウザ(Firefox等)でYouTubeにログインするか、config/cookies.txt を配置してください。"
+                    )
+                logger.error("No working browser cookies found to bypass YouTube bot detection.")
+
+        return res
+
     def fetch_channel_videos(
         self,
         channel_url: str,
@@ -157,8 +275,8 @@ class YouTubeFetcher:
                 target_url,
             ]
             try:
-                res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-                if res.returncode == 0 and res.stdout.strip():
+                res = self._run_ytdl_command(cmd, log_callback=log_callback, test_url=target_url)
+                if res.returncode == 0 and res.stdout and res.stdout.strip():
                     for line in res.stdout.splitlines():
                         line = line.strip()
                         if line:
@@ -216,7 +334,7 @@ class YouTubeFetcher:
             )
         return chosen
 
-    def fetch_metadata(self, url: str) -> VideoMetadata:
+    def fetch_metadata(self, url: str, log_callback: Optional[Callable[[str, str], None]] = None) -> VideoMetadata:
         """Fetch video metadata without downloading video."""
         cmd = [
             self.yt_dlp_cmd,
@@ -226,7 +344,10 @@ class YouTubeFetcher:
             "--extractor-args", "youtube:player_client=android,web",
             url,
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", check=True)
+        res = self._run_ytdl_command(cmd, log_callback=log_callback, test_url=url)
+        if res.returncode != 0:
+            err_msg = (res.stderr or "").strip()
+            raise RuntimeError(f"yt-dlp metadata fetch failed (code {res.returncode}): {err_msg}")
         data = json.loads(res.stdout)
         return VideoMetadata(
             video_id=data.get("id", ""),
@@ -237,7 +358,7 @@ class YouTubeFetcher:
             tags=data.get("tags", []) or [],
         )
 
-    def fetch_subtitles(self, url: str, temp_dir: str) -> List[SubtitleSegment]:
+    def fetch_subtitles(self, url: str, temp_dir: str, log_callback: Optional[Callable[[str, str], None]] = None) -> List[SubtitleSegment]:
         """Fetch Japanese automatic subtitles (.vtt) without downloading video."""
         out_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
         cmd = [
@@ -250,7 +371,7 @@ class YouTubeFetcher:
             "-o", out_template,
             url,
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        res = self._run_ytdl_command(cmd, log_callback=log_callback, test_url=url)
         if res.returncode != 0:
             logger.warning("Failed to fetch auto-subtitles: %s", res.stderr)
             return []
@@ -366,6 +487,7 @@ class YouTubeFetcher:
         # Ensure directory exists
         os.makedirs(os.path.dirname(os.path.abspath(output_wav_path)), exist_ok=True)
 
+        cookie_args = get_cookie_args()
         cmd = [
             self.yt_dlp_cmd,
             "--newline",
@@ -377,45 +499,71 @@ class YouTubeFetcher:
             "-x",
             "--audio-format", "wav",
             "--postprocessor-args", "ffmpeg:-ar 16000 -ac 1",
+            *cookie_args,
             "-o", output_wav_path,
             url,
         ]
 
         logger.info("Executing download: %s", " ".join(cmd))
-        
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-        )
 
-        output_lines = []
-        if proc.stdout:
-            for line in proc.stdout:
-                line_clean = line.strip()
-                if not line_clean:
-                    continue
-                output_lines.append(line_clean)
-                logger.debug("[yt-dlp] %s", line_clean)
-                if "[download]" in line_clean:
-                    if log_callback:
-                        log_callback("YTDL", line_clean)
-                    if status_callback:
-                        status_callback(line_clean)
-                elif any(k in line_clean for k in ("[ExtractAudio]", "Destination", "ffmpeg", "[info]")):
-                    if log_callback:
-                        log_callback("YTDL", line_clean)
-                elif "ERROR" in line_clean or "WARNING" in line_clean:
-                    if log_callback:
-                        log_callback("WARN" if "WARNING" in line_clean else "ERROR", line_clean)
+        def _run_download_proc(exec_cmd: List[str]) -> Tuple[int, List[str]]:
+            proc = subprocess.Popen(
+                exec_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+            out_lines = []
+            if proc.stdout:
+                for line in proc.stdout:
+                    line_clean = line.strip()
+                    if not line_clean:
+                        continue
+                    out_lines.append(line_clean)
+                    logger.debug("[yt-dlp] %s", line_clean)
+                    if "[download]" in line_clean:
+                        if log_callback:
+                            log_callback("YTDL", line_clean)
+                        if status_callback:
+                            status_callback(line_clean)
+                    elif any(k in line_clean for k in ("[ExtractAudio]", "Destination", "ffmpeg", "[info]")):
+                        if log_callback:
+                            log_callback("YTDL", line_clean)
+                    elif "ERROR" in line_clean or "WARNING" in line_clean:
+                        if log_callback:
+                            log_callback("WARN" if "WARNING" in line_clean else "ERROR", line_clean)
+            return proc.wait(), out_lines
 
-        ret = proc.wait()
+        ret, output_lines = _run_download_proc(cmd)
         if ret != 0:
             err_text = "\n".join(output_lines[-15:])
+
+            # Check for YouTube bot detection (Sign in required)
+            if is_bot_detection_error(err_text):
+                if log_callback:
+                    log_callback("WARN", "YouTubeボット判定(Sign in)を検知。利用可能なブラウザからCookieを自動取得して再試行中...")
+                logger.warning("YouTube bot detection during audio download. Probing browsers...")
+                working_browser = discover_working_browser(url, yt_dlp_cmd=self.yt_dlp_cmd)
+                if working_browser:
+                    if log_callback:
+                        log_callback("YTDL", f"ブラウザ [{working_browser}] のYouTube認証情報を自動適用して再実行します。")
+                    clean_cmd = [
+                        arg for arg in cmd
+                        if arg not in ("--cookies", "--cookies-from-browser") and arg not in _KNOWN_BROWSERS
+                    ]
+                    # Insert --cookies-from-browser right before -o
+                    o_idx = clean_cmd.index("-o")
+                    retry_cmd = clean_cmd[:o_idx] + ["--cookies-from-browser", working_browser] + clean_cmd[o_idx:]
+                    ret, output_lines = _run_download_proc(retry_cmd)
+                    if ret == 0 and os.path.exists(output_wav_path):
+                        if log_callback:
+                            log_callback("YTDL", f"音声抽出完了: {output_wav_path}")
+                        return output_wav_path
+                    err_text = "\n".join(output_lines[-15:])
+
             # If 403 Forbidden or ffmpeg access denied occurred, trigger fallback
             if any(term in err_text for term in ("403", "Forbidden", "access denied", "ffmpeg exited with code")):
                 if log_callback:
@@ -473,6 +621,7 @@ class YouTubeFetcher:
             if log_callback:
                 log_callback("YTDL", "ネイティブダウンローダーで音声ストリームを取得中（403回避）...")
 
+            cookie_args = get_cookie_args()
             cmd = [
                 self.yt_dlp_cmd,
                 "--newline",
@@ -480,6 +629,7 @@ class YouTubeFetcher:
                 "--progress-delta", "0.5",
                 "--no-playlist",
                 "--extractor-args", "youtube:player_client=android,web",
+                *cookie_args,
                 "-f", "ba/ba*",
                 "-o", temp_audio,
                 url,
@@ -542,4 +692,5 @@ class YouTubeFetcher:
 
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
 

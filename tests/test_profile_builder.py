@@ -625,3 +625,62 @@ def test_download_audio_section_403_fallback(monkeypatch, tmp_path):
     assert res == out_file
     assert os.path.exists(out_file)
 
+
+def test_bot_detection_cookie_fallback(monkeypatch):
+    """Verify that bot detection (Sign in to confirm you're not a bot) triggers browser cookie recovery."""
+    import subprocess
+    import tools.profile_builder.youtube_fetcher as ytf
+
+    fetcher = YouTubeFetcher()
+    probe_calls = []
+
+    # Reset any cached working browser
+    monkeypatch.setattr(ytf, "_WORKING_COOKIE_BROWSER", None)
+
+    def mock_discover(test_url, yt_dlp_cmd="yt-dlp"):
+        probe_calls.append(test_url)
+        monkeypatch.setattr(ytf, "_WORKING_COOKIE_BROWSER", "firefox")
+        return "firefox"
+
+    monkeypatch.setattr(ytf, "discover_working_browser", mock_discover)
+
+    call_count = 0
+
+    def mock_run(cmd, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First attempt fails with bot detection
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=1,
+                stdout="",
+                stderr="ERROR: [youtube] g2vU7VgJ1_I: Sign in to confirm you're not a bot. Use --cookies-from-browser",
+            )
+        else:
+            # Retry succeeds with cookie
+            assert "--cookies-from-browser" in cmd
+            assert "firefox" in cmd
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout=json.dumps({
+                    "id": "g2vU7VgJ1_I",
+                    "title": "Test Title",
+                    "uploader": "Test Channel",
+                    "description": "desc",
+                    "duration": 120,
+                    "tags": [],
+                }),
+                stderr="",
+            )
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    meta = fetcher.fetch_metadata("https://www.youtube.com/watch?v=g2vU7VgJ1_I")
+    assert meta.video_id == "g2vU7VgJ1_I"
+    assert meta.title == "Test Title"
+    assert len(probe_calls) == 1
+    assert call_count == 2
+
+
