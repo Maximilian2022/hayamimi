@@ -74,8 +74,7 @@ def save_gemini_api_key(api_key: str, key_file: str = DEFAULT_KEY_FILE) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
     fd = os.open(key_file, flags, 0o600)
     with open(fd, "w", encoding="utf-8") as f:
-        # codeql[py/clear-text-storage-sensitive-data]
-        f.write(api_key.strip())
+        f.write(api_key.strip())  # codeql[py/clear-text-storage-sensitive-data]
     try:
         os.chmod(key_file, 0o600)
     except Exception:
