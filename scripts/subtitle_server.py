@@ -256,7 +256,8 @@ def _get_safe_origin(origin: str | None, host_header: str | None) -> str | None:
 
         if is_allowed:
             port_suffix = f":{parsed.port}" if parsed.port else ""
-            return f"{scheme}://{ohost}{port_suffix}"
+            res = f"{scheme}://{ohost}{port_suffix}"
+            return re.sub(r"[\r\n\0]", "", res)
     except Exception:
         pass
     return None
@@ -769,7 +770,7 @@ class SubtitleServer:
                     self.send_header("Cache-Control", "no-cache")
                     safe_origin = _get_safe_origin(origin, self.headers.get("Host"))
                     if safe_origin:
-                        self.send_header("Access-Control-Allow-Origin", safe_origin)
+                        self.send_header("Access-Control-Allow-Origin", safe_origin)  # codeql[py/http-response-splitting]
                         self.send_header("Vary", "Origin")
                     self.end_headers()
                     q = server.subscribe()
@@ -1142,7 +1143,7 @@ class SubtitleServer:
                 origin = self.headers.get("Origin")
                 safe_origin = _get_safe_origin(origin, self.headers.get("Host"))
                 if safe_origin:
-                    self.send_header("Access-Control-Allow-Origin", safe_origin)
+                    self.send_header("Access-Control-Allow-Origin", safe_origin)  # codeql[py/http-response-splitting]
                     self.send_header("Vary", "Origin")
                 self.end_headers()
                 self.wfile.write(body)
