@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.3.5"
-$script:AppVersion = "1.3.5"
+﻿$version = "GUI v1.3.6"
+$script:AppVersion = "1.3.6"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -463,7 +463,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi ランチャー (GUI v1.3.5)"
+        Title="hayamimi ランチャー (GUI v1.3.6)"
         Height="780" Width="780"
         MinHeight="680" MinWidth="720"
         WindowStartupLocation="CenterScreen"
@@ -733,6 +733,12 @@ function Update-ContainerLogFile {
                             <TextBlock Text="話者プロファイル (/profile)" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
+                    <Button x:Name="BtnOpenOverlay" Background="#152033" BorderBrush="#0284C7" BorderThickness="1" Foreground="#38BDF8" Padding="11,5" FontSize="11.5" Margin="0,0,10,4">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🖥️" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="透過デスクトップ字幕" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
                 </WrapPanel>
             </Grid>
         </Border>
@@ -842,6 +848,7 @@ $btnOpenMic = $window.FindName("BtnOpenMic")
 $btnOpenObs = $window.FindName("BtnOpenObs")
 $btnOpenDashboard = $window.FindName("BtnOpenDashboard")
 $btnOpenProfile = $window.FindName("BtnOpenProfile")
+$btnOpenOverlay = $window.FindName("BtnOpenOverlay")
 $logTextBox = $window.FindName("LogTextBox")
 $logScrollViewer = $window.FindName("LogScrollViewer")
 $btnClearLog = $window.FindName("BtnClearLog")
@@ -3004,6 +3011,17 @@ $btnOpenObs.Add_Click({ Start-Process $ObsUrl })
 $btnOpenDashboard.Add_Click({ Start-Process $DashboardUrl })
 if ($btnOpenProfile) {
     $btnOpenProfile.Add_Click({ Start-Process $ProfileUrl })
+}
+if ($btnOpenOverlay) {
+    $btnOpenOverlay.Add_Click({
+        $overlayBat = Join-Path $PSScriptRoot "..\desktop_overlay.bat"
+        if (Test-Path $overlayBat) {
+            Start-Process -FilePath $overlayBat
+        } else {
+            Start-Process -FilePath $PS_CMD -ArgumentList "-STA -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSScriptRoot\desktop_overlay.ps1`""
+        }
+        Write-AppLog "🖥️ デスクトップ透過字幕オーバーレイを起動しました。" "INFO"
+    })
 }
 $btnClearLog.Add_Click({ $logTextBox.Clear() })
 
