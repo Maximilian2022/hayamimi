@@ -1,5 +1,6 @@
 @echo off
 setlocal
+chcp 65001 >nul 2>&1
 cd /d "%~dp0"
 
 echo ===================================================
@@ -23,7 +24,7 @@ echo [*] Downloading setup script from GitHub...
 echo     URL: %GITHUB_RAW_URL%
 echo.
 
-%PS_CMD% -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('%GITHUB_RAW_URL%', '%SETUP_SCRIPT%')"
+%PS_CMD% -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile($env:GITHUB_RAW_URL, $env:SETUP_SCRIPT)"
 
 if not exist "%SETUP_SCRIPT%" (
     echo [ERROR] Failed to download setup.ps1 from GitHub.
@@ -35,6 +36,9 @@ if not exist "%SETUP_SCRIPT%" (
 )
 
 :run_setup
+:: Ensure UTF-8 with BOM so Windows PowerShell 5.1 correctly parses Japanese characters without syntax errors
+%PS_CMD% -NoProfile -Command "if (Test-Path $env:SETUP_SCRIPT) { $b=[System.IO.File]::ReadAllBytes($env:SETUP_SCRIPT); if ($b.Length -lt 3 -or $b[0] -ne 239 -or $b[1] -ne 187 -or $b[2] -ne 191) { [System.IO.File]::WriteAllBytes($env:SETUP_SCRIPT, [byte[]]@(239, 187, 191) + $b) } }"
+
 echo [*] Launching hayamimi setup GUI...
 %PS_CMD% -NoProfile -ExecutionPolicy Bypass -File "%SETUP_SCRIPT%"
 
