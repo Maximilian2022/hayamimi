@@ -1,5 +1,14 @@
-﻿$version = "GUI v1.3.10"
-$script:AppVersion = "1.3.10"
+﻿# --- バージョン管理 (version.txt を Single Source of Truth として動的同期) ---
+$script:AppVersion = "1.4.0"
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$versionTxtFile = Join-Path $repoRoot "version.txt"
+if (Test-Path $versionTxtFile) {
+    try {
+        $readVer = (Get-Content -Path $versionTxtFile -Raw -Encoding UTF8).Trim()
+        if ($readVer) { $script:AppVersion = $readVer }
+    } catch {}
+}
+$version = "GUI v$script:AppVersion"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -463,7 +472,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi ランチャー (GUI v1.3.7)"
+        Title="hayamimi ランチャー (GUI v1.4.0)"
         Height="780" Width="780"
         MinHeight="680" MinWidth="720"
         WindowStartupLocation="CenterScreen"
@@ -541,7 +550,7 @@ function Update-ContainerLogFile {
                         <TextBlock x:Name="GpuBadge" Text="⚡ GPU: 検出中..." FontSize="11" Foreground="#10B981" FontWeight="SemiBold"/>
                     </Border>
                     <Border Background="#1E1B4B" CornerRadius="12" Padding="10,5" Margin="0,0,8,0" BorderBrush="#4338CA" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.3.5" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.4.0" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#141B2D" CornerRadius="12" Padding="10,5" BorderBrush="#253350" BorderThickness="1">
                         <TextBlock x:Name="RuntimeBadge" Text="Python venv" FontSize="11" Foreground="#38BDF8" FontWeight="SemiBold"/>
@@ -2885,7 +2894,7 @@ $btnStart.Add_Click({
 # 本体アップデートボタン処理 (GitHubからの最新コード取得)
 if ($btnUpdateApp) {
     $btnUpdateApp.Add_Click({
-        $hasNew = Test-AppUpdate -SilentOnLatest
+        $hasNew = Test-AppUpdate -PromptUser
         if (-not $hasNew) {
             $ask = Show-AppConfirm -Message "現在は最新バージョン (v$script:AppVersion) です。`r`n`r`nGitHub からソースコードを再取得（強制更新）しますか？" -Title "本体アップデート - hayamimi"
             if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
