@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.3.9"
-$script:AppVersion = "1.3.9"
+﻿$version = "GUI v1.3.10"
+$script:AppVersion = "1.3.10"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -3232,6 +3232,56 @@ $modelRepairTimer.Add_Tick({
 })
 $modelRepairTimer.Start()
 
+# 起動時新機能依存パッケージ自己修復タイマー (起動600ms後に安全にチェック)
+$depCheckTimer = [System.Windows.Threading.DispatcherTimer]::new()
+$depCheckTimer.Interval = [TimeSpan]::FromMilliseconds(600)
+$depCheckTimer.Add_Tick({
+    $depCheckTimer.Stop()
+    if ($script:CurrentEngineMode -eq "Venv") {
+        $venvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+        if (Test-Path $venvPython) {
+            # imageio_ffmpeg の有無をクイックチェック
+            $pinfoCheck = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfoCheck.FileName = $venvPython
+            $pinfoCheck.Arguments = "-B -c `"import imageio_ffmpeg`""
+            $pinfoCheck.CreateNoWindow = $true
+            $pinfoCheck.UseShellExecute = $false
+            $procCheck = [System.Diagnostics.Process]::Start($pinfoCheck)
+            $procCheck.WaitForExit(3000) | Out-Null
+            if ($procCheck.ExitCode -ne 0) {
+                Write-AppLog "未適用の外部依存パッケージ (imageio-ffmpeg) を自動検出しました。仮想環境を同期中..." "INFO"
+                $uvCmd = (where.exe uv 2>$null | Select-Object -First 1)
+                if (-not $uvCmd) {
+                    $localUvExe = Join-Path $ProjectRoot "tools\uv\uv.exe"
+                    if (Test-Path $localUvExe) { $uvCmd = $localUvExe }
+                }
+                $pinfoInstall = [System.Diagnostics.ProcessStartInfo]::new()
+                if ($uvCmd) {
+                    $pinfoInstall.FileName = $uvCmd
+                    $pinfoInstall.Arguments = "pip install imageio-ffmpeg>=0.5.1 --python `"$venvPython`""
+                } else {
+                    $pinfoInstall.FileName = $venvPython
+                    $pinfoInstall.Arguments = "-B -m pip install imageio-ffmpeg>=0.5.1"
+                }
+                $pinfoInstall.CreateNoWindow = $true
+                $pinfoInstall.UseShellExecute = $false
+                $pinfoInstall.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
+                $procInstall = [System.Diagnostics.Process]::Start($pinfoInstall)
+                [System.Threading.ThreadPool]::QueueUserWorkItem({
+                    param($p)
+                    $p.WaitForExit()
+                    if ($p.ExitCode -eq 0) {
+                        $window.Dispatcher.Invoke([Action]{
+                            Write-AppLog "✔ imageio-ffmpeg の自動配備が完了しました (YouTube取得・ffmpeg対応)" "INFO"
+                        })
+                    }
+                }, $procInstall) | Out-Null
+            }
+        }
+    }
+})
+$depCheckTimer.Start()
+
 $pollTimer.Start()
 
 # ウィンドウ表示
@@ -3244,4 +3294,7 @@ if ($updateCheckTimer -and $updateCheckTimer.IsEnabled) {
 }
 if ($modelRepairTimer -and $modelRepairTimer.IsEnabled) {
     $modelRepairTimer.Stop()
+}
+if ($depCheckTimer -and $depCheckTimer.IsEnabled) {
+    $depCheckTimer.Stop()
 }

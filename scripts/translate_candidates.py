@@ -122,10 +122,12 @@ class TranslatorMarianPair:
         import sentencepiece as spm
 
         self.model_dir = model_dir
-        self._beam_size = beam_size
-        self._no_repeat_ngram_size = no_repeat_ngram_size
-        self._sp_source = spm.SentencePieceProcessor(model_file=os.path.join(model_dir, "source.spm"))
-        self._sp_target = spm.SentencePieceProcessor(model_file=os.path.join(model_dir, "target.spm"))
+        source_spm = os.path.join(model_dir, "source.spm")
+        target_spm = os.path.join(model_dir, "target.spm")
+        with open(source_spm, "rb") as f:
+            self._sp_source = spm.SentencePieceProcessor(model_proto=f.read())
+        with open(target_spm, "rb") as f:
+            self._sp_target = spm.SentencePieceProcessor(model_proto=f.read())
         self._translator = ctranslate2.Translator(
             model_dir, device=device, compute_type=compute_type, intra_threads=intra_threads
         )

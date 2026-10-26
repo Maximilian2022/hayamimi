@@ -206,7 +206,9 @@ class TranslatorM2M:
         with _cache_lock:
             sp_path = os.path.join(model_dir, "sentencepiece.model")
             if sp_path not in _sp_cache:
-                _sp_cache[sp_path] = spm.SentencePieceProcessor(model_file=sp_path)
+                # Windows non-ASCII path protection
+                with open(sp_path, "rb") as f:
+                    _sp_cache[sp_path] = spm.SentencePieceProcessor(model_proto=f.read())
             self._sp = _sp_cache[sp_path]
 
             cache_key = (model_dir, device, compute_type, intra_threads)

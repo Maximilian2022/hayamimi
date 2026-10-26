@@ -55,8 +55,13 @@ class TranslatorJaEn:
         source_spm_path = os.path.join(model_dir, "source.spm")
         target_spm_path = os.path.join(model_dir, "target.spm")
 
-        self._sp_source = spm.SentencePieceProcessor(model_file=source_spm_path)
-        self._sp_target = spm.SentencePieceProcessor(model_file=target_spm_path)
+        # Windows with non-ASCII path (e.g. OneDriveドキュメント) causes
+        # SentencePiece C++ LoadFromFile to throw 'Illegal byte sequence Error #42'.
+        # Reading model proto in Python bypasses C++ path encoding issues safely.
+        with open(source_spm_path, "rb") as f:
+            self._sp_source = spm.SentencePieceProcessor(model_proto=f.read())
+        with open(target_spm_path, "rb") as f:
+            self._sp_target = spm.SentencePieceProcessor(model_proto=f.read())
 
         try:
             self._translator = ctranslate2.Translator(

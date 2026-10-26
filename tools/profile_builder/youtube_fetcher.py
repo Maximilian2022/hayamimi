@@ -103,10 +103,31 @@ def resolve_ffmpeg_cmd(custom_cmd: Optional[str] = None) -> str:
     """
     def _inject_path(exe_path: str) -> str:
         d = os.path.dirname(os.path.abspath(exe_path))
+        alias_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+        alias_path = os.path.join(d, alias_name)
+        if not os.path.exists(alias_path) and os.path.exists(exe_path):
+            try:
+                shutil.copy2(exe_path, alias_path)
+                logger.info("Created standard ffmpeg alias: %s", alias_path)
+            except Exception as e:
+                logger.warning("Could not create ffmpeg alias: %s", e)
+
+        py_dir = os.path.dirname(os.path.abspath(sys.executable))
+        scripts_dir = os.path.join(py_dir, "Scripts")
+        if os.path.exists(scripts_dir):
+            scripts_alias = os.path.join(scripts_dir, alias_name)
+            if not os.path.exists(scripts_alias) and os.path.exists(exe_path):
+                try:
+                    shutil.copy2(exe_path, scripts_alias)
+                    logger.info("Placed ffmpeg.exe in Python Scripts dir: %s", scripts_alias)
+                except Exception:
+                    pass
+
         cur_path = os.environ.get("PATH", "")
         if d not in cur_path:
             os.environ["PATH"] = d + os.pathsep + cur_path
-        return exe_path
+        resolved = alias_path if os.path.exists(alias_path) else exe_path
+        return resolved
 
     if custom_cmd:
         if shutil.which(custom_cmd) or os.path.exists(custom_cmd):
@@ -141,23 +162,25 @@ def resolve_ffmpeg_cmd(custom_cmd: Optional[str] = None) -> str:
     except Exception:
         pass
 
-    # 4. On-demand self-healing: pip install imageio-ffmpeg
-    try:
-        logger.warning("ffmpeg not found in system or Python environment. Attempting on-demand install of imageio-ffmpeg...")
-        res = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--no-warn-script-location", "imageio-ffmpeg>=0.5.1"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if res.returncode == 0:
-            import imageio_ffmpeg
-            exe = imageio_ffmpeg.get_ffmpeg_exe()
-            if exe and os.path.exists(exe):
-                logger.info("Successfully deployed standalone ffmpeg binary via imageio-ffmpeg: %s", exe)
-                return _inject_path(exe)
-    except Exception as e:
-        logger.error("Failed on-demand install of imageio-ffmpeg: %s", e)
+    # 4. On-demand self-healing: install imageio-ffmpeg via uv or pip
+    install_cmds = []
+    uv_bin = shutil.which("uv")
+    if uv_bin:
+        install_cmds.append([uv_bin, "pip", "install", "imageio-ffmpeg>=0.5.1"])
+    install_cmds.append([sys.executable, "-m", "pip", "install", "--no-warn-script-location", "imageio-ffmpeg>=0.5.1"])
+
+    for icmd in install_cmds:
+        try:
+            logger.warning("Attempting on-demand install of imageio-ffmpeg via %s...", icmd[0])
+            res = subprocess.run(icmd, capture_output=True, text=True, timeout=120)
+            if res.returncode == 0:
+                import imageio_ffmpeg
+                exe = imageio_ffmpeg.get_ffmpeg_exe()
+                if exe and os.path.exists(exe):
+                    logger.info("Successfully deployed standalone ffmpeg binary via imageio-ffmpeg: %s", exe)
+                    return _inject_path(exe)
+        except Exception as e:
+            logger.error("Failed on-demand install using %s: %s", icmd[0], e)
 
     return "ffmpeg"
 
@@ -775,11 +798,39 @@ class YouTubeFetcher:
                         return output_wav_path
                     err_text = "\n".join(output_lines[-15:])
 
-            # If 403 Forbidden or ffmpeg access denied occurred, trigger fallback
-            if any(term in err_text for term in ("403", "Forbidden", "access denied", "ffmpeg exited with code")):
+            # Check for missing ffmpeg error: re-resolve ffmpeg on-demand and retry
+            if "ffmpeg is not installed" in err_text or "ffmpeg not found" in err_text:
                 if log_callback:
-                    log_callback("WARN", "YouTube から 403/Forbidden を検知しました。ネイティブダウンローダーによる安定取得へ自動フォールバックします...")
-                logger.warning("Download section failed with 403 or stream error, falling back to full audio download and local trim: %s", err_text)
+                    log_callback("WARN", "ffmpeg 未検出エラーを検知しました。imageio-ffmpeg による自己修復を実行中...")
+                logger.warning("ffmpeg is not installed error detected. Re-resolving ffmpeg...")
+                repaired_ffmpeg = resolve_ffmpeg_cmd()
+                self.ffmpeg_cmd = repaired_ffmpeg
+                if repaired_ffmpeg and (os.path.exists(repaired_ffmpeg) or shutil.which(repaired_ffmpeg)):
+                    ffmpeg_loc = os.path.dirname(os.path.abspath(repaired_ffmpeg)) if os.path.isfile(repaired_ffmpeg) else repaired_ffmpeg
+                    clean_cmd = []
+                    skip_next = False
+                    for c_arg in cmd:
+                        if skip_next:
+                            skip_next = False
+                            continue
+                        if c_arg == "--ffmpeg-location":
+                            skip_next = True
+                            continue
+                        clean_cmd.append(c_arg)
+                    o_idx = clean_cmd.index("-o")
+                    retry_cmd = clean_cmd[:o_idx] + ["--ffmpeg-location", ffmpeg_loc] + clean_cmd[o_idx:]
+                    ret, output_lines = _run_download_proc(retry_cmd)
+                    if ret == 0 and os.path.exists(output_wav_path):
+                        if log_callback:
+                            log_callback("YTDL", f"音声抽出完了: {output_wav_path}")
+                        return output_wav_path
+                    err_text = "\n".join(output_lines[-15:])
+
+            # If 403 Forbidden, stream error, or ffmpeg error occurred, trigger fallback
+            if any(term in err_text for term in ("403", "Forbidden", "access denied", "ffmpeg exited with code", "ffmpeg is not installed")):
+                if log_callback:
+                    log_callback("WARN", "YouTube から 403/Forbidden または ffmpeg 関連エラーを検知しました。ネイティブダウンローダーによる安定取得へ自動フォールバックします...")
+                logger.warning("Download section failed with error, falling back to full audio download and local trim: %s", err_text)
                 return self._download_and_trim_locally(
                     url=url,
                     start_sec=start_sec,
