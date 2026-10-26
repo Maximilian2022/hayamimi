@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import time
 from typing import Callable, Optional
 
 from google import genai
@@ -21,6 +23,111 @@ DEFAULT_KEY_FILE = os.path.join(
     "config",
     "gemini_key.txt",
 )
+
+DISALLOWED_MODEL_KEYWORDS = [
+    "gemini-2.5-", "gemini-2.0-", "gemini-1.5-", "gemini-1.0-",
+    "-image", "banana", "lyria", "omni", "imagen",
+    "-tts", "-transcribe", "computer-use", "deep-research",
+    "antigravity", "robotics", "gemma-", "bison", "aqa", "-customtools"
+]
+
+FALLBACK_STABLE_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-latest",
+    "gemini-4-argon",
+]
+
+
+def extract_retry_after_seconds(exc: Exception) -> Optional[float]:
+    """Extract retry-after delay in seconds from Gemini API exceptions if available."""
+    # 1. Check HTTP response headers if available on the exception
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        headers = getattr(resp, "headers", None)
+        if headers:
+            for k, v in headers.items():
+                if k.lower() == "retry-after":
+                    try:
+                        val = float(v)
+                        if val > 0:
+                            return val
+                    except (ValueError, TypeError):
+                        pass
+
+    # 2. Check error string with regular expressions
+    err_str = str(exc)
+    patterns = [
+        r"retry[-_]after[:\s]+(\d+(?:\.\d+)?)",
+        r"retry in (\d+(?:\.\d+)?)s?",
+        r"retry after (\d+(?:\.\d+)?)s?",
+        r"retry_delay\s*\{\s*seconds:\s*(\d+)",
+        r"quota exceeded.*please wait (\d+(?:\.\d+)?)s",
+    ]
+    for pat in patterns:
+        m = re.search(pat, err_str, re.IGNORECASE)
+        if m:
+            try:
+                val = float(m.group(1))
+                if val > 0:
+                    return val
+            except ValueError:
+                pass
+    return None
+
+
+def get_available_multimodal_models(
+    client: genai.Client,
+    preferred_model: Optional[str] = None,
+    log_callback: Optional[Callable[[str, str], None]] = None,
+) -> list[str]:
+    """Fetch available models dynamically from Gemini API and filter out irrelevant/legacy models."""
+    filtered: list[str] = []
+    try:
+        raw_models = list(client.models.list())
+        for m in raw_models:
+            name = (getattr(m, "name", "") or "").replace("models/", "").strip()
+            if not name:
+                continue
+            actions = getattr(m, "supported_actions", []) or []
+            if "generateContent" not in actions:
+                continue
+            if any(kw in name.lower() for kw in DISALLOWED_MODEL_KEYWORDS):
+                continue
+            filtered.append(name)
+    except Exception as e:
+        logger.warning("Failed to dynamically list Gemini models: %s. Using fallback stable list.", e)
+        if log_callback:
+            log_callback("WARN", f"Geminiモデル一覧の動的取得に失敗したため、安定版フォールバックリストを使用します: {e}")
+        filtered = list(FALLBACK_STABLE_MODELS)
+
+    if not filtered:
+        filtered = list(FALLBACK_STABLE_MODELS)
+
+    def _sort_key(m_name: str) -> tuple:
+        is_preview = 1 if "-preview" in m_name else 0
+        is_flash = 0 if "flash" in m_name else (1 if "argon" in m_name else 2)
+        m = re.search(r"gemini-(\d+(?:\.\d+)?)", m_name)
+        ver = float(m.group(1)) if m else 0.0
+        if "latest" in m_name:
+            ver = 3.65
+        return (is_flash, is_preview, -ver)
+
+    filtered.sort(key=_sort_key)
+
+    candidate_models: list[str] = []
+    if preferred_model and preferred_model.strip():
+        clean_pref = preferred_model.replace("models/", "").strip()
+        candidate_models.append(clean_pref)
+
+    for m in filtered:
+        if m not in candidate_models:
+            candidate_models.append(m)
+
+    return candidate_models
 
 SYSTEM_INSTRUCTION = """\
 あなたは音声認識（ASR）精度向上のための専門AIアナリストです。
@@ -144,6 +251,14 @@ class GeminiProfileAnalyzer:
         self.model_name = model_name
         self.client = genai.Client(api_key=self.api_key)
 
+    def get_available_models(self, log_callback: Optional[Callable[[str, str], None]] = None) -> list[str]:
+        """Fetch available multimodal models for this client instance."""
+        return get_available_multimodal_models(
+            client=self.client,
+            preferred_model=self.model_name,
+            log_callback=log_callback,
+        )
+
     def analyze(
         self,
         audio_wav_path: str,
@@ -218,57 +333,106 @@ class GeminiProfileAnalyzer:
 """
 
             if status_callback:
-                status_callback("Gemini Flash によるマルチモーダル音声分析・辞書生成中...")
-            if log_callback:
-                log_callback("GEMINI", f"Gemini ({self.model_name}) に生音声と誤認識テキストを送信し推論中 (約20〜40秒程度お待ちください)...")
+                status_callback("Gemini によるマルチモーダル音声分析・辞書生成中...")
 
-            # Candidate models in case of temporary high demand or rate limits
-            # ※ サービス終了済みの gemini-1.5-* / gemini-2.0-* は完全排除。
-            # 現在利用可能な現行アクティブモデルのみでフォールバックチェーンを構成。
-            active_fallback_models = [
-                "gemini-3.8-flash",
-                "gemini-3.5-flash",
-                "gemini-3.5-flash-lite",
-                "gemini-flash-latest",
-                "gemini-2.5-flash",
-            ]
-            candidate_models = []
-            for m in [self.model_name] + active_fallback_models:
-                if m and m not in candidate_models:
-                    candidate_models.append(m)
+            # 動的モデル取得と3周フォールバックループ
+            candidate_models = self.get_available_models(log_callback=log_callback)
+            if not candidate_models:
+                candidate_models = list(FALLBACK_STABLE_MODELS)
+            if self.model_name and self.model_name not in candidate_models:
+                clean_self = self.model_name.replace("models/", "").strip()
+                if clean_self not in candidate_models:
+                    candidate_models.insert(0, clean_self)
 
             last_err = None
             response = None
+            max_cycles = 3
 
-            for idx, model in enumerate(candidate_models):
-                try:
-                    if idx > 0:
-                        import time
-                        time.sleep(1.5)  # 短い待機を入れて一時スパイク負荷を緩和
-                    logger.info("Calling Gemini generate_content with model: %s", model)
-                    response = self.client.models.generate_content(
-                        model=model,
-                        contents=[
-                            uploaded_file,
-                            prompt,
-                        ],
-                        config=types.GenerateContentConfig(
-                            system_instruction=SYSTEM_INSTRUCTION,
-                            response_mime_type="application/json",
-                            response_schema=SpeakerProfile,
-                            max_output_tokens=16384,
-                            temperature=0.2,
-                        ),
-                    )
+            for cycle in range(max_cycles):
+                if response is not None:
                     break
-                except Exception as e:
-                    logger.warning("Failed with model %s: %s", model, e)
+
+                models_to_try = list(candidate_models)
+                for idx, model in enumerate(models_to_try):
+                    if idx > 0 or cycle > 0:
+                        time.sleep(1.0)
+                    logger.info("Calling Gemini generate_content (cycle %d/%d, model: %s)", cycle + 1, max_cycles, model)
                     if log_callback:
-                        log_callback("WARN", f"モデル {model} での呼び出し失敗、フォールバック試行中: {e}")
-                    last_err = e
+                        log_callback("GEMINI", f"Gemini ({model}) に生音声と誤認識テキストを送信し推論中 (周回 {cycle + 1}/{max_cycles})...")
+
+                    try:
+                        response = self.client.models.generate_content(
+                            model=model,
+                            contents=[
+                                uploaded_file,
+                                prompt,
+                            ],
+                            config=types.GenerateContentConfig(
+                                system_instruction=SYSTEM_INSTRUCTION,
+                                response_mime_type="application/json",
+                                response_schema=SpeakerProfile,
+                                max_output_tokens=16384,
+                                temperature=0.2,
+                            ),
+                        )
+                        # 成功
+                        self.model_name = model
+                        break
+                    except Exception as e:
+                        last_err = e
+                        err_str = str(e)
+                        logger.warning("Failed with model %s on cycle %d: %s", model, cycle + 1, e)
+
+                        # 404 (廃止・未提供モデル) の場合は恒久的に除外して次へ
+                        if "404" in err_str or "NOT_FOUND" in err_str or "no longer available" in err_str:
+                            if log_callback:
+                                log_callback("WARN", f"モデル {model} は利用不可（404/廃止）のため候補から除外しました: {e}")
+                            if model in candidate_models:
+                                candidate_models.remove(model)
+                            continue
+
+                        # Retry-After チェック (存在する場合はその秒数待機して再試行)
+                        retry_after = extract_retry_after_seconds(e)
+                        if retry_after is not None and 0 < retry_after <= 60:
+                            if log_callback:
+                                log_callback("WARN", f"Gemini APIから Retry-After ({retry_after:.1f}秒) を受信しました。指定秒数待機して再試行します...")
+                            time.sleep(retry_after)
+                            try:
+                                response = self.client.models.generate_content(
+                                    model=model,
+                                    contents=[
+                                        uploaded_file,
+                                        prompt,
+                                    ],
+                                    config=types.GenerateContentConfig(
+                                        system_instruction=SYSTEM_INSTRUCTION,
+                                        response_mime_type="application/json",
+                                        response_schema=SpeakerProfile,
+                                        max_output_tokens=16384,
+                                        temperature=0.2,
+                                    ),
+                                )
+                                self.model_name = model
+                                break
+                            except Exception as retry_e:
+                                last_err = retry_e
+                                if log_callback:
+                                    log_callback("WARN", f"Retry-After待機後の再試行も失敗 ({retry_e})。次のモデルへフォールバックします。")
+                        else:
+                            if log_callback:
+                                log_callback("WARN", f"モデル {model} での呼び出し失敗、フォールバック試行中: {e}")
+
+                if response is not None:
+                    break
+
+                if cycle < max_cycles - 1 and candidate_models:
+                    wait_sec = 2.0 * (cycle + 1)
+                    if log_callback:
+                        log_callback("WARN", f"全候補モデルの一巡試行が完了しました。負荷緩和のため {wait_sec:.1f}秒 待機後、第 {cycle + 2} 周目のフォールバックを開始します (最大{max_cycles}周)...")
+                    time.sleep(wait_sec)
 
             if response is None:
-                raise RuntimeError(f"All Gemini models failed: {last_err}")
+                raise RuntimeError(f"All Gemini models failed after {max_cycles} cycles: {last_err}")
 
             raw_text = response.text
             data = safe_parse_json(raw_text, log_callback=log_callback)

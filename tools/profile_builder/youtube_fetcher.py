@@ -360,6 +360,42 @@ def is_channel_url(url: str) -> bool:
         return False
 
 
+def extract_playlist_id(url: str) -> Optional[str]:
+    """Extract YouTube playlist ID from URL (e.g. list=PL...)."""
+    if not url:
+        return None
+    m = re.search(r"[?&]list=([a-zA-Z0-9_-]+)", url)
+    if m:
+        return m.group(1)
+    return None
+
+
+def is_playlist_url(url: str) -> bool:
+    """Check if the given URL is a YouTube playlist URL."""
+    u = (url or "").strip()
+    if not u:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(u)
+        host = (parsed.hostname or "").lower()
+        if not (host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be"):
+            return False
+        path = parsed.path or ""
+        query = urllib.parse.parse_qs(parsed.query or "")
+
+        # /playlist?list=...
+        if "/playlist" in path and "list" in query:
+            return True
+
+        # /watch?v=...&list=... のように list パラメータが存在する場合も再生リスト指定と判定
+        if "list" in query and query["list"] and query["list"][0]:
+            return True
+
+        return False
+    except Exception:
+        return False
+
+
 class YouTubeFetcher:
     """Fetches video metadata, automatic subtitles, and extracts high-density audio sections."""
 
@@ -544,6 +580,99 @@ class YouTubeFetcher:
             log_callback(
                 "YTDL",
                 f"スキャン完了: 取得候補 {len(entries)} 件中、既学習 {dup_cnt} 件をスキップし、再生数上位 {len(chosen)} 件を一括学習対象に決定。"
+            )
+        return chosen
+
+    def fetch_playlist_videos(
+        self,
+        playlist_url: str,
+        limit: int = 10,
+        candidate_pool: int = 50,
+        exclude_video_ids: Optional[set[str]] = None,
+        log_callback: Optional[Callable[[str, str], None]] = None,
+    ) -> List[dict]:
+        """Fetch videos from a YouTube playlist, filter out duplicates and shorts, and return up to limit videos.
+        
+        Args:
+            playlist_url: YouTube playlist URL (e.g. https://www.youtube.com/playlist?list=PL...)
+            limit: Maximum number of videos to return (default: 10)
+            candidate_pool: Number of playlist videos to fetch for evaluation (default: 50)
+            exclude_video_ids: Set of video IDs already trained to prevent duplicate processing.
+            log_callback: Optional callback for streaming log messages.
+        """
+        exclude_video_ids = exclude_video_ids or set()
+        clean_url = playlist_url.strip()
+
+        # 正規化: list ID があれば確実な /playlist?list=PL... 形式に変換
+        list_id = extract_playlist_id(clean_url)
+        target_url = f"https://www.youtube.com/playlist?list={list_id}" if list_id else clean_url
+
+        if log_callback:
+            log_callback("YTDL", f"再生リストをスキャン中: {target_url} (最大{candidate_pool}件)")
+
+        cmd = list(self.yt_dlp_cmd) + [
+            "--flat-playlist",
+            "--dump-json",
+            "--playlist-end", str(candidate_pool),
+            target_url,
+        ]
+
+        entries = []
+        try:
+            res = self._run_ytdl_command(cmd, log_callback=log_callback, test_url=target_url)
+            if res.returncode == 0 and res.stdout and res.stdout.strip():
+                for line in res.stdout.splitlines():
+                    line = line.strip()
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            entries.append(data)
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning("Failed to fetch flat playlist from %s: %s", target_url, e)
+            if log_callback:
+                log_callback("WARN", f"再生リストのエントリ取得中に警告: {e}")
+
+        # Filter out duplicates and shorts (< 3min)
+        valid_videos = []
+        seen_ids = set()
+        for e in entries:
+            vid_id = e.get("id")
+            if not vid_id or vid_id in seen_ids:
+                continue
+            seen_ids.add(vid_id)
+
+            # Skip if already trained in this profile
+            if vid_id in exclude_video_ids:
+                logger.info("Skipping already trained video: %s - %s", vid_id, e.get("title"))
+                continue
+
+            duration = float(e.get("duration", 0) or 0)
+            # Skip very short videos (e.g. < 3 minutes)
+            if duration and duration < 180:
+                continue
+
+            view_count = int(e.get("view_count", 0) or 0)
+            video_url = e.get("url")
+            if not video_url or not video_url.startswith("http"):
+                video_url = f"https://www.youtube.com/watch?v={vid_id}"
+
+            valid_videos.append({
+                "id": vid_id,
+                "title": e.get("title", ""),
+                "url": video_url,
+                "view_count": view_count,
+                "duration": duration,
+                "channel": e.get("channel") or e.get("uploader") or "",
+            })
+
+        chosen = valid_videos[:limit]
+        if log_callback:
+            dup_cnt = len(seen_ids & exclude_video_ids)
+            log_callback(
+                "YTDL",
+                f"再生リストスキャン完了: 取得候補 {len(entries)} 件中、既学習 {dup_cnt} 件をスキップし、{len(chosen)} 件を一括学習対象に決定。"
             )
         return chosen
 

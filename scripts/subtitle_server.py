@@ -1034,12 +1034,24 @@ class SubtitleServer:
                                 _generation_task["done"] = True
                             _append_generation_log("SUCCESS", msg)
                         except Exception as e:
+                            interim_info = ""
+                            try:
+                                from tools.profile_builder.profile_exporter import load_profile
+                                target_p = speaker_id or existing_profile_id
+                                if target_p:
+                                    saved_prof = load_profile(target_p)
+                                    if saved_prof:
+                                        cnt = len(saved_prof.processed_video_ids) or len(saved_prof.source_video_urls) or 0
+                                        interim_info = f" (※ここまでに学習されたプロファイル: {cnt}本・ルール{len(saved_prof.replacements)}件は安全に保存済みです)"
+                            except Exception:
+                                pass
+
                             with _generation_lock:
                                 _generation_task["status"] = "failed"
                                 _generation_task["done"] = True
                                 _generation_task["error"] = str(e)
-                                _generation_task["message"] = f"エラー: {e}"
-                            _append_generation_log("ERROR", f"タスク失敗: {e}")
+                                _generation_task["message"] = f"エラー: {e}{interim_info}"
+                            _append_generation_log("ERROR", f"タスク失敗: {e}{interim_info}")
 
                     threading.Thread(target=_run_gen, daemon=True).start()
                     self._json(202, {"ok": True, "message": "Generation started"})

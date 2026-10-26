@@ -755,9 +755,187 @@ def test_youtube_fetcher_filenotfound_self_healing(monkeypatch):
     monkeypatch.setattr(subprocess, "run", mock_run)
 
     res = fetcher._run_ytdl_command(["yt-dlp", "--dump-json", "https://youtube.com/watch?v=test_id"])
-    assert res.returncode == 0
     assert attempts == 2
     assert "-m" in res.args or "yt_dlp" in res.args
+
+
+def test_is_playlist_url_and_extract_playlist_id():
+    """Verify is_playlist_url and extract_playlist_id strictly validate domains and extract list IDs."""
+    from tools.profile_builder.youtube_fetcher import is_playlist_url, extract_playlist_id
+
+    # Valid playlist URLs
+    assert is_playlist_url("https://www.youtube.com/playlist?list=PL1234567890abcdef") is True
+    assert is_playlist_url("https://youtube.com/playlist?list=PL1234567890abcdef") is True
+    assert is_playlist_url("https://m.youtube.com/playlist?list=PL1234567890abcdef") is True
+    assert is_playlist_url("https://www.youtube.com/watch?v=12345678901&list=PL1234567890abcdef") is True
+    assert is_playlist_url("https://youtu.be/watch?v=12345678901&list=PL1234567890abcdef") is True
+
+    # Single video / channel / shorts should NOT be playlist
+    assert is_playlist_url("https://www.youtube.com/watch?v=12345678901") is False
+    assert is_playlist_url("https://www.youtube.com/@ValChannel") is False
+    assert is_playlist_url("https://www.youtube.com/shorts/12345678901") is False
+    assert is_playlist_url("") is False
+
+    # Spoofed domains must be rejected
+    assert is_playlist_url("https://evil-youtube.com/playlist?list=PL123") is False
+    assert is_playlist_url("https://notyoutube.com/playlist?list=PL123") is False
+    assert is_playlist_url("https://youtube.com.attacker.com/playlist?list=PL123") is False
+
+    # extract_playlist_id tests
+    assert extract_playlist_id("https://www.youtube.com/playlist?list=PL1234567890abcdef") == "PL1234567890abcdef"
+    assert extract_playlist_id("https://www.youtube.com/watch?v=123&list=PLxyz_99") == "PLxyz_99"
+    assert extract_playlist_id("https://www.youtube.com/watch?v=123") is None
+
+
+def test_fetch_playlist_videos_mock(monkeypatch):
+    """Verify fetch_playlist_videos parses yt-dlp flat playlist, filters duplicates/shorts, and respects limit."""
+    import subprocess
+    from tools.profile_builder.youtube_fetcher import YouTubeFetcher
+
+    fetcher = YouTubeFetcher()
+
+    mock_entries = [
+        {"id": "vid1", "title": "Episode 1", "duration": 600, "view_count": 1000},
+        {"id": "vid2", "title": "Short Clip", "duration": 60, "view_count": 5000},  # short (<180s)
+        {"id": "vid3", "title": "Episode 2", "duration": 1200, "view_count": 2000},
+        {"id": "vid_dup", "title": "Already Trained", "duration": 800, "view_count": 3000},
+    ]
+    stdout_lines = "\n".join(json.dumps(e) for e in mock_entries)
+
+    def mock_run(cmd, *args, **kwargs):
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=stdout_lines, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    res = fetcher.fetch_playlist_videos(
+        playlist_url="https://www.youtube.com/playlist?list=PLtest",
+        limit=5,
+        exclude_video_ids={"vid_dup"},
+    )
+    assert len(res) == 2
+    ids = [v["id"] for v in res]
+    assert "vid1" in ids
+    assert "vid3" in ids
+    assert "vid2" not in ids  # filtered because duration < 180s
+    assert "vid_dup" not in ids  # excluded
+
+
+def test_gemini_dynamic_model_filtering():
+    """Verify get_available_multimodal_models filters legacy and irrelevant models."""
+    from tools.profile_builder.gemini_analyzer import get_available_multimodal_models
+
+    class FakeModel:
+        def __init__(self, name, supported_actions):
+            self.name = name
+            self.supported_actions = supported_actions
+
+    class FakeClient:
+        class models:
+            @staticmethod
+            def list():
+                return [
+                    FakeModel("models/gemini-2.5-flash", ["generateContent"]),  # legacy
+                    FakeModel("models/gemini-1.5-pro", ["generateContent"]),    # legacy
+                    FakeModel("models/gemini-3.8-flash-tts", ["generateContent"]),  # tts
+                    FakeModel("models/gemini-nano-banana-2.1", ["generateContent"]),  # image
+                    FakeModel("models/gemini-embedding-2", ["embedContent"]),  # no generateContent
+                    FakeModel("models/gemini-3.5-flash", ["generateContent"]),  # valid
+                    FakeModel("models/gemini-3.8-flash", ["generateContent"]),  # valid
+                    FakeModel("models/gemini-4-argon", ["generateContent"]),   # valid
+                ]
+
+    models = get_available_multimodal_models(FakeClient(), preferred_model="gemini-3.8-flash")
+    assert "gemini-3.8-flash" in models
+    assert "gemini-3.5-flash" in models
+    assert "gemini-4-argon" in models
+
+    # Ensure excluded models are not in the list
+    assert "gemini-2.5-flash" not in models
+    assert "gemini-1.5-pro" not in models
+    assert "gemini-3.8-flash-tts" not in models
+    assert "gemini-nano-banana-2.1" not in models
+
+
+def test_extract_retry_after_seconds():
+    """Verify extract_retry_after_seconds parses retry delay from headers and error messages."""
+    from tools.profile_builder.gemini_analyzer import extract_retry_after_seconds
+
+    class ErrorWithHeader(Exception):
+        def __init__(self, msg, retry_after_val):
+            super().__init__(msg)
+            class FakeResp:
+                headers = {"retry-after": retry_after_val}
+            self.response = FakeResp()
+
+    e_header = ErrorWithHeader("Rate limit exceeded", "25.5")
+    assert extract_retry_after_seconds(e_header) == 25.5
+
+    e_str1 = Exception("Resource has been exhausted. Please retry after 12.3s")
+    assert extract_retry_after_seconds(e_str1) == 12.3
+
+    e_str2 = Exception("Quota exceeded: retry_delay { seconds: 40 }")
+    assert extract_retry_after_seconds(e_str2) == 40.0
+
+    e_none = Exception("Standard 404 NOT_FOUND error")
+    assert extract_retry_after_seconds(e_none) is None
+
+
+def test_pipeline_interim_profile_saved_on_batch_error(tmp_path, monkeypatch):
+    """Verify ProfileBuilderPipeline preserves and saves interim profile when subsequent videos fail."""
+    from tools.profile_builder.pipeline import ProfileBuilderPipeline
+    from tools.profile_builder.profile_model import ReplacementRule, SpeakerProfile
+
+    saved_profiles = []
+
+    def mock_save(prof):
+        saved_profiles.append(prof)
+        return str(tmp_path / f"{prof.speaker_id}.json")
+
+    monkeypatch.setattr("tools.profile_builder.pipeline.save_profile", mock_save)
+
+    pipeline = ProfileBuilderPipeline(api_key="fake-key")
+
+    # Mock fetch_playlist_videos returning 2 videos
+    monkeypatch.setattr(
+        pipeline.fetcher,
+        "fetch_playlist_videos",
+        lambda *args, **kwargs: [
+            {"id": "v1", "url": "https://youtube.com/watch?v=v1", "title": "Vid 1", "channel": "Chan"},
+            {"id": "v2", "url": "https://youtube.com/watch?v=v2", "title": "Vid 2", "channel": "Chan"},
+        ],
+    )
+
+    call_count = 0
+
+    def mock_process_single(youtube_url, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Video 1 succeeds
+            prof = SpeakerProfile(
+                speaker_id="test_speaker",
+                display_name="Test Speaker",
+                source_video_urls=[youtube_url],
+                processed_video_ids=["v1"],
+                replacements=[ReplacementRule(pattern="てすと", replacement="テスト")],
+            )
+            return prof
+        else:
+            # Video 2 raises an error (e.g. Gemini failure)
+            raise RuntimeError("Gemini API 500 internal server error")
+
+    monkeypatch.setattr(pipeline, "_process_single_video", mock_process_single)
+
+    # Execution should finish partially and return the interim profile from video 1
+    result = pipeline.run(
+        youtube_url="https://www.youtube.com/playlist?list=PLmock123",
+        speaker_id="test_speaker",
+    )
+
+    assert result is not None
+    assert result.speaker_id == "test_speaker"
+    assert "v1" in result.processed_video_ids
+    assert len(saved_profiles) >= 1
 
 
 

@@ -24,6 +24,7 @@ from tools.profile_builder.youtube_fetcher import (
     extract_video_id,
     format_seconds_to_timestamp,
     is_channel_url,
+    is_playlist_url,
 )
 
 logger = logging.getLogger("hayamimi.profile_pipeline")
@@ -32,7 +33,7 @@ logger = logging.getLogger("hayamimi.profile_pipeline")
 class ProfileBuilderPipeline:
     """Orchestrates YouTube metadata fetching, section extraction, local transcription,
     and Gemini multimodal analysis to produce a complete speaker profile.
-    Supports both individual video URLs and channel URLs (batch learning recent popular videos).
+    Supports individual video URLs, channel URLs, and playlist URLs (batch learning).
     """
 
     def __init__(
@@ -57,7 +58,7 @@ class ProfileBuilderPipeline:
         log_callback: Optional[Callable[[str, str], None]] = None,
     ) -> SpeakerProfile:
         """Execute end-to-end profile generation or incremental training.
-        If youtube_url is a channel URL, fetches recent popular videos and processes them in batch.
+        If youtube_url is a channel or playlist URL, fetches videos and processes them in batch.
         Callback signature: (stage: str, progress: float, message: str)
         """
         def log(level: str, msg: str):
@@ -74,9 +75,13 @@ class ProfileBuilderPipeline:
         target_pid = existing_profile_id or speaker_id
         existing_profile = load_profile(target_pid) if target_pid else None
 
-        # Check if URL is a YouTube channel URL
-        if is_channel_url(youtube_url):
-            report("channel", 0.02, f"チャンネルURLを検出しました。最新・人気動画をスキャン中: {youtube_url}")
+        is_channel = is_channel_url(youtube_url)
+        is_playlist = is_playlist_url(youtube_url)
+
+        # Check if URL is a YouTube channel or playlist URL (Batch Mode)
+        if is_channel or is_playlist:
+            batch_kind = "再生リスト" if is_playlist else "チャンネル"
+            report("batch", 0.02, f"{batch_kind}URLを検出しました。動画一覧をスキャン中: {youtube_url}")
 
             # Collect already processed video IDs to prevent duplicate work
             exclude_ids = set()
@@ -87,19 +92,28 @@ class ProfileBuilderPipeline:
                     if vid:
                         exclude_ids.add(vid)
 
-            videos = self.fetcher.fetch_channel_videos(
-                channel_url=youtube_url,
-                limit=max_videos,
-                candidate_pool=50,
-                exclude_video_ids=exclude_ids,
-                log_callback=log,
-            )
+            if is_playlist:
+                videos = self.fetcher.fetch_playlist_videos(
+                    playlist_url=youtube_url,
+                    limit=max_videos,
+                    candidate_pool=50,
+                    exclude_video_ids=exclude_ids,
+                    log_callback=log,
+                )
+            else:
+                videos = self.fetcher.fetch_channel_videos(
+                    channel_url=youtube_url,
+                    limit=max_videos,
+                    candidate_pool=50,
+                    exclude_video_ids=exclude_ids,
+                    log_callback=log,
+                )
 
             if not videos:
                 if exclude_ids:
-                    msg = f"チャンネル内の最近の人気動画はすべて学習済みです（学習済み: {len(exclude_ids)}本、スキップ完了）。"
+                    msg = f"{batch_kind}内の対象動画はすべて学習済みです（学習済み: {len(exclude_ids)}本、スキップ完了）。"
                 else:
-                    msg = "チャンネルから対象動画が見つかりませんでした。"
+                    msg = f"{batch_kind}から対象動画が見つかりませんでした。"
                 report("complete", 1.0, msg)
                 if existing_profile:
                     return existing_profile
@@ -107,12 +121,16 @@ class ProfileBuilderPipeline:
 
             total_vids = len(videos)
             report(
-                "channel",
+                "batch",
                 0.05,
-                f"チャンネルから直近の人気動画 {total_vids} 本を抽出しました（重複 {len(exclude_ids)} 本は自動除外）。一括学習を開始します...",
+                f"{batch_kind}から {total_vids} 本の動画を抽出しました（重複 {len(exclude_ids)} 本は自動除外）。一括学習を開始します...",
             )
 
             cur_prof = existing_profile
+            successful_count = 0
+            failed_errors = []
+            consecutive_failures = 0
+
             for idx, vid_info in enumerate(videos):
                 v_url = vid_info["url"]
                 v_title = vid_info.get("title", "動画")
@@ -126,23 +144,54 @@ class ProfileBuilderPipeline:
                     report(stage, overall, f"[{idx+1}/{total_vids}本目] 『{v_title[:22]}...』: {msg}")
 
                 log("BATCH", f"========== [{idx+1}/{total_vids}本目] 『{v_title}』 の処理を開始 ==========")
-                cur_prof = self._process_single_video(
-                    youtube_url=v_url,
-                    speaker_id=speaker_id or (cur_prof.speaker_id if cur_prof else None),
-                    display_name=display_name or (cur_prof.display_name if cur_prof else v_chan),
-                    duration_sec=duration_sec,
-                    existing_profile=cur_prof,
-                    status_callback=_sub_cb,
-                    log_callback=log_callback,
-                )
+                try:
+                    cur_prof = self._process_single_video(
+                        youtube_url=v_url,
+                        speaker_id=speaker_id or (cur_prof.speaker_id if cur_prof else None),
+                        display_name=display_name or (cur_prof.display_name if cur_prof else v_chan),
+                        duration_sec=duration_sec,
+                        existing_profile=cur_prof,
+                        status_callback=_sub_cb,
+                        log_callback=log_callback,
+                    )
+                    successful_count += 1
+                    consecutive_failures = 0
+                except Exception as e:
+                    logger.error("Error processing video %d/%d (%s): %s", idx + 1, total_vids, v_url, e, exc_info=True)
+                    log("ERROR", f"[{idx+1}/{total_vids}本目] 『{v_title}』の処理中にエラーが発生しました: {e}")
+                    failed_errors.append(f"『{v_title[:20]}』: {e}")
+                    consecutive_failures += 1
 
-            learned_count = len(cur_prof.processed_video_ids) or len(cur_prof.source_video_urls)
-            report(
-                "complete",
-                1.0,
-                f"🎉 チャンネル一括学習が完了しました！ (累計学習: {learned_count}本, 置換ルール: {len(cur_prof.replacements)}件)",
-            )
-            return cur_prof
+                    # 途中保存の担保: ここまでに学習成功したプロファイルがあれば即座に永続化
+                    if cur_prof is not None:
+                        try:
+                            saved_path = save_profile(cur_prof)
+                            log("WARN", f"⚠️ ここまでに学習済みのプロファイルを安全に自動保存しました: {saved_path}")
+                        except Exception as save_err:
+                            logger.error("Failed to save interim profile: %s", save_err)
+
+                    # 連続3回失敗した場合は致命的（API無効等）と判断して中断
+                    if consecutive_failures >= 3:
+                        log("ERROR", f"連続で {consecutive_failures} 回のエラーが発生したため、以降のバッチ処理を中断します。")
+                        break
+
+            # バッチ処理終了後の判定
+            if cur_prof is not None and successful_count > 0:
+                learned_count = len(cur_prof.processed_video_ids) or len(cur_prof.source_video_urls)
+                status_msg = f"🎉 {batch_kind}一括学習が完了しました！ (今回学習: {successful_count}/{total_vids}本, 累計学習: {learned_count}本, 置換ルール: {len(cur_prof.replacements)}件)"
+                if failed_errors:
+                    status_msg += f" ※スキップされたエラー動画: {len(failed_errors)}本"
+                report("complete", 1.0, status_msg)
+                return cur_prof
+            elif cur_prof is not None:
+                # 既存プロファイルはあるが今回の動画は1本も成功しなかった場合
+                report("complete", 1.0, f"⚠️ 動画の処理に失敗しましたが、既存のプロファイルは安全に保持されています: {failed_errors[0] if failed_errors else '不明なエラー'}")
+                return cur_prof
+            else:
+                # 1本も成功せず新規プロファイルも作成できなかった場合
+                err_detail = "; ".join(failed_errors) if failed_errors else "全動画の処理に失敗しました"
+                raise RuntimeError(f"{batch_kind}の一括学習に失敗しました: {err_detail}")
+
 
         # Single video URL processing
         return self._process_single_video(

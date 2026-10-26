@@ -549,23 +549,23 @@
 
     <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 14px;">
       <div class="form-group">
-        <label class="form-label">YouTube 配信/動画 URL または チャンネルURL</label>
-        <input type="text" id="inputYtUrl" class="input-text" placeholder="https://www.youtube.com/watch?v=... または https://www.youtube.com/@チャンネル名">
+        <label class="form-label">YouTube 配信/動画 URL、チャンネルURL、または 再生リストURL</label>
+        <input type="text" id="inputYtUrl" class="input-text" placeholder="https://www.youtube.com/watch?v=... または @チャンネル名 または playlist?list=...">
         <div style="font-size: 0.75rem; color: var(--paper-dim); margin-top: 4px;">
-          💡 <b>チャンネルURL（@チャンネル名）</b> を指定すると、最近の人気動画・配信アーカイブから自動で一括学習します。過去に学習済みの動画は自動で重複スキップされます。
+          💡 <b>チャンネルURL（@チャンネル名）</b> や <b>再生リストURL（playlist?list=...）</b> を指定すると、含まれる動画群から自動で一括学習します。過去に学習済みの動画は自動スキップされ、途中でエラーが発生した場合も学習済みプロファイルは確実に保存されます。
         </div>
       </div>
       <div class="form-group" id="displayNameGroup">
-        <label class="form-label">話者表示名 (省略時はチャンネル名)</label>
+        <label class="form-label">話者表示名 (省略時はチャンネル名/リスト名)</label>
         <input type="text" id="inputDisplayName" class="input-text" placeholder="例: ヴァル閣下">
       </div>
     </div>
 
     <details style="font-size: 0.82rem; color: var(--paper-dim);">
-      <summary style="cursor: pointer; user-select: none;">⚙ 詳細設定（チャンネル取得本数・抽出時間の調整）</summary>
+      <summary style="cursor: pointer; user-select: none;">⚙ 詳細設定（一括学習本数・抽出時間の調整）</summary>
       <div style="display: flex; gap: 16px; margin-top: 10px; padding: 12px; background: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-sm); flex-wrap: wrap;">
         <div class="form-group" style="flex: 1; min-width: 180px;">
-          <label class="form-label">チャンネル一括学習本数 (人気上位N本)</label>
+          <label class="form-label">一括学習本数 (チャンネル/再生リスト上限N本)</label>
           <input type="number" id="inputMaxVideos" class="input-text" value="10" min="1" max="30">
         </div>
         <div class="form-group" style="flex: 1; min-width: 180px;">
