@@ -7,8 +7,22 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <!-- 配信利用・商用利用可能な Google Fonts を一括プリロード (OFL / Apache 2.0) -->
-  <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=IBM+Plex+Mono:wght@400;600&family=Kaisei+Decol:wght@700&family=Kosugi+Maru&family=M+PLUS+1p:wght@500;700&family=M+PLUS+Rounded+1c:wght@500;700;800&family=Noto+Sans+JP:wght@500;700&family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+JP:wght@500;700&family=IBM+Plex+Sans+KR:wght@500;700&family=IBM+Plex+Sans:wght@500;700&family=Kaisei+Decol:wght@700&family=Kosugi+Maru&family=LINE+Seed+JP:wght@400;700;800&family=M+PLUS+1p:wght@500;700&family=M+PLUS+Rounded+1c:wght@500;700;800&family=Noto+Sans+JP:wght@500;700&family=Noto+Sans+KR:wght@500;700&family=Noto+Sans+SC:wght@500;700&family=Noto+Sans+TC:wght@500;700&family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap" rel="stylesheet">
   <style>
+    @font-face {
+      font-family: 'LINE Seed KR';
+      src: local('LINE Seed KR Bold'), local('LINE Seed KR-Bold'), local('LINESeedKR-Bd'),
+           url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_11-01@1.0/LINESeedKR-Bd.woff2') format('woff2');
+      font-weight: 700;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'LINE Seed KR';
+      src: local('LINE Seed KR Regular'), local('LINE Seed KR-Regular'), local('LINESeedKR-Rg'),
+           url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_11-01@1.0/LINESeedKR-Rg.woff2') format('woff2');
+      font-weight: 400;
+      font-display: swap;
+    }
     :root {
       --ink: #0d0f13;
       --ink-2: #14171d;
@@ -917,8 +931,10 @@
         <div class="form-group">
           <label for="style-font">字幕フォント (配信・商用利用OKなGoogle Fonts):</label>
           <select id="style-font">
-            <option value="'Noto Sans JP', sans-serif">Noto Sans JP (定番・クリアな高視認性ゴシック / OFL)</option>
             <option value="'Zen Kaku Gothic New', sans-serif" selected>Zen Kaku Gothic New (洗練モダン角ゴシック / OFL)</option>
+            <option value="'LINE Seed JP', 'LINE Seed KR', 'Noto Sans SC', 'Noto Sans TC', sans-serif">LINE Seed (親しみやすい幾何学モダン・日英韓欧対応 / OFL)</option>
+            <option value="'IBM Plex Sans JP', 'IBM Plex Sans KR', 'IBM Plex Sans', 'Noto Sans SC', sans-serif">IBM Plex Sans (洗練された知的デザイン・日英韓欧対応 / OFL)</option>
+            <option value="'Source Han Sans JP', '源ノ角ゴシック JP', 'Noto Sans JP', 'Noto Sans SC', 'Noto Sans TC', 'Noto Sans KR', sans-serif">源ノ角ゴシック / Noto Sans CJK (日中韓英欧・多言語完全対応 / OFL)</option>
             <option value="'M PLUS 1p', sans-serif">M PLUS 1p (すっきり親しみやすい / OFL)</option>
             <option value="'M PLUS Rounded 1c', sans-serif">M PLUS Rounded 1c (丸ゴシック・VTuberや雑談配信に大人気 / OFL)</option>
             <option value="'Shippori Mincho B1', serif">Shippori Mincho B1 (上品・和風明朝体 / OFL)</option>

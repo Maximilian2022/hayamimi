@@ -182,7 +182,7 @@ if (Test-Path $configFile) {
                     <TextBlock Name="FinalText" Text=""
                                TextAlignment="Center" TextWrapping="Wrap"
                                Foreground="#FFFFFF" FontSize="$($savedConfig.FontSize)" FontWeight="Bold"
-                               FontFamily="Zen Kaku Gothic New, Meiryo, Yu Gothic UI, sans-serif"
+                               FontFamily="LINE Seed JP, IBM Plex Sans JP, Source Han Sans JP, 源ノ角ゴシック JP, Noto Sans JP, Zen Kaku Gothic New, Meiryo, Yu Gothic UI, sans-serif"
                                LineHeight="38">
                         <TextBlock.Effect>
                             <DropShadowEffect Color="#000000" BlurRadius="8" ShadowDepth="0" Opacity="1.0"/>
@@ -193,7 +193,7 @@ if (Test-Path $configFile) {
                     <TextBlock Name="PartialText" Text=""
                                TextAlignment="Center" TextWrapping="Wrap"
                                Foreground="#E2E8F0" FontSize="22" FontStyle="Italic"
-                               FontFamily="Zen Kaku Gothic New, Meiryo, Yu Gothic UI, sans-serif"
+                               FontFamily="LINE Seed JP, IBM Plex Sans JP, Source Han Sans JP, 源ノ角ゴシック JP, Noto Sans JP, Zen Kaku Gothic New, Meiryo, Yu Gothic UI, sans-serif"
                                Opacity="0.85" Margin="0,4,0,0">
                         <TextBlock.Effect>
                             <DropShadowEffect Color="#000000" BlurRadius="6" ShadowDepth="0" Opacity="0.95"/>
@@ -204,7 +204,7 @@ if (Test-Path $configFile) {
                     <TextBlock Name="TransText" Text=""
                                TextAlignment="Center" TextWrapping="Wrap"
                                Foreground="#38BDF8" FontSize="20" FontWeight="SemiBold"
-                               FontFamily="Zen Kaku Gothic New, Meiryo, Yu Gothic UI, sans-serif"
+                               FontFamily="LINE Seed JP, IBM Plex Sans JP, Source Han Sans JP, 源ノ角ゴシック JP, Noto Sans JP, Zen Kaku Gothic New, Meiryo, Yu Gothic UI, sans-serif"
                                LineHeight="28" Margin="0,6,0,0">
                         <TextBlock.Effect>
                             <DropShadowEffect Color="#000000" BlurRadius="6" ShadowDepth="0" Opacity="1.0"/>

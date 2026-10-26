@@ -274,8 +274,23 @@ OVERLAY_HTML = """<!doctype html>
 <title>早耳 - OBS 字幕オーバーレイ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Kaisei+Decol:wght@700&family=Kosugi+Maru&family=M+PLUS+1p:wght@500;700&family=M+PLUS+Rounded+1c:wght@500;700;800&family=Noto+Sans+JP:wght@500;700&family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=IBM+Plex+Sans+JP:wght@500;700&family=IBM+Plex+Sans+KR:wght@500;700&family=IBM+Plex+Sans:wght@500;700&family=Kaisei+Decol:wght@700&family=Kosugi+Maru&family=LINE+Seed+JP:wght@400;700;800&family=M+PLUS+1p:wght@500;700&family=M+PLUS+Rounded+1c:wght@500;700;800&family=Noto+Sans+JP:wght@500;700&family=Noto+Sans+KR:wght@500;700&family=Noto+Sans+SC:wght@500;700&family=Noto+Sans+TC:wght@500;700&family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap" rel="stylesheet">
 <style>
+  @font-face {
+    font-family: 'LINE Seed KR';
+    src: local('LINE Seed KR Bold'), local('LINE Seed KR-Bold'), local('LINESeedKR-Bd'),
+         url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_11-01@1.0/LINESeedKR-Bd.woff2') format('woff2');
+    font-weight: 700;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'LINE Seed KR';
+    src: local('LINE Seed KR Regular'), local('LINE Seed KR-Regular'), local('LINESeedKR-Rg'),
+         url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_11-01@1.0/LINESeedKR-Rg.woff2') format('woff2');
+    font-weight: 400;
+    font-display: swap;
+  }
+
   html, body { margin: 0; background: transparent; overflow: hidden; width: 100%; height: 100%; }
   #box {
     position: absolute; left: 0; right: 0; bottom: 4vh;
