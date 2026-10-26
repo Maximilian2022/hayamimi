@@ -180,38 +180,57 @@ not yet CI-tested end to end — reports welcome.~~
 > Fully supports **Python 3.14**.  
 > Designed for turnkey distribution: even if Python (or 3.14) is not installed on the  machine, running `setup.ps1` or the GUI launcher (`start.bat` / `start.vbs`) automatically provisions a self-contained `.venv` environment using `uv`.  
 
-## Quickstart
+## Quickstart (Windows Recommended: setup.bat)
+
+On Windows, you can install, create desktop shortcuts, and complete initial setup without typing any commands — **just double-click `setup.bat`**.
+
+### 1. Installation Guide (setup.bat)
+1. Download and extract the latest release ZIP from [Releases](https://github.com/Maximilian2022/hayamimi/releases) (or green "Code" -> "Download ZIP").
+2. Double-click **`setup.bat`** in the folder.
+   - *Requires no administrator privileges; automatically handles PowerShell execution policy bypass and UTF-8 encoding.*
+   - *Even if you run `setup.bat` standalone in a clean directory, it automatically pulls the latest setup wizard from GitHub.*
+3. The modern GUI setup wizard will appear.
+   - Confirm the installation target directory (default: `Documents\hayamimi`) and the "Create Desktop Shortcut" checkbox, then click "**Start Setup**".
+   - A desktop shortcut named "**hayamimi (早耳)**" will be created.
+
+### 2. Initial Setup (Native Python venv Environment)
+1. Double-click the "**hayamimi (早耳)**" desktop shortcut (or `start.bat` / `start.vbs` in the folder) to open the launcher.
+2. **"🐍 Python venv (Native / Recommended)" is selected by default.**
+   - No pre-installed Python, `ffmpeg`, or `yt-dlp` is required on your PC (100% self-contained zero-config runtime).
+   - On first launch, the dedicated Python virtual environment (`.venv`), all dependencies (`requirements.txt`), and Core AI speech recognition models are provisioned automatically via `uv` / pip.
+   - No PC reboot or BIOS virtualization tweaks required.
+3. Click "**Start**" in the launcher to start the local speech recognition server.
+   - **OBS Subtitle Overlay**: `http://localhost:8833/` (add as an OBS Browser Source)
+   - **Web Mic & Subtitle Studio**: `http://localhost:8833/mic` (microphone stream and styling editor from mobile/browser)
+   - **Live Dashboard**: `http://localhost:8833/dashboard` (real-time recognition and live translation monitor)
+
+---
+
+### Manual CLI Setup (Advanced / Developers)
 
 ```bash
+# Create and activate Python virtual environment
 python -m venv .venv
 
-# Windows
-.venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python scripts\download_models.py
+# Install dependencies
+.venv\Scripts\pip install -r requirements.txt       # Windows
+.venv/bin/pip install -r requirements.txt          # macOS / Linux
 
-# macOS / Linux
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python scripts/download_models.py
+# Download Core AI speech recognition models (~3.1GB)
+.venv\Scripts\python scripts\download_models.py     # Windows
+.venv/bin/python scripts/download_models.py        # macOS / Linux
 
-# Real-time transcription from your microphone
-.venv/Scripts/python scripts/realtime_transcribe.py     # Windows
-.venv/bin/python scripts/realtime_transcribe.py          # macOS/Linux
+# Start server (OBS overlay + Web mic + live dashboard)
+.venv\Scripts\python scripts\realtime_transcribe.py --serve   # Windows
+.venv/bin/python scripts/realtime_transcribe.py --serve        # macOS / Linux
+# -> open http://localhost:8833/mic or http://localhost:8833/dashboard in a browser
 
-# From the PC's audio output instead (a call, a video) -- Windows only
-.venv\Scripts\python scripts\realtime_transcribe.py --input speaker
+# Transcribe PC internal speaker audio (WASAPI loopback, Windows only)
+.venv\Scripts\python scripts\realtime_transcribe.py --input speaker --serve
 
-# Mic + PC audio output together, e.g. for meeting transcription
-.venv\Scripts\python scripts\realtime_transcribe.py --input mix
-
-# With the dashboard + OBS overlay
-.venv/Scripts/python scripts/realtime_transcribe.py --serve
-# -> open http://localhost:8833/dashboard in a browser
+# Transcribe mic + speaker mixed together (for meetings)
+.venv\Scripts\python scripts\realtime_transcribe.py --input mix --serve
 ```
-
-> **[hayamimi Fork: Modern GUI Launcher & Setup Wizard]**  
-> hayamimi includes intuitive GUI tools for zero-command-line deployment:
-> - **Initial Setup**: Run `setup.ps1` to download and configure the standalone environment and create desktop shortcuts.
-> - **One-Click Launch**: Start via `start.vbs` or `start.bat` (desktop shortcut) to launch the modern dark-mode GUI (`launcher_gui.ps1`) supporting Native Python venv / WSL Containers (WSL3) switching, audio device selection, automatic model downloads, and one-click app updates.
 
 ### Running with Docker Compose (Recommended)
 

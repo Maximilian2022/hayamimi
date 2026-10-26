@@ -171,40 +171,59 @@ with RoutedASR(en_tier="v2", punct_model="4class", on_event=hub.publish) as asr:
 > **Python 3.14** に対応しています。  
 > 本ツールはマシンに Python や 3.14 が事前インストールされていなくても、付属の `setup.ps1` またはランチャー（`start.bat` / `start.vbs`）を実行することで、高速ツール `uv` を介して自動的に専用 Python 仮想環境（`.venv`）が完全自動構築されます。  
 
-## クイックスタート
+## クイックスタート (Windows 推奨: setup.bat)
+
+Windows 環境では、コマンド入力や環境構築作業を行わずに、**`setup.bat` をダブルクリックするだけ**でインストールから初期セットアップまで完了します。
+
+### 1. インストール手順 (setup.bat)
+1. 本リポジトリの最新版 ZIP（GitHub の [Releases](https://github.com/Maximilian2022/hayamimi/releases) または「Code」→「Download ZIP」）をダウンロードして任意の場所に展開します。
+2. フォルダ内の **`setup.bat`** をダブルクリックして実行します。
+   - ※ 管理者権限不要で動作し、PowerShell 実行ポリシーの自動バイパスおよび文字化け防止を自動処理します。
+   - ※ `setup.bat` 単体をダウンロードして実行した場合でも、GitHub から最新のセットアップウィザードが自動取得されます。
+3. モダン GUI セットアップウィザードが表示されます。
+   - インストール先フォルダ（既定: `マイドキュメント\hayamimi`）と「デスクトップにショートカットを作成する」を確認し、「**セットアップ開始**」をクリックします。
+   - デスクトップに「**hayamimi (早耳)**」ショートカットが作成されます。
+
+### 2. 初期セットアップ (Python venv ネイティブ環境)
+1. デスクトップの「**hayamimi (早耳)**」ショートカット（またはインストール先フォルダ内の `start.bat` / `start.vbs`）をダブルクリックしてランチャーを起動します。
+2. **既定で「🐍 Python venv (ネイティブ / 再起動不要・推奨)」が初期選択されています。**
+   - お使いの PC に Python や `ffmpeg`、`yt-dlp` が事前インストールされていなくても問題ありません（完全ゼロコンフィグ自立稼働）。
+   - 初回起動時、高速ツール `uv` または pip を介して専用の Python 仮想環境（`.venv`）、依存パッケージ（`requirements.txt`）、および Core AI 音声認識モデルが完全自動でセットアップされます。
+   - PC の再起動や BIOS 仮想化設定などは一切不要です。
+3. セットアップ完了後、ランチャーの「**起動**」ボタンをクリックすると、ローカル音声認識サーバーが立ち上がります。
+   - **OBS 字幕オーバーレイ**: `http://localhost:8833/`（OBS のブラウザソースに追加）
+   - **Web マイク & 字幕スタジオ**: `http://localhost:8833/mic`（スマホや外部ブラウザからのマイク入力・字幕デザイン設定）
+   - **ライブダッシュボード**: `http://localhost:8833/dashboard`（認識結果とリアルタイム翻訳の確認）
+
+---
+
+### 上級者・開発者向け CLI 手順 (手動実行)
 
 ```bash
+# Python 仮想環境の作成と有効化
 python -m venv .venv
 
-# Windows
-.venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python scripts\download_models.py
+# 依存パッケージのインストール
+.venv\Scripts\pip install -r requirements.txt       # Windows
+.venv/bin/pip install -r requirements.txt          # macOS / Linux
 
-# macOS / Linux
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python scripts/download_models.py
+# Core AI 音声認識モデルのダウンロード (~3.1GB)
+.venv\Scripts\python scripts\download_models.py     # Windows
+.venv/bin/python scripts/download_models.py        # macOS / Linux
 
-# マイクからリアルタイム認識
-.venv/Scripts/python scripts/realtime_transcribe.py     # Windows
-.venv/bin/python scripts/realtime_transcribe.py          # macOS/Linux
+# サーバー起動 (OBSオーバーレイ + Webマイク + ダッシュボード)
+.venv\Scripts\python scripts\realtime_transcribe.py --serve   # Windows
+.venv/bin/python scripts/realtime_transcribe.py --serve        # macOS / Linux
+# -> ブラウザで http://localhost:8833/mic または http://localhost:8833/dashboard を開く
 
-# PC内部のスピーカー（システム音声出力）から認識 -- Windows専用
-.venv\Scripts\python scripts\realtime_transcribe.py --input speaker
+# PC内部スピーカー(システム音声)のループバック認識 (Windows専用)
+.venv\Scripts\python scripts\realtime_transcribe.py --input speaker --serve
 
-# マイク+スピーカーを合成して同時に認識（会議の文字起こしなどに）
-.venv\Scripts\python scripts\realtime_transcribe.py --input mix
-
-# ダッシュボード + OBSオーバーレイ付き
-.venv/Scripts/python scripts/realtime_transcribe.py --serve
-# -> ブラウザで http://localhost:8833/dashboard を開く
+# マイク + スピーカー音声の合成認識 (会議の文字起こし等)
+.venv\Scripts\python scripts\realtime_transcribe.py --input mix --serve
 ```
 
-> **【hayamimi Fork版: モダンGUIランチャー / セットアップウィザード】**  
-> hayamimi では、コマンドラインを使わずにワンクリックで導入・起動できる GUI ツールを標準同梱しています：
-> - **初回セットアップ**: `setup.ps1` を右クリックして「PowerShell で実行」またはダブルクリックするだけで、必要な環境のダウンロードからデスクトップショートカット作成まで完了します。
-> - **ワンクリック起動**: `start.vbs` または `start.bat`（デスクトップショートカット）から、モダンダークUIのGUIランチャー（`launcher_gui.ps1`）が起動します。Python venv ネイティブ実行と WSL Containers (WSL3) のハイブリッド切り替え、音声デバイス選択、モデル自動ダウンロード、本体アップデート機能に対応しています。
-
-### Docker Compose によるコンテナ実行（推奨）
+### Docker Compose によるコンテナ実行
 
 Docker 環境（Docker Desktop / Linux サーバー等）では、`compose.yaml` を用いて ASR 本体と SSL/TLS リバースプロキシ（nginx）を一括起動できます。スマートフォン等の外部端末から Web マイク（`/mic`）を利用する場合、ブラウザのセキュリティ要件（Secure Context）を満たすため、**プロキシ経由の HTTPS（ポート 8843）** でアクセスします。
 

@@ -1157,17 +1157,13 @@ function Save-EngineMode {
     } catch {}
 }
 
-# 実行基盤の初期モード判定 (保存設定優先 & 自動診断フォールバック)
+# 実行基盤の初期モード判定 (保存設定優先 & デフォルトは Python venv)
 function Get-InitialEngineMode {
     $saved = Get-SavedEngineMode
     if ($saved) { return $saved }
 
-    # 自動診断: WSL3 が正常に動く環境なら Wslc、そうでなければ Venv
-    $wslcCmd = Get-WslcCommand
-    $diag = Get-VirtualizationDiagnostic
-    if ($wslcCmd -and $diag.IsReady) {
-        return "Wslc"
-    }
+    # 既定値: Python venv (ネイティブ実行 / 再起動不要・推奨)
+    # ※ WSL Containers はユーザーが明示的にラジオボタンで切り替えた場合にのみ選択される
     return "Venv"
 }
 
