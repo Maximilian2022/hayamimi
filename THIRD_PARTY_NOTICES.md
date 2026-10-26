@@ -81,6 +81,7 @@ outside `models/`), not by `download_models.py`.
 | [kiwipiepy](https://github.com/bab2min/kiwipiepy) | **LGPL-2.1-or-later** | Korean tokenizer, used only to fix SenseVoice's spacing on `ko` output; optional at runtime (falls through silently if not installed) -- kept as an **optional/dev extra**, not a hard runtime dependency, to avoid LGPL obligations on the core install |
 | [psutil](https://github.com/giampaolo/psutil) | BSD-3-Clause | memory diagnostics |
 | [tokenizers](https://github.com/huggingface/tokenizers) | Apache-2.0 | fast subword tokenization for opt-in 4-class punctuation restoration (`punct_ja.PunctuatorJa4Class`) |
+| [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) | BSD-2-Clause (binary: LGPL-2.1) | bundled standalone ffmpeg binaries for audio extraction in profile builder |
 
 ### Dev / eval-only dependencies (`requirements-dev.txt`)
 

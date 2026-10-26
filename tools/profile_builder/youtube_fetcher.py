@@ -7,16 +7,159 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.parse
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple, Union
 
 logger = logging.getLogger("hayamimi.youtube_fetcher")
 
 _KNOWN_BROWSERS = ["firefox", "chrome", "edge", "brave", "opera", "vivaldi"]
 _WORKING_COOKIE_BROWSER: Optional[str] = None
+
+
+def resolve_yt_dlp_cmd(custom_cmd: Optional[Union[str, List[str]]] = None) -> List[str]:
+    """Resolve working yt-dlp command line tokens.
+    
+    Robustly handles environments where yt-dlp.exe is missing from PATH,
+    falling back to Python's Scripts directory, sys.executable -m yt_dlp,
+    or on-demand pip installation.
+    """
+    if custom_cmd:
+        if isinstance(custom_cmd, str):
+            if shutil.which(custom_cmd) or os.path.exists(custom_cmd):
+                return [custom_cmd]
+            if custom_cmd != "yt-dlp":
+                return [custom_cmd]
+        elif isinstance(custom_cmd, (list, tuple)) and custom_cmd:
+            return list(custom_cmd)
+
+    # 1. System PATH
+    found = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
+    if found:
+        return [found]
+
+    # 2. Adjacent Python Scripts / bin directories
+    py_dir = os.path.dirname(os.path.abspath(sys.executable))
+    candidates = [
+        os.path.join(py_dir, "Scripts", "yt-dlp.exe"),
+        os.path.join(py_dir, "Scripts", "yt-dlp"),
+        os.path.join(py_dir, "bin", "yt-dlp"),
+        os.path.join(py_dir, "yt-dlp.exe"),
+        os.path.join(py_dir, "yt-dlp"),
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return [c]
+
+    # 3. Importable yt_dlp Python package
+    try:
+        import yt_dlp  # noqa: F401
+        return [sys.executable, "-m", "yt_dlp"]
+    except ImportError:
+        pass
+
+    # 4. Check if sys.executable -m yt_dlp works
+    try:
+        res = subprocess.run(
+            [sys.executable, "-m", "yt_dlp", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if res.returncode == 0:
+            return [sys.executable, "-m", "yt_dlp"]
+    except Exception:
+        pass
+
+    # 5. On-demand pip install self-healing
+    try:
+        logger.warning("yt-dlp not found in PATH or environment. Attempting on-demand pip install...")
+        install_res = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--no-warn-script-location", "yt-dlp>=2025.1.0"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if install_res.returncode == 0:
+            logger.info("Successfully installed yt-dlp on-demand via pip.")
+            return [sys.executable, "-m", "yt_dlp"]
+    except Exception as e:
+        logger.error("Failed on-demand pip install of yt-dlp: %s", e)
+
+    return [sys.executable, "-m", "yt_dlp"]
+
+
+def resolve_ffmpeg_cmd(custom_cmd: Optional[str] = None) -> str:
+    """Resolve ffmpeg executable path with fallbacks for portable/bundled environments.
+    
+    If ffmpeg is missing from PATH, attempts imageio_ffmpeg, local bin/tools,
+    or on-demand pip installation of imageio-ffmpeg. Automatically injects
+    the resolved directory into os.environ['PATH'] so child processes (like yt-dlp)
+    can discover it natively.
+    """
+    def _inject_path(exe_path: str) -> str:
+        d = os.path.dirname(os.path.abspath(exe_path))
+        cur_path = os.environ.get("PATH", "")
+        if d not in cur_path:
+            os.environ["PATH"] = d + os.pathsep + cur_path
+        return exe_path
+
+    if custom_cmd:
+        if shutil.which(custom_cmd) or os.path.exists(custom_cmd):
+            return _inject_path(custom_cmd)
+
+    # 1. System PATH
+    found = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
+    if found:
+        return _inject_path(found)
+
+    # 2. Adjacent Python Scripts / bin / repo tools
+    py_dir = os.path.dirname(os.path.abspath(sys.executable))
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    candidates = [
+        os.path.join(py_dir, "Scripts", "ffmpeg.exe"),
+        os.path.join(py_dir, "ffmpeg.exe"),
+        os.path.join(repo_root, "bin", "ffmpeg.exe"),
+        os.path.join(repo_root, "tools", "ffmpeg.exe"),
+        os.path.join(repo_root, "bin", "ffmpeg"),
+        os.path.join(repo_root, "tools", "ffmpeg"),
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return _inject_path(c)
+
+    # 3. imageio_ffmpeg Python package
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and os.path.exists(exe):
+            return _inject_path(exe)
+    except Exception:
+        pass
+
+    # 4. On-demand self-healing: pip install imageio-ffmpeg
+    try:
+        logger.warning("ffmpeg not found in system or Python environment. Attempting on-demand install of imageio-ffmpeg...")
+        res = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--no-warn-script-location", "imageio-ffmpeg>=0.5.1"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if res.returncode == 0:
+            import imageio_ffmpeg
+            exe = imageio_ffmpeg.get_ffmpeg_exe()
+            if exe and os.path.exists(exe):
+                logger.info("Successfully deployed standalone ffmpeg binary via imageio-ffmpeg: %s", exe)
+                return _inject_path(exe)
+    except Exception as e:
+        logger.error("Failed on-demand install of imageio-ffmpeg: %s", e)
+
+    return "ffmpeg"
 
 
 def get_cookie_args(prefer_cache: bool = True) -> List[str]:
@@ -46,12 +189,12 @@ def is_bot_detection_error(text: str) -> bool:
     )
 
 
-def discover_working_browser(test_url: str, yt_dlp_cmd: str = "yt-dlp") -> Optional[str]:
+def discover_working_browser(test_url: str, yt_dlp_cmd: Union[str, List[str]] = "yt-dlp") -> Optional[str]:
     """Probe installed browsers with yt-dlp to find one that bypasses YouTube bot detection."""
     global _WORKING_COOKIE_BROWSER
+    cmd_base = resolve_yt_dlp_cmd(yt_dlp_cmd)
     for b in _KNOWN_BROWSERS:
-        cmd = [
-            yt_dlp_cmd,
+        cmd = list(cmd_base) + [
             "--dump-json",
             "--no-playlist",
             "--skip-download",
@@ -197,8 +340,9 @@ def is_channel_url(url: str) -> bool:
 class YouTubeFetcher:
     """Fetches video metadata, automatic subtitles, and extracts high-density audio sections."""
 
-    def __init__(self, yt_dlp_cmd: str = "yt-dlp"):
-        self.yt_dlp_cmd = yt_dlp_cmd
+    def __init__(self, yt_dlp_cmd: Optional[Union[str, List[str]]] = None):
+        self.yt_dlp_cmd: List[str] = resolve_yt_dlp_cmd(yt_dlp_cmd)
+        self.ffmpeg_cmd: str = resolve_ffmpeg_cmd()
 
     def _run_ytdl_command(
         self,
@@ -206,7 +350,7 @@ class YouTubeFetcher:
         log_callback: Optional[Callable[[str, str], None]] = None,
         test_url: Optional[str] = None,
     ) -> subprocess.CompletedProcess:
-        """Run yt-dlp command with automatic bot-detection recovery and cookie injection."""
+        """Run yt-dlp command with automatic bot-detection recovery, FileNotFoundError handling, and cookie injection."""
         global _WORKING_COOKIE_BROWSER
 
         cookie_args = get_cookie_args()
@@ -215,13 +359,37 @@ class YouTubeFetcher:
             # Insert before target URL (last argument)
             full_cmd = full_cmd[:-1] + cookie_args + [full_cmd[-1]]
 
-        res = subprocess.run(
-            full_cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        try:
+            res = subprocess.run(
+                full_cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except FileNotFoundError as fnf:
+            logger.warning("yt-dlp executable not found (%s). Falling back to python -m yt_dlp...", fnf)
+            if log_callback:
+                log_callback("WARN", "yt-dlp 実行ファイルを直接検出できなかったため、Pythonモジュール経由で再試行します...")
+            fallback_tokens = [sys.executable, "-m", "yt_dlp"]
+            self.yt_dlp_cmd = fallback_tokens
+            # Extract options starting with '-'
+            opt_idx = 1
+            for idx, a in enumerate(cmd):
+                if a.startswith("-"):
+                    opt_idx = idx
+                    break
+            repaired_cmd = list(fallback_tokens) + cmd[opt_idx:]
+            if cookie_args and not any(arg in repaired_cmd for arg in ("--cookies", "--cookies-from-browser")):
+                repaired_cmd = repaired_cmd[:-1] + cookie_args + [repaired_cmd[-1]]
+            res = subprocess.run(
+                repaired_cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+
         out_err = (res.stderr or "") + (res.stdout or "")
 
         if res.returncode != 0 and is_bot_detection_error(out_err):
@@ -290,8 +458,7 @@ class YouTubeFetcher:
         for target_url in candidate_urls:
             if log_callback:
                 log_callback("YTDL", f"チャンネル動画をスキャン中: {target_url} (最大{candidate_pool}件)")
-            cmd = [
-                self.yt_dlp_cmd,
+            cmd = list(self.yt_dlp_cmd) + [
                 "--flat-playlist",
                 "--dump-json",
                 "--playlist-end", str(candidate_pool),
@@ -359,8 +526,7 @@ class YouTubeFetcher:
 
     def fetch_metadata(self, url: str, log_callback: Optional[Callable[[str, str], None]] = None) -> VideoMetadata:
         """Fetch video metadata without downloading video."""
-        cmd = [
-            self.yt_dlp_cmd,
+        cmd = list(self.yt_dlp_cmd) + [
             "--dump-json",
             "--no-playlist",
             "--skip-download",
@@ -384,8 +550,7 @@ class YouTubeFetcher:
     def fetch_subtitles(self, url: str, temp_dir: str, log_callback: Optional[Callable[[str, str], None]] = None) -> List[SubtitleSegment]:
         """Fetch Japanese automatic subtitles (.vtt) without downloading video."""
         out_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
-        cmd = [
-            self.yt_dlp_cmd,
+        cmd = list(self.yt_dlp_cmd) + [
             "--skip-download",
             "--write-auto-sub",
             "--sub-lang", "ja",
@@ -507,17 +672,18 @@ class YouTubeFetcher:
 
         section_arg = f"*{start_ts}-{end_ts}"
 
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(os.path.abspath(output_wav_path)), exist_ok=True)
-
         cookie_args = get_cookie_args()
-        cmd = [
-            self.yt_dlp_cmd,
+        ffmpeg_location_args = []
+        if self.ffmpeg_cmd and os.path.exists(self.ffmpeg_cmd):
+            ffmpeg_location_args = ["--ffmpeg-location", os.path.dirname(os.path.abspath(self.ffmpeg_cmd))]
+
+        cmd = list(self.yt_dlp_cmd) + [
             "--newline",
             "--progress",
             "--progress-delta", "0.5",
             "--no-playlist",
             "--extractor-args", "youtube:player_client=android,web",
+            *ffmpeg_location_args,
             "--download-sections", section_arg,
             "-x",
             "--audio-format", "wav",
@@ -530,15 +696,37 @@ class YouTubeFetcher:
         logger.info("Executing download: %s", " ".join(cmd))
 
         def _run_download_proc(exec_cmd: List[str]) -> Tuple[int, List[str]]:
-            proc = subprocess.Popen(
-                exec_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-            )
+            try:
+                proc = subprocess.Popen(
+                    exec_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
+            except FileNotFoundError as fnf:
+                logger.warning("yt-dlp executable not found (%s). Falling back to python -m yt_dlp...", fnf)
+                if log_callback:
+                    log_callback("WARN", "yt-dlp 実行ファイルを直接検出できなかったため、Pythonモジュール経由で再試行します...")
+                fallback_tokens = [sys.executable, "-m", "yt_dlp"]
+                self.yt_dlp_cmd = fallback_tokens
+                opt_idx = 1
+                for idx, a in enumerate(exec_cmd):
+                    if a.startswith("-"):
+                        opt_idx = idx
+                        break
+                repaired = list(fallback_tokens) + exec_cmd[opt_idx:]
+                proc = subprocess.Popen(
+                    repaired,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
             out_lines = []
             if proc.stdout:
                 for line in proc.stdout:
@@ -645,28 +833,52 @@ class YouTubeFetcher:
                 log_callback("YTDL", "ネイティブダウンローダーで音声ストリームを取得中（403回避）...")
 
             cookie_args = get_cookie_args()
-            cmd = [
-                self.yt_dlp_cmd,
+            ffmpeg_location_args = []
+            if self.ffmpeg_cmd and os.path.exists(self.ffmpeg_cmd):
+                ffmpeg_location_args = ["--ffmpeg-location", os.path.dirname(os.path.abspath(self.ffmpeg_cmd))]
+
+            cmd = list(self.yt_dlp_cmd) + [
                 "--newline",
                 "--progress",
                 "--progress-delta", "0.5",
                 "--no-playlist",
                 "--extractor-args", "youtube:player_client=android,web",
+                *ffmpeg_location_args,
                 *cookie_args,
                 "-f", "ba/ba*",
                 "-o", temp_audio,
                 url,
             ]
 
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-            )
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
+            except FileNotFoundError as fnf:
+                logger.warning("yt-dlp executable not found in fallback Popen (%s). Retrying with python -m yt_dlp...", fnf)
+                fallback_tokens = [sys.executable, "-m", "yt_dlp"]
+                self.yt_dlp_cmd = fallback_tokens
+                opt_idx = 1
+                for idx, a in enumerate(cmd):
+                    if a.startswith("-"):
+                        opt_idx = idx
+                        break
+                repaired = list(fallback_tokens) + cmd[opt_idx:]
+                proc = subprocess.Popen(
+                    repaired,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
 
             if proc.stdout:
                 for line in proc.stdout:
@@ -696,7 +908,7 @@ class YouTubeFetcher:
 
             # Trim with local ffmpeg (16kHz mono WAV)
             trim_cmd = [
-                "ffmpeg",
+                self.ffmpeg_cmd,
                 "-y",
                 "-ss", str(start_sec),
                 "-t", str(dur),

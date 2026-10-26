@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.3.8"
-$script:AppVersion = "1.3.8"
+﻿$version = "GUI v1.3.9"
+$script:AppVersion = "1.3.9"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -1702,7 +1702,9 @@ function Start-PythonVenvApp {
     }
 
     $transScript = Join-Path $ProjectRoot "scripts\realtime_transcribe.py"
-    $cmdArgs = "/s /c `"set PYTHONDONTWRITEBYTECODE=1 && `"$venvPython`" -B `"$transScript`" --input ws --serve 8833 --ws-host 0.0.0.0 --ws-port 8766 --punct-model 4class > `"$script:PythonLogFile`" 2>&1`""
+    $venvDir = Split-Path $venvPython
+    $venvScripts = Join-Path $venvDir "Scripts"
+    $cmdArgs = "/s /c `"set PYTHONDONTWRITEBYTECODE=1 && set `"PATH=$venvScripts;$venvDir;%PATH%`" && `"$venvPython`" -B `"$transScript`" --input ws --serve 8833 --ws-host 0.0.0.0 --ws-port 8766 --punct-model 4class > `"$script:PythonLogFile`" 2>&1`""
 
     $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
     $pinfo.FileName = "cmd.exe"
@@ -1713,6 +1715,8 @@ function Start-PythonVenvApp {
     $pinfo.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
     $pinfo.Environment["PYTHONIOENCODING"] = "utf-8"
     $pinfo.Environment["PYTHONUTF8"] = "1"
+    $curSysPath = [Environment]::GetEnvironmentVariable("PATH")
+    $pinfo.Environment["PATH"] = "$venvScripts;$venvDir;$curSysPath"
 
     $script:ProcPython = [System.Diagnostics.Process]::Start($pinfo)
     $script:HealthCheckAttempts = 0

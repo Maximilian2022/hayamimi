@@ -719,3 +719,45 @@ def test_save_gemini_api_key_secure_permissions(tmp_path):
     assert os.path.isfile(key_file)
 
 
+def test_resolve_yt_dlp_and_ffmpeg_commands():
+    """Verify resolve_yt_dlp_cmd and resolve_ffmpeg_cmd work in zero-config environments."""
+    from tools.profile_builder.youtube_fetcher import resolve_yt_dlp_cmd, resolve_ffmpeg_cmd
+
+    yt_cmd = resolve_yt_dlp_cmd()
+    assert isinstance(yt_cmd, list)
+    assert len(yt_cmd) >= 1
+
+    ffmpeg_cmd = resolve_ffmpeg_cmd()
+    assert isinstance(ffmpeg_cmd, str)
+    assert len(ffmpeg_cmd) > 0
+
+
+def test_youtube_fetcher_filenotfound_self_healing(monkeypatch):
+    """Verify that FileNotFoundError ([WinError 2]) during yt-dlp execution triggers automatic recovery."""
+    import subprocess
+    from tools.profile_builder.youtube_fetcher import YouTubeFetcher
+
+    fetcher = YouTubeFetcher()
+    attempts = 0
+
+    def mock_run(cmd, *args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise FileNotFoundError(2, "指定されたファイルが見つかりません。")
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=0,
+            stdout='{"id": "test_id", "title": "Test Title", "duration": 300}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    res = fetcher._run_ytdl_command(["yt-dlp", "--dump-json", "https://youtube.com/watch?v=test_id"])
+    assert res.returncode == 0
+    assert attempts == 2
+    assert "-m" in res.args or "yt_dlp" in res.args
+
+
+
