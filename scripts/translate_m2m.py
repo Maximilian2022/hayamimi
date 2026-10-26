@@ -55,7 +55,7 @@ EOS_TOKEN = "</s>"
 # scripts/eval_translate.py and docs/design/translate_m2m.md's "Validation tiers"
 # section). Any other M2M-100 target is still accepted (see
 # is_supported_target() below) but its quality has not been checked.
-VALIDATED_TARGETS = {"zh", "zh-tw", "zh-hk", "zh-cn", "tw", "hk", "cn", "ko", "es"}
+VALIDATED_TARGETS = {"zh", "zh-tw", "zh-hk", "zh-cn", "tw", "hk", "cn", "ko", "es", "fr", "de", "pt", "pt-br", "br"}
 
 # Regional variants of Chinese mapped to OpenCC conversion configurations:
 # zh-tw / tw: Traditional Chinese (Taiwan standard phrases & characters: s2twp)
@@ -68,6 +68,14 @@ CHINESE_VARIANTS = {
     "hk": "s2hk",
     "zh-cn": None,
     "cn": None,
+}
+
+# Regional / colloquial aliases mapped to base M2M-100 language codes:
+# pt-br / br: Brazilian Portuguese -> base M2M-100 pt
+LANG_ALIASES = {
+    "pt-br": "pt",
+    "br": "pt",
+    "pt-pt": "pt",
 }
 
 # Per-target settings, matching Mojicast's reported configuration (zh:
@@ -84,6 +92,12 @@ BEAM_SIZE_BY_TARGET = {
     "cn": 1,
     "ko": 4,
     "en": 1,
+    "es": 1,
+    "fr": 1,
+    "de": 1,
+    "pt": 1,
+    "pt-br": 1,
+    "br": 1,
 }
 # Fallback beam size for a target not in BEAM_SIZE_BY_TARGET. Matches ko's
 # beam_size=4 (the more cautious of the two measured settings) rather than
@@ -109,10 +123,13 @@ def _load_vocab(model_dir: str = _MODEL_DIR) -> "set[str]":
 
 def is_supported_target(lang: str, model_dir: str = _MODEL_DIR) -> bool:
     """True if the model's vocabulary has a `__<lang>__` target-language token,
-    or if lang is a supported regional Chinese variant (zh-tw, zh-hk, etc.)."""
+    or if lang is a supported regional Chinese variant (zh-tw, zh-hk, etc.)
+    or regional alias (pt-br, br, etc.)."""
     norm = lang.lower()
     if norm in CHINESE_VARIANTS:
         return is_supported_target("zh", model_dir)
+    if norm in LANG_ALIASES:
+        return is_supported_target(LANG_ALIASES[norm], model_dir)
     try:
         vocab = _load_vocab(model_dir)
     except (OSError, json.JSONDecodeError):
@@ -165,6 +182,8 @@ class TranslatorM2M:
                         "falling back to standard Simplified Chinese output",
                         file=sys.stderr,
                     )
+        elif norm_lang in LANG_ALIASES:
+            base_lang = LANG_ALIASES[norm_lang]
         else:
             base_lang = norm_lang
 
@@ -205,7 +224,6 @@ class TranslatorM2M:
                     )
                 except Exception as exc:
                     if device != "cpu":
-                        import sys
                         print(f"[translate_m2m] CUDA translator init failed ({exc}), falling back to cpu", file=sys.stderr)
                         self.device = "cpu"
                         cache_key = (model_dir, "cpu", compute_type, intra_threads)
@@ -283,7 +301,6 @@ class TranslatorM2M:
                 return translated
             except Exception as exc:
                 if self.device != "cpu" and attempt == 0:
-                    import sys
                     if not self._warned_fallback:
                         print(f"[translate_m2m] CUDA execution failed ({exc}), permanently falling back to cpu", file=sys.stderr)
                         self._warned_fallback = True

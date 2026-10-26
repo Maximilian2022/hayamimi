@@ -481,9 +481,10 @@ if ($Demo) {
 
     $script:sseCancelToken = New-Object System.Threading.CancellationTokenSource
 
-    $sseAction = [Action]{
+    $script:transLines = New-Object System.Collections.Generic.List[string]
+
+    $sseAction = [System.Threading.ThreadStart]{
         $token = $script:sseCancelToken.Token
-        $transLines = New-Object System.Collections.Generic.List[string]
 
         while (-not $token.IsCancellationRequested) {
             $resp = $null
@@ -518,12 +519,12 @@ if ($Demo) {
                                 } elseif ($ev.type -eq "final") {
                                     $finalText.Text = $ev.text
                                     $partialText.Text = ""
-                                    $transLines.Clear()
+                                    $script:transLines.Clear()
                                     $transText.Text = ""
                                     $clearTimer.Start()
                                 } elseif ($ev.type -eq "translation") {
-                                    $transLines.Add("→ [$($ev.lang)] $($ev.text)")
-                                    $transText.Text = [string]::Join("`n", $transLines)
+                                    $script:transLines.Add("→ [$($ev.lang)] $($ev.text)")
+                                    $transText.Text = [string]::Join("`n", $script:transLines)
                                     $clearTimer.Start()
                                 }
                             })

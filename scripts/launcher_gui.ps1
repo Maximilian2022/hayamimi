@@ -1,5 +1,5 @@
-﻿$version = "GUI v1.3.6"
-$script:AppVersion = "1.3.6"
+﻿$version = "GUI v1.3.7"
+$script:AppVersion = "1.3.7"
 $script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -463,7 +463,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi ランチャー (GUI v1.3.6)"
+        Title="hayamimi ランチャー (GUI v1.3.7)"
         Height="780" Width="780"
         MinHeight="680" MinWidth="720"
         WindowStartupLocation="CenterScreen"

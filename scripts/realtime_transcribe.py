@@ -29,6 +29,7 @@ if hasattr(sys.stderr, "reconfigure"):
 import argparse
 import os
 import queue
+import re
 import threading
 import time
 import wave
@@ -1091,7 +1092,8 @@ def drain_segments(vad, sample_rate: int, asr: RoutedASR, stats: SessionStats,
         print(f"[{speaker_tag}{result['lang']}/{result.get('tier', '?')}] {result['text']}  "
               f"(seg={seg_s:.1f}s, lid={result['lid_ms']:.0f}ms{probe_part}, "
               f"decode={result['decode_ms']:.0f}ms, latency={latency_ms:.0f}ms)", flush=True)
-        if translator_worker is not None and result["lang"] == "ja" and result["text"].strip():
+        is_ja_text = (result["lang"] == "ja") or bool(re.search(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]", result["text"]))
+        if translator_worker is not None and is_ja_text and result["text"].strip():
             translator_worker.submit(result["text"])
         if refiner is not None:
             refiner.add_span(seg_start, seg_end, result["lang"], result["text"],
