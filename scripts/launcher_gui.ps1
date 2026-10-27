@@ -1,5 +1,5 @@
 ﻿# --- バージョン管理 (version.txt を Single Source of Truth として動的同期) ---
-$script:AppVersion = "1.4.2"
+$script:AppVersion = "1.4.3"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $versionTxtFile = Join-Path $repoRoot "version.txt"
 if (Test-Path $versionTxtFile) {
@@ -472,7 +472,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi ランチャー (GUI v1.4.2)"
+        Title="hayamimi ランチャー (GUI v1.4.3)"
         Height="780" Width="780"
         MinHeight="680" MinWidth="720"
         WindowStartupLocation="CenterScreen"
@@ -550,7 +550,7 @@ function Update-ContainerLogFile {
                         <TextBlock x:Name="GpuBadge" Text="⚡ GPU: 検出中..." FontSize="11" Foreground="#10B981" FontWeight="SemiBold"/>
                     </Border>
                     <Border Background="#1E1B4B" CornerRadius="12" Padding="10,5" Margin="0,0,8,0" BorderBrush="#4338CA" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.4.2" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.4.3" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#141B2D" CornerRadius="12" Padding="10,5" BorderBrush="#253350" BorderThickness="1">
                         <TextBlock x:Name="RuntimeBadge" Text="Python venv" FontSize="11" Foreground="#38BDF8" FontWeight="SemiBold"/>
@@ -570,18 +570,37 @@ function Update-ContainerLogFile {
                     <RowDefinition Height="Auto"/> <!-- フッター情報 -->
                 </Grid.RowDefinitions>
 
-                <!-- 実行基盤セレクター (すっきり集約・重複ボタン完全撤廃) -->
-                <Border Grid.Row="0" Margin="0,0,0,12" Background="#0D111A" CornerRadius="8" Padding="12,10" BorderBrush="#1E2638" BorderThickness="1">
+                <!-- 実行基盤 & 推論設定 セレクター (集約・整列) -->
+                <Border Grid.Row="0" Margin="0,0,0,12" Background="#0D111A" CornerRadius="8" Padding="14,10" BorderBrush="#1E2638" BorderThickness="1">
                     <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="実行基盤:" FontSize="12.5" FontWeight="SemiBold" Foreground="#94A3B8" VerticalAlignment="Center" Margin="0,0,16,0"/>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                            <RadioButton x:Name="RbModeVenv" Content="🐍 Python venv (ネイティブ / 再起動不要・推奨)" GroupName="EngineMode" Foreground="#F1F5F9" FontSize="12.5" Margin="0,0,24,0" VerticalAlignment="Center" Cursor="Hand" IsChecked="True"/>
-                            <RadioButton x:Name="RbModeWslc" Content="📦 WSL Containers (WSL3 コンテナ)" GroupName="EngineMode" Foreground="#F1F5F9" FontSize="12.5" VerticalAlignment="Center" Cursor="Hand"/>
-                        </StackPanel>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <!-- 実行基盤 -->
+                        <Grid Grid.Row="0" Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="実行基盤:" FontSize="12" FontWeight="SemiBold" Foreground="#94A3B8" VerticalAlignment="Center" Margin="0,0,16,0" Width="68"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <RadioButton x:Name="RbModeVenv" Content="🐍 Python venv (ネイティブ / 推奨)" GroupName="EngineMode" Foreground="#F1F5F9" FontSize="12.5" Margin="0,0,24,0" VerticalAlignment="Center" Cursor="Hand" IsChecked="True"/>
+                                <RadioButton x:Name="RbModeWslc" Content="📦 WSL Containers (WSL3 コンテナ)" GroupName="EngineMode" Foreground="#F1F5F9" FontSize="12.5" VerticalAlignment="Center" Cursor="Hand"/>
+                            </StackPanel>
+                        </Grid>
+                        <!-- 推論設定 (GPU/CPU) -->
+                        <Grid Grid.Row="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="推論設定:" FontSize="12" FontWeight="SemiBold" Foreground="#94A3B8" VerticalAlignment="Center" Margin="0,0,16,0" Width="68"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <RadioButton x:Name="RbDeviceCpu" Content="⚙ CPU 起動 (推奨 / ゲーム・配信のGPU負荷ゼロ)" GroupName="DeviceMode" Foreground="#F1F5F9" FontSize="12.5" Margin="0,0,24,0" VerticalAlignment="Center" Cursor="Hand" IsChecked="True"/>
+                                <RadioButton x:Name="RbDeviceGpu" Content="⚡ GPU 起動 (CUDA / 翻訳高速化)" GroupName="DeviceMode" Foreground="#F1F5F9" FontSize="12.5" VerticalAlignment="Center" Cursor="Hand"/>
+                            </StackPanel>
+                        </Grid>
                     </Grid>
                 </Border>
 
@@ -832,6 +851,8 @@ $window.Dispatcher.Add_UnhandledException({
 # コントロール取得
 $rbModeVenv = $window.FindName("RbModeVenv")
 $rbModeWslc = $window.FindName("RbModeWslc")
+$rbDeviceCpu = $window.FindName("RbDeviceCpu")
+$rbDeviceGpu = $window.FindName("RbDeviceGpu")
 $btnSetupEnv = $window.FindName("BtnSetupEnv")
 $statusLabel = $window.FindName("StatusLabel")
 $statusLed = $window.FindName("StatusLed")
@@ -876,8 +897,10 @@ $initProgressBar = $window.FindName("InitProgressBar")
 $btnInstallWslAlways = $window.FindName("BtnInstallWslAlways")
 $updateDescText = $window.FindName("UpdateDescText")
 
-# 実行基盤状態変数
+# 実行基盤 & 推論デバイス状態変数
 $script:CurrentEngineMode = "Venv" # "Venv" または "Wslc"
+$script:CurrentDeviceMode = "Cpu"  # "Cpu" または "Gpu" (デフォルトは安全・省リソースな CPU)
+$script:GpuShortName = ""
 $script:ConfigFile = Join-Path $ProjectRoot "config\launcher_config.json"
 $script:ProcPython = $null
 $script:PythonLogFile = Join-Path $LogsDir "python.log"
@@ -901,6 +924,31 @@ $brushBlue   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#
 
 $script:HasNvidiaGpu = $false
 
+# デバイスバッジ表示の更新 (選択中のモードと連動)
+function Update-DeviceBadgeDisplay {
+    if ($script:CurrentDeviceMode -eq "Gpu" -and $script:HasNvidiaGpu) {
+        $name = if ($script:GpuShortName) { $script:GpuShortName } else { "CUDA" }
+        if ($gpuBadge) {
+            $gpuBadge.Text = "⚡ GPU 加速: $name"
+            $gpuBadge.Foreground = $brushGreen
+        }
+        if ($gpuBadgeBorder) {
+            $gpuBadgeBorder.BorderBrush = $brushGreen
+            $gpuBadgeBorder.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#0C241E")
+        }
+    } else {
+        # CPU モード (または GPU 無し)
+        if ($gpuBadge) {
+            $gpuBadge.Text = "⚙ CPU 起動 (ゲーム・配信優先)"
+            $gpuBadge.Foreground = $brushBlue
+        }
+        if ($gpuBadgeBorder) {
+            $gpuBadgeBorder.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#0284C7")
+            $gpuBadgeBorder.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#0F1E33")
+        }
+    }
+}
+
 # GPU / ハードウェアアクセラレーション状態の検出とバッジ更新
 function Update-GpuDeviceBadge {
     try {
@@ -909,31 +957,37 @@ function Update-GpuDeviceBadge {
         if ($nvidiaGpu) {
             $script:HasNvidiaGpu = $true
             $gpuShortName = $nvidiaGpu.Name -replace "NVIDIA\s*", ""
-            if ($gpuBadge) {
-                $gpuBadge.Text = "⚡ GPU: $gpuShortName (CUDA)"
-                $gpuBadge.Foreground = $brushGreen
-            }
-            if ($gpuBadgeBorder) {
-                $gpuBadgeBorder.BorderBrush = $brushGreen
-                $gpuBadgeBorder.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#0C241E")
+            $script:GpuShortName = $gpuShortName
+            if ($rbDeviceGpu) {
+                $rbDeviceGpu.IsEnabled = $true
+                $rbDeviceGpu.Content = "⚡ GPU 起動 ($gpuShortName / CUDA)"
             }
             Write-AppLog "✔ NVIDIA GPU 検出: $($nvidiaGpu.Name) (CUDA 推論対応)" "INFO"
-            return
+        } else {
+            $script:HasNvidiaGpu = $false
+            $script:GpuShortName = ""
+            if ($rbDeviceGpu) {
+                $rbDeviceGpu.IsEnabled = $false
+                $rbDeviceGpu.Content = "⚡ GPU 起動 (NVIDIA GPU 未検出)"
+            }
+            if ($rbDeviceCpu) {
+                $rbDeviceCpu.IsChecked = $true
+            }
+            $script:CurrentDeviceMode = "Cpu"
         }
-
-        $script:HasNvidiaGpu = $false
-        # NVIDIA GPU が無い場合は CPU 推論として表示
-        if ($gpuBadge) {
-            $gpuBadge.Text = "⚙ CPU 推論 (AVX2)"
-            $gpuBadge.Foreground = $brushBlue
-        }
-        if ($gpuBadgeBorder) {
-            $gpuBadgeBorder.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#0284C7")
-            $gpuBadgeBorder.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#0F1E33")
-        }
+        Update-DeviceBadgeDisplay
     } catch {
         $script:HasNvidiaGpu = $false
-        if ($gpuBadge) { $gpuBadge.Text = "⚙ CPU 推論" }
+        $script:GpuShortName = ""
+        if ($rbDeviceGpu) {
+            $rbDeviceGpu.IsEnabled = $false
+            $rbDeviceGpu.Content = "⚡ GPU 起動 (検出エラー)"
+        }
+        if ($rbDeviceCpu) {
+            $rbDeviceCpu.IsChecked = $true
+        }
+        $script:CurrentDeviceMode = "Cpu"
+        Update-DeviceBadgeDisplay
     }
 }
 
@@ -1139,31 +1193,62 @@ function Update-WslcBannerState {
     return $false
 }
 
-# 実行基盤設定の読み込み
-function Get-SavedEngineMode {
+# 設定ファイル (config/launcher_config.json) の読み込み
+function Get-SavedLauncherConfig {
     if (Test-Path $script:ConfigFile) {
         try {
-            $json = Get-Content -Path $script:ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($json.engine_mode -in @("Venv", "Wslc")) {
-                return $json.engine_mode
-            }
+            return Get-Content -Path $script:ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
         } catch {}
     }
     return $null
 }
 
-# 実行基盤設定の保存
-function Save-EngineMode {
-    param([string]$Mode)
+# 実行基盤設定の読み込み
+function Get-SavedEngineMode {
+    $cfg = Get-SavedLauncherConfig
+    if ($cfg -and $cfg.engine_mode -in @("Venv", "Wslc")) {
+        return $cfg.engine_mode
+    }
+    return $null
+}
+
+# 推論デバイス設定の読み込み (デフォルトは CPU)
+function Get-SavedDeviceMode {
+    $cfg = Get-SavedLauncherConfig
+    if ($cfg -and $cfg.device_mode -in @("Cpu", "Gpu")) {
+        return $cfg.device_mode
+    }
+    return "Cpu" # デフォルトは安全・省リソースな CPU 起動
+}
+
+# ランチャー設定 (実行基盤 & 推論デバイス) の保存
+function Save-LauncherConfig {
+    param(
+        [string]$EngineMode = $script:CurrentEngineMode,
+        [string]$DeviceMode = $script:CurrentDeviceMode
+    )
     try {
         $configDir = Join-Path $ProjectRoot "config"
         if (-not (Test-Path $configDir)) {
             New-Item -ItemType Directory -Path $configDir -Force | Out-Null
         }
-        $obj = @{ engine_mode = $Mode }
+        $obj = [ordered]@{
+            engine_mode = if ($EngineMode) { $EngineMode } else { "Venv" }
+            device_mode = if ($DeviceMode) { $DeviceMode } else { "Cpu" }
+        }
         $json = $obj | ConvertTo-Json
         [System.IO.File]::WriteAllText($script:ConfigFile, $json, [System.Text.Encoding]::UTF8)
     } catch {}
+}
+
+function Save-EngineMode {
+    param([string]$Mode)
+    Save-LauncherConfig -EngineMode $Mode
+}
+
+function Save-DeviceMode {
+    param([string]$Mode)
+    Save-LauncherConfig -DeviceMode $Mode
 }
 
 # 実行基盤の初期モード判定 (保存設定優先 & デフォルトは Python venv)
@@ -1252,6 +1337,61 @@ function Set-EngineMode {
         Set-UIState "停止中" $brushGray $true $false
     }
     Update-EngineBannerState | Out-Null
+}
+
+# 推論デバイスモードの切り替え関数
+function Set-DeviceMode {
+    param([string]$NewMode)
+    $script:CurrentDeviceMode = $NewMode
+    Save-DeviceMode -Mode $NewMode
+    Update-DeviceBadgeDisplay
+
+    if ($NewMode -eq "Gpu") {
+        Write-AppLog "推論設定を「⚡ GPU 起動 (CUDA)」に切り替えました。※翻訳推論をGPUで高速化します。" "INFO"
+    } else {
+        Write-AppLog "推論設定を「⚙ CPU 起動 (推奨)」に切り替えました。※GPU/VRAM負荷ゼロ（ゲーム・配信優先）" "INFO"
+    }
+}
+
+# 推論デバイス切り替え時の安全ハンドラ (稼働中プロセス停止確認付き)
+$script:IsSwitchingDevice = $false
+function Invoke-DeviceModeSwitch {
+    param(
+        [string]$TargetMode,
+        [System.Windows.Controls.RadioButton]$TargetRb,
+        [System.Windows.Controls.RadioButton]$OtherRb
+    )
+    if ($script:IsSwitchingDevice) { return }
+    if ($script:CurrentDeviceMode -eq $TargetMode) { return }
+
+    if (Test-AppRunning) {
+        $curDevName = if ($script:CurrentDeviceMode -eq "Gpu") { "GPU 起動 (CUDA)" } else { "CPU 起動 (推奨)" }
+        $targetDevName = if ($TargetMode -eq "Gpu") { "GPU 起動 (CUDA)" } else { "CPU 起動 (推奨)" }
+        $ask = Show-AppConfirm -Message "現在アプリが稼働中です。`r`n`r`n推論設定を「$targetDevName」に切り替えるには、現在のプロセスを再起動する必要があります。`r`n`r`n稼働中のプロセスを停止して切り替えますか？" -Title "推論設定の切り替え確認 - hayamimi"
+        if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
+            $script:IsSwitchingDevice = $true
+            if ($script:CurrentEngineMode -eq "Venv") {
+                Stop-PythonVenvApp
+            } else {
+                if ($script:WslcCmd) {
+                    try {
+                        Start-Process $script:WslcCmd -ArgumentList "stop $ContainerName" -Wait -NoNewWindow
+                        Start-Process $script:WslcCmd -ArgumentList "remove $ContainerName" -Wait -NoNewWindow
+                    } catch {}
+                }
+            }
+            Set-DeviceMode $TargetMode
+            $script:IsSwitchingDevice = $false
+        } else {
+            # キャンセル時は元の選択に戻す
+            $script:IsSwitchingDevice = $true
+            $OtherRb.IsChecked = $true
+            $script:IsSwitchingDevice = $false
+            return
+        }
+    } else {
+        Set-DeviceMode $TargetMode
+    }
 }
 
 # 実行基盤切り替え時の安全ハンドラ (稼働中プロセス停止確認付き)
@@ -1709,7 +1849,16 @@ function Start-PythonVenvApp {
     $transScript = Join-Path $ProjectRoot "scripts\realtime_transcribe.py"
     $venvDir = Split-Path $venvPython
     $venvScripts = Join-Path $venvDir "Scripts"
-    $cmdArgs = "/s /c `"set PYTHONDONTWRITEBYTECODE=1 && set `"PATH=$venvScripts;$venvDir;%PATH%`" && `"$venvPython`" -B `"$transScript`" --input ws --serve 8833 --ws-host 0.0.0.0 --ws-port 8766 --punct-model 4class > `"$script:PythonLogFile`" 2>&1`""
+
+    # 推論デバイス設定 (HAYAMIMI_DEVICE: cuda / cpu)
+    $devEnv = if ($script:CurrentDeviceMode -eq "Gpu" -and $script:HasNvidiaGpu) { "cuda" } else { "cpu" }
+    if ($devEnv -eq "cuda") {
+        Write-AppLog "推論デバイス: GPU 加速 (HAYAMIMI_DEVICE=cuda)" "INFO"
+    } else {
+        Write-AppLog "推論デバイス: CPU 起動 (HAYAMIMI_DEVICE=cpu / ゲーム・配信負荷ゼロ)" "INFO"
+    }
+
+    $cmdArgs = "/s /c `"set PYTHONDONTWRITEBYTECODE=1 && set HAYAMIMI_DEVICE=$devEnv && set `"PATH=$venvScripts;$venvDir;%PATH%`" && `"$venvPython`" -B `"$transScript`" --input ws --serve 8833 --ws-host 0.0.0.0 --ws-port 8766 --punct-model 4class > `"$script:PythonLogFile`" 2>&1`""
 
     $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
     $pinfo.FileName = "cmd.exe"
@@ -1720,6 +1869,7 @@ function Start-PythonVenvApp {
     $pinfo.Environment["PYTHONDONTWRITEBYTECODE"] = "1"
     $pinfo.Environment["PYTHONIOENCODING"] = "utf-8"
     $pinfo.Environment["PYTHONUTF8"] = "1"
+    $pinfo.Environment["HAYAMIMI_DEVICE"] = $devEnv
     $curSysPath = [Environment]::GetEnvironmentVariable("PATH")
     $pinfo.Environment["PATH"] = "$venvScripts;$venvDir;$curSysPath"
 
@@ -2079,11 +2229,16 @@ function Start-HayamimiContainer {
             Write-AppLog "config ディレクトリを作成しました: $configDir"
         }
 
-        # NVIDIA GPU パススルー オプション (--gpus all)
+        # 推論デバイス オプション (NVIDIA GPU パススルー & HAYAMIMI_DEVICE)
+        $useGpu = ($script:CurrentDeviceMode -eq "Gpu" -and $script:HasNvidiaGpu)
         $gpuArg = ""
-        if ($script:HasNvidiaGpu) {
+        $devEnvArg = "-e HAYAMIMI_DEVICE=cpu "
+        if ($useGpu) {
             $gpuArg = "--gpus all "
-            Write-AppLog "NVIDIA GPU を検出しました。GPU パススルー (--gpus all) を有効にしてコンテナを起動します..." "INFO"
+            $devEnvArg = "-e HAYAMIMI_DEVICE=cuda "
+            Write-AppLog "GPU 加速モードで起動します: NVIDIA GPU パススルー (--gpus all) を有効化" "INFO"
+        } else {
+            Write-AppLog "CPU 起動モードで起動します: GPU/VRAM負荷ゼロ (ゲーム・配信優先)" "INFO"
         }
 
         # コンテナ起動 (wslc run -d)
@@ -2093,7 +2248,7 @@ function Start-HayamimiContainer {
 
         $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
         $pinfo.FileName = $script:WslcCmd
-        $pinfo.Arguments = "run -d --name $ContainerName $gpuArg-p 8833:8833 -p 8766:8766 -v `"$volumeModels`" -v `"$volumeConfig`" $ImageName --translate en"
+        $pinfo.Arguments = "run -d --name $ContainerName $gpuArg$devEnvArg-p 8833:8833 -p 8766:8766 -v `"$volumeModels`" -v `"$volumeConfig`" $ImageName --translate en"
         $pinfo.RedirectStandardOutput = $true
         $pinfo.RedirectStandardError = $true
         $pinfo.UseShellExecute = $false
@@ -2107,7 +2262,7 @@ function Start-HayamimiContainer {
         # 万一 --gpus all による起動が失敗した場合、GPUなしでフォールバック再試行
         if ($proc.ExitCode -ne 0 -and $gpuArg -ne "") {
             Write-AppLog "GPU パススルー起動で問題が発生したため、CPU モードで再試行します..." "WARN"
-            $pinfo.Arguments = "run -d --name $ContainerName -p 8833:8833 -p 8766:8766 -v `"$volumeModels`" -v `"$volumeConfig`" $ImageName --translate en"
+            $pinfo.Arguments = "run -d --name $ContainerName -e HAYAMIMI_DEVICE=cpu -p 8833:8833 -p 8766:8766 -v `"$volumeModels`" -v `"$volumeConfig`" $ImageName --translate en"
             $proc = [System.Diagnostics.Process]::Start($pinfo)
             $stdout = $proc.StandardOutput.ReadToEnd()
             $stderr = $proc.StandardError.ReadToEnd()
@@ -2968,6 +3123,18 @@ if ($rbModeWslc) {
     })
 }
 
+# 推論デバイスラジオボタン処理 (稼働中安全停止確認付き)
+if ($rbDeviceCpu) {
+    $rbDeviceCpu.Add_Checked({
+        Invoke-DeviceModeSwitch -TargetMode "Cpu" -TargetRb $rbDeviceCpu -OtherRb $rbDeviceGpu
+    })
+}
+if ($rbDeviceGpu) {
+    $rbDeviceGpu.Add_Checked({
+        Invoke-DeviceModeSwitch -TargetMode "Gpu" -TargetRb $rbDeviceGpu -OtherRb $rbDeviceCpu
+    })
+}
+
 # 常設 WSL 3.0 セットアップボタンの処理
 if ($btnInstallWslAlways) {
     $btnInstallWslAlways.Add_Click({
@@ -3186,7 +3353,17 @@ if ($initMode -eq "Wslc") {
     if ($rbModeVenv) { $rbModeVenv.IsChecked = $true }
 }
 Set-EngineMode $initMode
+
+# 推論デバイス初期化 (デフォルトは CPU 起動)
+$initDevMode = Get-SavedDeviceMode
 Update-GpuDeviceBadge
+if ($initDevMode -eq "Gpu" -and $script:HasNvidiaGpu) {
+    if ($rbDeviceGpu) { $rbDeviceGpu.IsChecked = $true }
+    Set-DeviceMode "Gpu"
+} else {
+    if ($rbDeviceCpu) { $rbDeviceCpu.IsChecked = $true }
+    Set-DeviceMode "Cpu"
+}
 $script:NeedModelRepairOnStartup = $false
 if (Test-ModelsReady) {
     Protect-ModelFiles
@@ -3199,6 +3376,7 @@ if (Test-ModelsReady) {
 Write-AppLog "=========================================="
 Write-AppLog "hayamimi ランチャー $version を起動しました ($($runtimeBadge.Text))."
 Write-AppLog "現在の実行基盤モード: $script:CurrentEngineMode"
+Write-AppLog "現在の推論設定モード: $script:CurrentDeviceMode (既定: CPU)"
 Write-AppLog "ランチャーログ: $LogFile"
 Write-AppLog "Pythonログ:     $script:PythonLogFile"
 Write-AppLog "コンテナログ:   $ContainerLogFile"
