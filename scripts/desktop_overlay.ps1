@@ -169,11 +169,18 @@ if (Test-Path $configFile) {
                         <Button Name="BtnClickThrough" Style="{StaticResource ControlBtn}" Content="📌 クリック透過: OFF"/>
                         <Button Name="BtnFontSmaller" Style="{StaticResource ControlBtn}" Content="A-"/>
                         <Button Name="BtnFontBigger" Style="{StaticResource ControlBtn}" Content="A+"/>
+                        <Button Name="BtnHideMenu" Style="{StaticResource ControlBtn}" Content="🔼 隠す" ToolTip="メニューバーを隠します (右クリックや右上の▼ボタンで再表示可能)"/>
                         <Button Name="BtnWebSettings" Style="{StaticResource ControlBtn}" Content="⚙ 設定"/>
                         <Button Name="BtnClose" Style="{StaticResource ControlBtn}" Content="✕ 閉じる"/>
                     </StackPanel>
                 </DockPanel>
             </Border>
+
+            <!-- メニュー非表示時の再表示用ミニボタン -->
+            <Button Name="BtnShowMenu" Grid.Row="0" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Margin="0,4,8,0" Padding="8,2" Content="▼ メニュー"
+                    Visibility="Collapsed" Style="{StaticResource ControlBtn}"
+                    Opacity="0.75" ToolTip="メニューバーを再表示します (右クリックでも操作可能)"/>
 
             <!-- 字幕表示エリア -->
             <Grid Grid.Row="1" Margin="20,8,20,14" VerticalAlignment="Center">
@@ -220,7 +227,7 @@ if (Test-Path $configFile) {
 
                 <!-- 右下リサイズグリップ (ドラッグでサイズ変更) -->
                 <Canvas HorizontalAlignment="Right" VerticalAlignment="Bottom" Width="16" Height="16" Margin="0,0,-12,-8">
-                    <Path Data="M 12,0 L 16,0 L 16,16 L 0,16 L 0,12 L 12,12 Z M 6,6 L 10,6 L 10,10 L 6,10 Z"
+                    <Path Data="M 12,0 L 16,0 L 16,16 L 0,16 L 0,12 Z M 6,6 L 10,6 L 10,10 L 6,10 Z"
                           Fill="#64748B" Cursor="SizeNWSE" Name="ResizeGrip"/>
                 </Canvas>
             </Grid>
@@ -241,10 +248,13 @@ $btnToggleBg = $window.FindName("BtnToggleBg")
 $btnClickThrough = $window.FindName("BtnClickThrough")
 $btnFontSmaller = $window.FindName("BtnFontSmaller")
 $btnFontBigger = $window.FindName("BtnFontBigger")
+$btnHideMenu = $window.FindName("BtnHideMenu")
+$btnShowMenu = $window.FindName("BtnShowMenu")
 $btnWebSettings = $window.FindName("BtnWebSettings")
 $btnClose = $window.FindName("BtnClose")
 $resizeGrip = $window.FindName("ResizeGrip")
 $connectingNotice = $window.FindName("ConnectingNotice")
+$subtitleContainer = $window.FindName("SubtitleContainer")
 
 $finalText = $window.FindName("FinalText")
 $partialText = $window.FindName("PartialText")
@@ -329,6 +339,36 @@ $btnToggleBg.Add_Click({
     &$applyBgStyle (-not $script:isTransparentBg)
 })
 
+# メニューバーの表示/非表示管理
+$script:isMenuHidden = $false
+
+$setMenuVisibility = {
+    param([bool]$hidden)
+    $script:isMenuHidden = $hidden
+    if ($hidden) {
+        $controlBar.Visibility = [System.Windows.Visibility]::Collapsed
+        if (-not $script:isClickThrough) {
+            $btnShowMenu.Visibility = [System.Windows.Visibility]::Visible
+        } else {
+            $btnShowMenu.Visibility = [System.Windows.Visibility]::Collapsed
+        }
+    } else {
+        $controlBar.Visibility = [System.Windows.Visibility]::Visible
+        $btnShowMenu.Visibility = [System.Windows.Visibility]::Collapsed
+    }
+    if ($script:trayItemToggleMenu) {
+        $script:trayItemToggleMenu.Text = if ($hidden) { "メニューバーを表示 (ON)" } else { "メニューバーを隠す (OFF)" }
+    }
+}
+
+$btnHideMenu.Add_Click({
+    &$setMenuVisibility $true
+})
+
+$btnShowMenu.Add_Click({
+    &$setMenuVisibility $false
+})
+
 # クリックスルー管理
 $script:isClickThrough = $false
 $script:hWnd = [IntPtr]::Zero
@@ -340,13 +380,23 @@ $updateClickThroughUI = {
         [OverlayWin32]::SetClickThrough($script:hWnd, $enabled)
     }
     if ($enabled) {
-        $btnClickThrough.Content = "📌 透過中 (タスクバーで解除)"
+        $btnClickThrough.Content = "📌 透過中 (タスクトレイで解除)"
         $btnClickThrough.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#CC059669")
         $controlBar.Visibility = [System.Windows.Visibility]::Collapsed
+        $btnShowMenu.Visibility = [System.Windows.Visibility]::Collapsed
+        try {
+            $notifyIcon.ShowBalloonTip(3500, "早耳 - クリック透過 ON", "字幕のマウス透過が有効です。`n解除するにはタスクトレイアイコンをダブルクリックしてください。", [System.Windows.Forms.ToolTipIcon]::Info)
+        } catch {}
     } else {
         $btnClickThrough.Content = "📌 クリック透過: OFF"
         $btnClickThrough.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#E01E293B")
-        $controlBar.Visibility = [System.Windows.Visibility]::Visible
+        if ($script:isMenuHidden) {
+            $controlBar.Visibility = [System.Windows.Visibility]::Collapsed
+            $btnShowMenu.Visibility = [System.Windows.Visibility]::Visible
+        } else {
+            $controlBar.Visibility = [System.Windows.Visibility]::Visible
+            $btnShowMenu.Visibility = [System.Windows.Visibility]::Collapsed
+        }
     }
     if ($script:trayItemToggle) {
         $script:trayItemToggle.Text = if ($enabled) { "クリック透過を解除 (OFF)" } else { "クリック透過を有効化 (ON)" }
@@ -361,7 +411,7 @@ $btnClickThrough.Add_Click({
 $btnFontBigger.Add_Click({
     $finalText.FontSize = [Math]::Min($finalText.FontSize + 2, 56)
     $partialText.FontSize = [Math]::Min($partialText.FontSize + 2, 44)
-    $transText.FontSize = [Math]::Min($transText.FontSize + 2, 40)
+    $transText.FontSize = [Math]::Min($transText.FontSize + 4, 40)
 })
 
 $btnFontSmaller.Add_Click({
@@ -380,18 +430,116 @@ $btnClose.Add_Click({
     $window.Close()
 })
 
+# 右クリックコンテキストメニュー (WPF ContextMenu)
+$cardContextMenu = New-Object System.Windows.Controls.ContextMenu
+$cardContextMenu.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F00F172A")
+$cardContextMenu.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#38BDF8")
+$cardContextMenu.BorderThickness = New-Object System.Windows.Thickness(1)
+
+$menuItemToggleBar = New-Object System.Windows.Controls.MenuItem
+$menuItemToggleBar.Header = "👁 メニューバーを表示 / 隠す"
+$menuItemToggleBar.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F8FAFC")
+$menuItemToggleBar.Add_Click({
+    &$setMenuVisibility (-not $script:isMenuHidden)
+})
+$cardContextMenu.Items.Add($menuItemToggleBar) | Out-Null
+
+$menuItemToggleBg = New-Object System.Windows.Controls.MenuItem
+$menuItemToggleBg.Header = "🎨 背景切替 (半透明 / 完全透明)"
+$menuItemToggleBg.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F8FAFC")
+$menuItemToggleBg.Add_Click({
+    &$applyBgStyle (-not $script:isTransparentBg)
+})
+$cardContextMenu.Items.Add($menuItemToggleBg) | Out-Null
+
+$menuItemClickThrough = New-Object System.Windows.Controls.MenuItem
+$menuItemClickThrough.Header = "📌 クリック透過を有効化 (ON)"
+$menuItemClickThrough.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F8FAFC")
+$menuItemClickThrough.Add_Click({
+    &$updateClickThroughUI $true
+})
+$cardContextMenu.Items.Add($menuItemClickThrough) | Out-Null
+
+$cardContextMenu.Items.Add((New-Object System.Windows.Controls.Separator)) | Out-Null
+
+$menuItemFontUp = New-Object System.Windows.Controls.MenuItem
+$menuItemFontUp.Header = "🔤 文字を大きく (A+)"
+$menuItemFontUp.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F8FAFC")
+$menuItemFontUp.Add_Click({
+    $finalText.FontSize = [Math]::Min($finalText.FontSize + 2, 56)
+    $partialText.FontSize = [Math]::Min($partialText.FontSize + 2, 44)
+    $transText.FontSize = [Math]::Min($transText.FontSize + 2, 40)
+})
+$cardContextMenu.Items.Add($menuItemFontUp) | Out-Null
+
+$menuItemFontDown = New-Object System.Windows.Controls.MenuItem
+$menuItemFontDown.Header = "🔤 文字を小さく (A-)"
+$menuItemFontDown.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F8FAFC")
+$menuItemFontDown.Add_Click({
+    $finalText.FontSize = [Math]::Max($finalText.FontSize - 2, 14)
+    $partialText.FontSize = [Math]::Max($partialText.FontSize - 2, 12)
+    $transText.FontSize = [Math]::Max($transText.FontSize - 2, 10)
+})
+$cardContextMenu.Items.Add($menuItemFontDown) | Out-Null
+
+$cardContextMenu.Items.Add((New-Object System.Windows.Controls.Separator)) | Out-Null
+
+$menuItemSettings = New-Object System.Windows.Controls.MenuItem
+$menuItemSettings.Header = "⚙ Web設定画面を開く"
+$menuItemSettings.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F8FAFC")
+$menuItemSettings.Add_Click({
+    [System.Diagnostics.Process]::Start("$ServerUrl/settings") | Out-Null
+})
+$cardContextMenu.Items.Add($menuItemSettings) | Out-Null
+
+$menuItemExit = New-Object System.Windows.Controls.MenuItem
+$menuItemExit.Header = "✕ 終了"
+$menuItemExit.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F8FAFC")
+$menuItemExit.Add_Click({
+    $window.Close()
+})
+$cardContextMenu.Items.Add($menuItemExit) | Out-Null
+
+$cardBorder.ContextMenu = $cardContextMenu
+
+# キーボードショートカット (H: メニュー切り替え, Esc: メニュー再表示)
+$window.Add_KeyDown({
+    param($s, $e)
+    if ($e.Key -eq [System.Windows.Input.Key]::H) {
+        &$setMenuVisibility (-not $script:isMenuHidden)
+    } elseif ($e.Key -eq [System.Windows.Input.Key]::Escape) {
+        &$setMenuVisibility $false
+    }
+})
+
 # タスクバートレイアイコン
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
-$notifyIcon.Text = "早耳 - デスクトップ字幕"
+$notifyIcon.Text = "早耳 - デスクトップ字幕 (ダブルクリックで復帰)"
 $iconStream = [System.Drawing.SystemIcons]::Application
 $notifyIcon.Icon = $iconStream
 $notifyIcon.Visible = $true
+
+# トレイアイコンのダブルクリックでクリック透過解除 ＆ メニューバー強制再表示
+$notifyIcon.Add_DoubleClick({
+    $window.Dispatcher.Invoke([Action]{
+        &$updateClickThroughUI $false
+        &$setMenuVisibility $false
+        $window.Activate() | Out-Null
+    })
+})
 
 $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
 $script:trayItemToggle = $contextMenu.Items.Add("クリック透過を有効化 (ON)")
 $script:trayItemToggle.Add_Click({
     $window.Dispatcher.Invoke([Action]{
         &$updateClickThroughUI (-not $script:isClickThrough)
+    })
+})
+
+$script:trayItemToggleMenu = $contextMenu.Items.Add("メニューバーを隠す (OFF)")
+$script:trayItemToggleMenu.Add_Click({
+    $window.Dispatcher.Invoke([Action]{
+        &$setMenuVisibility (-not $script:isMenuHidden)
     })
 })
 

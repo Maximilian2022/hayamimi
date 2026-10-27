@@ -105,7 +105,7 @@ def _get_profiles_dir() -> str:
 
 def _get_storage_dir() -> str:
     """Return a persistent storage directory.
-    Checks /app/config, /app/models, project root config/, or falls back to /tmp.
+    Checks /app/config, /app/models, project root config/, or falls back to system tempdir.
     """
     for candidate in ("/app/config", "/app/models"):
         if os.path.isdir(candidate):
@@ -118,16 +118,17 @@ def _get_storage_dir() -> str:
             except Exception:
                 pass
     local_cfg = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
-    if os.path.isdir(local_cfg):
-        try:
-            test_file = os.path.join(local_cfg, ".write_test")
-            with open(test_file, "w") as f:
-                f.write("ok")
-            os.remove(test_file)
-            return local_cfg
-        except Exception:
-            pass
-    return "/tmp"
+    try:
+        os.makedirs(local_cfg, exist_ok=True)
+        test_file = os.path.join(local_cfg, ".write_test")
+        with open(test_file, "w") as f:
+            f.write("ok")
+        os.remove(test_file)
+        return local_cfg
+    except Exception:
+        pass
+    import tempfile
+    return tempfile.gettempdir()
 
 _DEFAULT_STYLE = {
     "font": "'Zen Kaku Gothic New', sans-serif",
@@ -155,9 +156,11 @@ def _get_overlay_style() -> dict:
                 return d
         except Exception:
             pass
-    if os.path.exists("/tmp/overlay_style.json"):
+    import tempfile
+    temp_style = os.path.join(tempfile.gettempdir(), _STYLE_FILENAME)
+    if os.path.exists(temp_style):
         try:
-            with open("/tmp/overlay_style.json", "r", encoding="utf-8") as f:
+            with open(temp_style, "r", encoding="utf-8") as f:
                 saved = json.load(f)
                 d = dict(_DEFAULT_STYLE)
                 d.update(saved)
