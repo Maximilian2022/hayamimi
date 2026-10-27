@@ -1,5 +1,5 @@
 ﻿# --- バージョン管理 (version.txt を Single Source of Truth として動的同期) ---
-$script:AppVersion = "1.4.1"
+$script:AppVersion = "1.4.2"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $versionTxtFile = Join-Path $repoRoot "version.txt"
 if (Test-Path $versionTxtFile) {
@@ -472,7 +472,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi ランチャー (GUI v1.4.1)"
+        Title="hayamimi ランチャー (GUI v1.4.2)"
         Height="780" Width="780"
         MinHeight="680" MinWidth="720"
         WindowStartupLocation="CenterScreen"
@@ -550,7 +550,7 @@ function Update-ContainerLogFile {
                         <TextBlock x:Name="GpuBadge" Text="⚡ GPU: 検出中..." FontSize="11" Foreground="#10B981" FontWeight="SemiBold"/>
                     </Border>
                     <Border Background="#1E1B4B" CornerRadius="12" Padding="10,5" Margin="0,0,8,0" BorderBrush="#4338CA" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.4.1" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.4.2" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#141B2D" CornerRadius="12" Padding="10,5" BorderBrush="#253350" BorderThickness="1">
                         <TextBlock x:Name="RuntimeBadge" Text="Python venv" FontSize="11" Foreground="#38BDF8" FontWeight="SemiBold"/>
@@ -3127,6 +3127,42 @@ $pollTimer.Add_Tick({
         } elseif (-not $isRunning -and $statusText.Text -match "稼働中") {
             Set-UIState "停止中" $brushGray $true $false
         }
+
+        # 外部プロセス (デスクトップ字幕など) が launcher.log に追記した新着ログを GUI コンソールに反映
+        try {
+            if (Test-Path $LogFile) {
+                $fi = Get-Item $LogFile
+                if ($null -eq $script:LastLauncherLogPos) {
+                    $script:LastLauncherLogPos = $fi.Length
+                } elseif ($fi.Length -gt $script:LastLauncherLogPos) {
+                    $fs = [System.IO.FileStream]::new($LogFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                    $fs.Seek($script:LastLauncherLogPos, [System.IO.SeekOrigin]::Begin) | Out-Null
+                    $sr = [System.IO.StreamReader]::new($fs, [System.Text.Encoding]::UTF8)
+                    $newText = $sr.ReadToEnd()
+                    $script:LastLauncherLogPos = $fs.Position
+                    $sr.Dispose()
+                    $fs.Dispose()
+
+                    if (-not [string]::IsNullOrWhiteSpace($newText)) {
+                        $lines = $newText -split "`r?`n"
+                        foreach ($l in $lines) {
+                            if ($l -match "\[デスクトップ字幕\]") {
+                                if ($logTextBox -and $logScrollViewer) {
+                                    $timeMatch = [regex]::Match($l, "\[(\d{4}-\d{2}-\d{2}\s+)?(\d{2}:\d{2}:\d{2})\]")
+                                    $timePrefix = if ($timeMatch.Success) { "[" + $timeMatch.Groups[2].Value + "] " } else { "" }
+                                    $cleanMsg = $l -replace "^\[.*?\]\s*\[.*?\]\s*", ""
+                                    $logTextBox.AppendText("$timePrefix$cleanMsg`r`n")
+                                    Trim-LogTextBox
+                                    $logScrollViewer.ScrollToEnd()
+                                }
+                            }
+                        }
+                    }
+                } elseif ($fi.Length -lt $script:LastLauncherLogPos) {
+                    $script:LastLauncherLogPos = 0
+                }
+            }
+        } catch {}
     }
 })
 

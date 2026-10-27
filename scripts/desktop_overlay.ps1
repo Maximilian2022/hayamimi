@@ -37,7 +37,14 @@ public class OverlayWin32 {
     private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
 
     [DllImport("user32.dll")]
+    [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll")]
+    public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     public static long GetWindowLong(IntPtr hWnd, int nIndex) {
         if (IntPtr.Size == 8) {
@@ -65,6 +72,25 @@ public class OverlayWin32 {
 if (-not ([System.Management.Automation.PSTypeName]'OverlayWin32').Type) {
     Add-Type -TypeDefinition $win32Code
 }
+
+# ログファイルパス & ロギング関数 (logs/launcher.log へ集約)
+$logsDir = Join-Path $PSScriptRoot "..\logs"
+if (-not (Test-Path $logsDir)) {
+    try { New-Item -ItemType Directory -Path $logsDir -Force | Out-Null } catch {}
+}
+$script:LauncherLogFile = Join-Path $logsDir "launcher.log"
+
+function Write-OverlayLog {
+    param([string]$Message, [string]$Level = "INFO")
+    $now = Get-Date
+    $timestamp = $now.ToString("yyyy-MM-dd HH:mm:ss")
+    $logLine = "[$timestamp] [$Level] [デスクトップ字幕] $Message"
+    try {
+        [System.IO.File]::AppendAllText($script:LauncherLogFile, "$logLine`r`n", [System.Text.Encoding]::UTF8)
+    } catch {}
+}
+
+Write-OverlayLog "起動処理を開始しました (PID: $PID, ServerUrl: $ServerUrl, Demo: $Demo)" "INFO"
 
 # 設定ファイルパス
 $configDir = Join-Path $PSScriptRoot "..\config"
@@ -104,6 +130,7 @@ if (Test-Path $configFile) {
         Background="Transparent"
         Topmost="True"
         ShowInTaskbar="True"
+        Focusable="True"
         Width="$($savedConfig.Width)" Height="$($savedConfig.Height)"
         MinWidth="450" MinHeight="140">
     <Window.Resources>
@@ -166,21 +193,30 @@ if (Test-Path $configFile) {
 
                     <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
                         <Button Name="BtnToggleBg" Style="{StaticResource ControlBtn}" Content="🎨 背景: 半透明"/>
-                        <Button Name="BtnClickThrough" Style="{StaticResource ControlBtn}" Content="📌 クリック透過: OFF"/>
+                        <Button Name="BtnClickThrough" Style="{StaticResource ControlBtn}" Content="📌 マウス透過: OFF" ToolTip="字幕へのマウスクリックを下のアプリに通します"/>
                         <Button Name="BtnFontSmaller" Style="{StaticResource ControlBtn}" Content="A-"/>
                         <Button Name="BtnFontBigger" Style="{StaticResource ControlBtn}" Content="A+"/>
-                        <Button Name="BtnHideMenu" Style="{StaticResource ControlBtn}" Content="🔼 隠す" ToolTip="メニューバーを隠します (右クリックや右上の▼ボタンで再表示可能)"/>
+                        <Button Name="BtnHideMenu" Style="{StaticResource ControlBtn}" Content="🔼 隠す" ToolTip="メニューバーを隠します (右クリックや上部ホバー、Escキーで再表示可能)"/>
                         <Button Name="BtnWebSettings" Style="{StaticResource ControlBtn}" Content="⚙ 設定"/>
                         <Button Name="BtnClose" Style="{StaticResource ControlBtn}" Content="✕ 閉じる"/>
                     </StackPanel>
                 </DockPanel>
             </Border>
 
-            <!-- メニュー非表示時の再表示用ミニボタン -->
-            <Button Name="BtnShowMenu" Grid.Row="0" HorizontalAlignment="Right" VerticalAlignment="Top"
-                    Margin="0,4,8,0" Padding="8,2" Content="▼ メニュー"
+            <!-- メニュー非表示時の再表示用ボタン (常に右上に重ねて表示) -->
+            <Button Name="BtnShowMenu" Grid.RowSpan="2" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Margin="0,6,10,0" Padding="12,5" Content="▼ メニューを表示"
                     Visibility="Collapsed" Style="{StaticResource ControlBtn}"
-                    Opacity="0.75" ToolTip="メニューバーを再表示します (右クリックでも操作可能)"/>
+                    Background="#F01E293B" BorderBrush="#38BDF8" BorderThickness="1.5"
+                    Opacity="0.95" ToolTip="メニューバーを再表示します (クリック、右クリック、上部ホバー、Escキー、Hキーで操作可能)"/>
+
+            <!-- マウス透過中（クリックスルー中）の案内バッジ -->
+            <Border Name="ClickThroughNotice" Grid.RowSpan="2" HorizontalAlignment="Center" VerticalAlignment="Top"
+                    Background="#D9059669" CornerRadius="0,0,8,8" Padding="14,4" Margin="0,0,0,0"
+                    Visibility="Collapsed" IsHitTestVisible="False">
+                <TextBlock Text="📌 マウス透過中 (タスクトレイの早耳アイコンをダブルクリック、または Ctrl+Shift+H で解除)"
+                           Foreground="#FFFFFF" FontSize="11" FontWeight="Bold"/>
+            </Border>
 
             <!-- 字幕表示エリア -->
             <Grid Grid.Row="1" Margin="20,8,20,14" VerticalAlignment="Center">
@@ -226,9 +262,10 @@ if (Test-Path $configFile) {
                            Visibility="Collapsed"/>
 
                 <!-- 右下リサイズグリップ (ドラッグでサイズ変更) -->
-                <Canvas HorizontalAlignment="Right" VerticalAlignment="Bottom" Width="16" Height="16" Margin="0,0,-12,-8">
-                    <Path Data="M 12,0 L 16,0 L 16,16 L 0,16 L 0,12 Z M 6,6 L 10,6 L 10,10 L 6,10 Z"
-                          Fill="#64748B" Cursor="SizeNWSE" Name="ResizeGrip"/>
+                <Canvas HorizontalAlignment="Right" VerticalAlignment="Bottom" Width="20" Height="20" Margin="0,0,-12,-8">
+                    <Path Data="M 14,0 L 20,0 L 20,20 L 0,20 L 0,14 L 14,14 Z M 8,8 L 12,8 L 12,12 L 8,12 Z"
+                          Fill="#94A3B8" Cursor="SizeNWSE" Name="ResizeGrip"
+                          ToolTip="ドラッグでサイズ変更 (右クリックでメニュー表示)"/>
                 </Canvas>
             </Grid>
         </Grid>
@@ -250,6 +287,7 @@ $btnFontSmaller = $window.FindName("BtnFontSmaller")
 $btnFontBigger = $window.FindName("BtnFontBigger")
 $btnHideMenu = $window.FindName("BtnHideMenu")
 $btnShowMenu = $window.FindName("BtnShowMenu")
+$clickThroughNotice = $window.FindName("ClickThroughNotice")
 $btnWebSettings = $window.FindName("BtnWebSettings")
 $btnClose = $window.FindName("BtnClose")
 $resizeGrip = $window.FindName("ResizeGrip")
@@ -270,9 +308,10 @@ if ($null -ne $savedConfig.Left -and $null -ne $savedConfig.Top) {
     $window.Top = $primaryScreen.WorkingArea.Y + ($primaryScreen.WorkingArea.Height - $window.Height) / 2
 }
 
-# ドラッグ移動
+# ドラッグ移動 & クリック時フォーカス獲得
 $dragAction = {
     param($eventSender, $e)
+    try { $window.Focus() | Out-Null } catch {}
     if ($e.LeftButton -eq [System.Windows.Input.MouseButtonState]::Pressed) {
         $window.DragMove()
     }
@@ -281,17 +320,30 @@ $mainGrid.Add_MouseLeftButtonDown($dragAction)
 $dragHandle.Add_MouseLeftButtonDown($dragAction)
 $cardBorder.Add_MouseLeftButtonDown($dragAction)
 
-# 右下リサイズグリップのドラッグ処理
+# 右下リサイズグリップのドラッグ処理 & クリック救済
 $script:isResizing = $false
 $script:resizeStartPoint = [System.Windows.Point]::new(0, 0)
 $script:resizeStartSize = [System.Windows.Size]::new(0, 0)
 
 $resizeGrip.Add_MouseLeftButtonDown({
     param($eventSender, $e)
+    try { $window.Focus() | Out-Null } catch {}
+    # メニューが隠れている時にクリックされた場合は再表示
+    if ($script:isMenuHidden) {
+        &$setMenuVisibility $false
+        Write-OverlayLog "右下の三角形グリップのクリックを検知し、メニューバーを再表示しました。" "INFO"
+    }
     $script:isResizing = $true
     $script:resizeStartPoint = [System.Windows.Forms.Cursor]::Position
     $script:resizeStartSize = [System.Windows.Size]::new($window.Width, $window.Height)
     $resizeGrip.CaptureMouse() | Out-Null
+    $e.Handled = $true
+})
+
+$resizeGrip.Add_MouseRightButtonDown({
+    param($eventSender, $e)
+    &$setMenuVisibility $false
+    Write-OverlayLog "右下グリップの右クリックを検知し、メニューバーを再表示しました。" "INFO"
     $e.Handled = $true
 })
 
@@ -316,6 +368,18 @@ $resizeGrip.Add_MouseLeftButtonUp({
     }
 })
 
+# 上部マウスホバーによるメニューバー自動表示 (オートハイド)
+$cardBorder.Add_MouseMove({
+    param($s, $e)
+    if ($script:isMenuHidden -and -not $script:isClickThrough) {
+        $pos = $e.GetPosition($cardBorder)
+        if ($pos.Y -le 45) {
+            &$setMenuVisibility $false
+            Write-OverlayLog "上部マウスホバーを検知し、メニューバーを自動再表示しました。" "INFO"
+        }
+    }
+})
+
 # 背景スタイル切替
 $script:isTransparentBg = $savedConfig.TransparentBg
 $applyBgStyle = {
@@ -326,11 +390,13 @@ $applyBgStyle = {
         $cardBorder.BorderThickness = New-Object System.Windows.Thickness(0)
         $controlBar.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#400F172A")
         $btnToggleBg.Content = "🎨 背景: 完全透明"
+        Write-OverlayLog "背景スタイルを [完全透明] に変更しました。" "INFO"
     } else {
         $cardBorder.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#E60F172A")
         $cardBorder.BorderThickness = New-Object System.Windows.Thickness(2)
         $controlBar.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#901E293B")
         $btnToggleBg.Content = "🎨 背景: 半透明"
+        Write-OverlayLog "背景スタイルを [半透明] に変更しました。" "INFO"
     }
 }
 &$applyBgStyle $script:isTransparentBg
@@ -352,9 +418,11 @@ $setMenuVisibility = {
         } else {
             $btnShowMenu.Visibility = [System.Windows.Visibility]::Collapsed
         }
+        Write-OverlayLog "メニューバーを隠しました (Esc / H / 上部ホバー / 右クリック / 右上ボタンで再表示可能)" "INFO"
     } else {
         $controlBar.Visibility = [System.Windows.Visibility]::Visible
         $btnShowMenu.Visibility = [System.Windows.Visibility]::Collapsed
+        Write-OverlayLog "メニューバーを再表示しました。" "INFO"
     }
     if ($script:trayItemToggleMenu) {
         $script:trayItemToggleMenu.Text = if ($hidden) { "メニューバーを表示 (ON)" } else { "メニューバーを隠す (OFF)" }
@@ -369,7 +437,7 @@ $btnShowMenu.Add_Click({
     &$setMenuVisibility $false
 })
 
-# クリックスルー管理
+# クリックスルー管理 (マウス完全透過)
 $script:isClickThrough = $false
 $script:hWnd = [IntPtr]::Zero
 
@@ -380,26 +448,26 @@ $updateClickThroughUI = {
         [OverlayWin32]::SetClickThrough($script:hWnd, $enabled)
     }
     if ($enabled) {
-        $btnClickThrough.Content = "📌 透過中 (タスクトレイで解除)"
+        $btnClickThrough.Content = "📌 マウス透過: ON"
         $btnClickThrough.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#CC059669")
         $controlBar.Visibility = [System.Windows.Visibility]::Collapsed
         $btnShowMenu.Visibility = [System.Windows.Visibility]::Collapsed
+        $clickThroughNotice.Visibility = [System.Windows.Visibility]::Visible
+        Write-OverlayLog "マウス透過を有効化しました (ON) - タスクトレイアイコンのダブルクリックまたは Ctrl+Shift+H で解除可能" "INFO"
         try {
-            $notifyIcon.ShowBalloonTip(3500, "早耳 - クリック透過 ON", "字幕のマウス透過が有効です。`n解除するにはタスクトレイアイコンをダブルクリックしてください。", [System.Windows.Forms.ToolTipIcon]::Info)
+            $notifyIcon.ShowBalloonTip(3500, "早耳 - マウス透過 ON", "字幕のマウス透過が有効です。`n解除するにはタスクトレイの早耳アイコンをダブルクリックするか、Ctrl+Shift+H を押してください。", [System.Windows.Forms.ToolTipIcon]::Info)
         } catch {}
     } else {
-        $btnClickThrough.Content = "📌 クリック透過: OFF"
+        $btnClickThrough.Content = "📌 マウス透過: OFF"
         $btnClickThrough.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#E01E293B")
-        if ($script:isMenuHidden) {
-            $controlBar.Visibility = [System.Windows.Visibility]::Collapsed
-            $btnShowMenu.Visibility = [System.Windows.Visibility]::Visible
-        } else {
-            $controlBar.Visibility = [System.Windows.Visibility]::Visible
-            $btnShowMenu.Visibility = [System.Windows.Visibility]::Collapsed
-        }
+        $clickThroughNotice.Visibility = [System.Windows.Visibility]::Collapsed
+        $controlBar.Visibility = [System.Windows.Visibility]::Visible
+        $btnShowMenu.Visibility = [System.Windows.Visibility]::Collapsed
+        $script:isMenuHidden = $false
+        Write-OverlayLog "マウス透過を解除しました (OFF)" "INFO"
     }
     if ($script:trayItemToggle) {
-        $script:trayItemToggle.Text = if ($enabled) { "クリック透過を解除 (OFF)" } else { "クリック透過を有効化 (ON)" }
+        $script:trayItemToggle.Text = if ($enabled) { "マウス透過を解除 (OFF)" } else { "マウス透過を有効化 (ON)" }
     }
 }
 
@@ -412,21 +480,25 @@ $btnFontBigger.Add_Click({
     $finalText.FontSize = [Math]::Min($finalText.FontSize + 2, 56)
     $partialText.FontSize = [Math]::Min($partialText.FontSize + 2, 44)
     $transText.FontSize = [Math]::Min($transText.FontSize + 4, 40)
+    Write-OverlayLog "フォントサイズを拡大しました: FontSize=$($finalText.FontSize)" "INFO"
 })
 
 $btnFontSmaller.Add_Click({
     $finalText.FontSize = [Math]::Max($finalText.FontSize - 2, 14)
     $partialText.FontSize = [Math]::Max($partialText.FontSize - 2, 12)
     $transText.FontSize = [Math]::Max($transText.FontSize - 2, 10)
+    Write-OverlayLog "フォントサイズを縮小しました: FontSize=$($finalText.FontSize)" "INFO"
 })
 
 # 設定ボタン
 $btnWebSettings.Add_Click({
+    Write-OverlayLog "Web設定画面を開きます: $ServerUrl/settings" "INFO"
     [System.Diagnostics.Process]::Start("$ServerUrl/settings") | Out-Null
 })
 
 # 閉じるボタン
 $btnClose.Add_Click({
+    Write-OverlayLog "閉じるボタンが押されました。" "INFO"
     $window.Close()
 })
 
@@ -453,7 +525,7 @@ $menuItemToggleBg.Add_Click({
 $cardContextMenu.Items.Add($menuItemToggleBg) | Out-Null
 
 $menuItemClickThrough = New-Object System.Windows.Controls.MenuItem
-$menuItemClickThrough.Header = "📌 クリック透過を有効化 (ON)"
+$menuItemClickThrough.Header = "📌 マウス透過を有効化 (ON)"
 $menuItemClickThrough.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F8FAFC")
 $menuItemClickThrough.Add_Click({
     &$updateClickThroughUI $true
@@ -501,14 +573,19 @@ $menuItemExit.Add_Click({
 $cardContextMenu.Items.Add($menuItemExit) | Out-Null
 
 $cardBorder.ContextMenu = $cardContextMenu
+$mainGrid.ContextMenu = $cardContextMenu
 
-# キーボードショートカット (H: メニュー切り替え, Esc: メニュー再表示)
-$window.Add_KeyDown({
+# キーボードショートカット (トンネリングで確実に捕捉: H で切り替え, Esc でメニュー再表示)
+$window.Add_PreviewKeyDown({
     param($s, $e)
     if ($e.Key -eq [System.Windows.Input.Key]::H) {
         &$setMenuVisibility (-not $script:isMenuHidden)
+        Write-OverlayLog "Hキー押下を検知しました (メニュー表示トグル: isMenuHidden=$script:isMenuHidden)" "INFO"
+        $e.Handled = $true
     } elseif ($e.Key -eq [System.Windows.Input.Key]::Escape) {
         &$setMenuVisibility $false
+        Write-OverlayLog "Escキー押下を検知しました (メニューバー再表示)" "INFO"
+        $e.Handled = $true
     }
 })
 
@@ -521,15 +598,18 @@ $notifyIcon.Visible = $true
 
 # トレイアイコンのダブルクリックでクリック透過解除 ＆ メニューバー強制再表示
 $notifyIcon.Add_DoubleClick({
+    Write-OverlayLog "タスクトレイアイコンのダブルクリックを検知しました。透過解除＆メニュー再表示を実行します。" "INFO"
     $window.Dispatcher.Invoke([Action]{
         &$updateClickThroughUI $false
         &$setMenuVisibility $false
+        [OverlayWin32]::SetForegroundWindow($script:hWnd) | Out-Null
         $window.Activate() | Out-Null
+        $window.Focus() | Out-Null
     })
 })
 
 $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
-$script:trayItemToggle = $contextMenu.Items.Add("クリック透過を有効化 (ON)")
+$script:trayItemToggle = $contextMenu.Items.Add("マウス透過を有効化 (ON)")
 $script:trayItemToggle.Add_Click({
     $window.Dispatcher.Invoke([Action]{
         &$updateClickThroughUI (-not $script:isClickThrough)
@@ -549,6 +629,7 @@ $trayItemReset.Add_Click({
         $s = [System.Windows.Forms.Screen]::PrimaryScreen
         $window.Left = $s.WorkingArea.X + ($s.WorkingArea.Width - $window.Width) / 2
         $window.Top = $s.WorkingArea.Y + ($s.WorkingArea.Height - $window.Height) / 2
+        Write-OverlayLog "位置を画面中央にリセットしました。" "INFO"
     })
 })
 
@@ -568,6 +649,12 @@ $trayItemExit.Add_Click({
 
 $notifyIcon.ContextMenuStrip = $contextMenu
 
+# グローバルホットキー定数 (Ctrl + Shift + H)
+$script:HOTKEY_ID = 9001
+$MOD_CONTROL = 0x0002
+$MOD_SHIFT = 0x0004
+$VK_H = 0x48
+
 # 設定の自動保存関数
 $saveSettings = {
     $cfg = @{
@@ -580,11 +667,18 @@ $saveSettings = {
     }
     try {
         $cfg | ConvertTo-Json | Set-Content -Path $configFile -Encoding UTF8
-    } catch {}
+        Write-OverlayLog "設定を保存しました: Width=$($window.Width), Height=$($window.Height), FontSize=$($finalText.FontSize)" "INFO"
+    } catch {
+        Write-OverlayLog "設定の保存に失敗しました: $_" "ERROR"
+    }
 }
 
-# ウィンドウ破棄時に設定保存 & トレイアイコン解放
+# ウィンドウ破棄時に設定保存 & トレイアイコン解放 & ホットキー解除
 $window.Add_Closed({
+    Write-OverlayLog "ウィンドウの終了処理を開始します。" "INFO"
+    if ($script:isHotKeyRegistered -and $script:hWnd -ne [IntPtr]::Zero) {
+        [OverlayWin32]::UnregisterHotKey($script:hWnd, $script:HOTKEY_ID) | Out-Null
+    }
     &$saveSettings
     $notifyIcon.Visible = $false
     $notifyIcon.Dispose()
@@ -599,13 +693,41 @@ $window.Add_Closed({
         try { $script:sseRunspace.Close() } catch {}
         try { $script:sseRunspace.Dispose() } catch {}
     }
+    Write-OverlayLog "ウィンドウを正常に終了しました。" "INFO"
 })
 
-# ハンドル取得
+# ハンドル取得 & グローバルホットキー登録
 $window.Add_SourceInitialized({
     $helper = New-Object System.Windows.Interop.WindowInteropHelper($window)
     $script:hWnd = $helper.Handle
     [OverlayWin32]::SetForegroundWindow($script:hWnd) | Out-Null
+
+    # Win32 メッセージフック (WM_HOTKEY: 0x0312 の受信)
+    try {
+        $source = [System.Windows.Interop.HwndSource]::FromHwnd($script:hWnd)
+        $source.AddHook({
+            param($hwnd, $msg, $wParam, $lParam, [ref]$handled)
+            if ($msg -eq 0x0312 -and $wParam.ToInt32() -eq $script:HOTKEY_ID) {
+                Write-OverlayLog "グローバルホットキー (Ctrl+Shift+H) を検知しました。マウス透過解除＆メニュー再表示を実行します。" "INFO"
+                $window.Dispatcher.Invoke([Action]{
+                    &$updateClickThroughUI $false
+                    &$setMenuVisibility $false
+                    [OverlayWin32]::SetForegroundWindow($script:hWnd) | Out-Null
+                    $window.Activate() | Out-Null
+                    $window.Focus() | Out-Null
+                })
+                $handled = $true
+            }
+        })
+        $script:isHotKeyRegistered = [OverlayWin32]::RegisterHotKey($script:hWnd, $script:HOTKEY_ID, ($MOD_CONTROL -bor $MOD_SHIFT), $VK_H)
+        if ($script:isHotKeyRegistered) {
+            Write-OverlayLog "グローバルホットキー (Ctrl+Shift+H) を正常に登録しました。" "INFO"
+        } else {
+            Write-OverlayLog "グローバルホットキーの登録に失敗しました (他アプリと競合の可能性があります)。" "WARN"
+        }
+    } catch {
+        Write-OverlayLog "ホットキー初期化例外: $_" "WARN"
+    }
 })
 
 # デモモード判定
@@ -650,6 +772,7 @@ if ($Demo) {
     $script:sseRunspace.SessionStateProxy.SetVariable("transLines", $script:transLines)
     $script:sseRunspace.SessionStateProxy.SetVariable("ServerUrl", $ServerUrl)
     $script:sseRunspace.SessionStateProxy.SetVariable("cancelToken", $script:sseCancelToken)
+    $script:sseRunspace.SessionStateProxy.SetVariable("LauncherLogFile", $script:LauncherLogFile)
 
     $script:ssePowerShell = [System.Management.Automation.PowerShell]::Create()
     $script:ssePowerShell.Runspace = $script:sseRunspace
@@ -657,6 +780,15 @@ if ($Demo) {
     $script:ssePowerShell.AddScript({
         param()
         $token = $cancelToken.Token
+
+        function Write-SubLog([string]$msg, [string]$lvl="INFO") {
+            try {
+                $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+                [System.IO.File]::AppendAllText($LauncherLogFile, "[$ts] [$lvl] [デスクトップ字幕] $msg`r`n", [System.Text.Encoding]::UTF8)
+            } catch {}
+        }
+
+        Write-SubLog "早耳サーバー ($ServerUrl) へのイベント接続スレッドを開始しました。" "INFO"
 
         while (-not $token.IsCancellationRequested) {
             $resp = $null
@@ -671,6 +803,8 @@ if ($Demo) {
                 $resp = $req.GetResponse()
                 $stream = $resp.GetResponseStream()
                 $sr = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)
+
+                Write-SubLog "早耳サーバーのイベントストリーム (/events) に正常に接続しました。" "INFO"
 
                 $window.Dispatcher.Invoke([Action]{
                     $connectingNotice.Visibility = [System.Windows.Visibility]::Collapsed
@@ -704,18 +838,20 @@ if ($Demo) {
                     }
                 }
             } catch {
+                Write-SubLog "早耳サーバー接続待機中 (未起動または再接続試行): $($_.Exception.Message)" "WARN"
                 $window.Dispatcher.Invoke([Action]{
                     if ([string]::IsNullOrEmpty($finalText.Text) -and [string]::IsNullOrEmpty($partialText.Text)) {
                         $connectingNotice.Visibility = [System.Windows.Visibility]::Visible
                     }
                 })
-                [System.Threading.Thread]::Sleep(2000)
+                [System.Threading.Thread]::Sleep(2500)
             } finally {
                 if ($sr) { $sr.Dispose() }
                 if ($stream) { $stream.Dispose() }
                 if ($resp) { $resp.Dispose() }
             }
         }
+        Write-SubLog "イベント接続スレッドを停止しました。" "INFO"
     }) | Out-Null
 
     $script:sseAsyncResult = $script:ssePowerShell.BeginInvoke()
