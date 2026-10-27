@@ -591,6 +591,14 @@ $window.Add_Closed({
     if ($script:sseCancelToken) {
         $script:sseCancelToken.Cancel()
     }
+    if ($script:ssePowerShell) {
+        try { $script:ssePowerShell.Stop() } catch {}
+        try { $script:ssePowerShell.Dispose() } catch {}
+    }
+    if ($script:sseRunspace) {
+        try { $script:sseRunspace.Close() } catch {}
+        try { $script:sseRunspace.Dispose() } catch {}
+    }
 })
 
 # ハンドル取得
@@ -628,11 +636,27 @@ if ($Demo) {
     } catch {}
 
     $script:sseCancelToken = New-Object System.Threading.CancellationTokenSource
-
     $script:transLines = New-Object System.Collections.Generic.List[string]
 
-    $sseAction = [System.Threading.ThreadStart]{
-        $token = $script:sseCancelToken.Token
+    # PowerShell 7 (pwsh) および 5.1 のマルチスレッド互換のため専用 Runspace で SSE リスナーを起動
+    $script:sseRunspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+    $script:sseRunspace.Open()
+    $script:sseRunspace.SessionStateProxy.SetVariable("window", $window)
+    $script:sseRunspace.SessionStateProxy.SetVariable("connectingNotice", $connectingNotice)
+    $script:sseRunspace.SessionStateProxy.SetVariable("clearTimer", $clearTimer)
+    $script:sseRunspace.SessionStateProxy.SetVariable("finalText", $finalText)
+    $script:sseRunspace.SessionStateProxy.SetVariable("partialText", $partialText)
+    $script:sseRunspace.SessionStateProxy.SetVariable("transText", $transText)
+    $script:sseRunspace.SessionStateProxy.SetVariable("transLines", $script:transLines)
+    $script:sseRunspace.SessionStateProxy.SetVariable("ServerUrl", $ServerUrl)
+    $script:sseRunspace.SessionStateProxy.SetVariable("cancelToken", $script:sseCancelToken)
+
+    $script:ssePowerShell = [System.Management.Automation.PowerShell]::Create()
+    $script:ssePowerShell.Runspace = $script:sseRunspace
+
+    $script:ssePowerShell.AddScript({
+        param()
+        $token = $cancelToken.Token
 
         while (-not $token.IsCancellationRequested) {
             $resp = $null
@@ -667,12 +691,12 @@ if ($Demo) {
                                 } elseif ($ev.type -eq "final") {
                                     $finalText.Text = $ev.text
                                     $partialText.Text = ""
-                                    $script:transLines.Clear()
+                                    $transLines.Clear()
                                     $transText.Text = ""
                                     $clearTimer.Start()
                                 } elseif ($ev.type -eq "translation") {
-                                    $script:transLines.Add("→ [$($ev.lang)] $($ev.text)")
-                                    $transText.Text = [string]::Join("`n", $script:transLines)
+                                    $transLines.Add("→ [$($ev.lang)] $($ev.text)")
+                                    $transText.Text = [string]::Join("`n", $transLines)
                                     $clearTimer.Start()
                                 }
                             })
@@ -692,11 +716,9 @@ if ($Demo) {
                 if ($resp) { $resp.Dispose() }
             }
         }
-    }
+    }) | Out-Null
 
-    $sseThread = New-Object System.Threading.Thread($sseAction)
-    $sseThread.IsBackground = $true
-    $sseThread.Start()
+    $script:sseAsyncResult = $script:ssePowerShell.BeginInvoke()
 }
 
 $window.ShowDialog() | Out-Null
