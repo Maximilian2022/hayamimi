@@ -382,4 +382,67 @@ def test_get_safe_origin_header_sanitization():
     assert _get_safe_origin(None, "localhost") is None
 
 
+def test_maintenance_status_and_sync_stats_api(running_server, monkeypatch, tmp_path):
+    """Verify /api/maintenance/status, /api/profiles/sync-stats, and /api/maintenance/run endpoints."""
+    base_url, server = running_server
+
+    # 1. GET /api/maintenance/status
+    with urllib.request.urlopen(f"{base_url}/api/maintenance/status") as res:
+        assert res.status == 200
+        st = json.loads(res.read().decode("utf-8"))
+        assert "pending_count" in st
+        assert "scanning" in st
+        assert "stale_rules_count" in st
+
+    # 2. Setup mock profile and ASR stats
+    prof = SpeakerProfile(
+        speaker_id="stats_test",
+        display_name="Stats Speaker",
+        replacements=[
+            ReplacementRule(pattern="てすと", replacement="テスト", hit_count=0),
+        ],
+    )
+    pdir = str(tmp_path / "profiles")
+    save_profile(prof, storage_dir=pdir)
+    monkeypatch.setattr("scripts.subtitle_server._get_profiles_dir", lambda: pdir)
+
+    # Attach profile to server and mock asr get_replacement_stats
+    server._active_profile = prof
+    class MockASR:
+        def get_replacement_stats(self):
+            return {"てすと": {"hit_count": 5, "last_hit_at": "2026-10-27T12:00:00Z"}}
+    server.asr = MockASR()
+
+    # Call POST /api/profiles/sync-stats
+    req = urllib.request.Request(
+        f"{base_url}/api/profiles/sync-stats",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as res:
+        assert res.status == 200
+        data = json.loads(res.read().decode("utf-8"))
+        assert data["ok"] is True
+
+    # Check updated profile
+    assert server._active_profile.replacements[0].hit_count == 5
+    assert server._active_profile.replacements[0].last_hit_at == "2026-10-27T12:00:00Z"
+
+    # 3. Call POST /api/maintenance/run
+    req_maint = urllib.request.Request(
+        f"{base_url}/api/maintenance/run",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req_maint) as res:
+        assert res.status == 200
+        maint_res = json.loads(res.read().decode("utf-8"))
+        assert maint_res["ok"] is True
+        assert "learned_videos" in maint_res
+        assert "archived_rules" in maint_res
+
+
+
 

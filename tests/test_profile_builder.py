@@ -938,4 +938,106 @@ def test_pipeline_interim_profile_saved_on_batch_error(tmp_path, monkeypatch):
     assert len(saved_profiles) >= 1
 
 
+def test_sanitize_and_trim_rule():
+    from tools.profile_builder.profile_model import sanitize_and_trim_rule
+
+    # 1. Normal short word
+    assert sanitize_and_trim_rule("ほろらいぶ", "ホロライブ") == ("ほろらいぶ", "ホロライブ")
+
+    # 2. Strips prefix filler
+    assert sanitize_and_trim_rule("えーっとホロライブが", "ホロライブ") == ("ホロライブ", "ホロライブ")
+    assert sanitize_and_trim_rule("あのーApexの", "Apex") == ("Apex", "Apex")
+
+    # 3. Too short (single char) rejected
+    assert sanitize_and_trim_rule("と", "そ") is None
+    assert sanitize_and_trim_rule("あ", "い") is None
+
+    # 4. Overly long sentence rejected (> 12 chars)
+    assert sanitize_and_trim_rule("本日は大変お日柄もよく皆様いかがお過ごしでしょうか", "今日") is None
+
+    # 5. Empty or identical rejected
+    assert sanitize_and_trim_rule("", "テスト") is None
+    assert sanitize_and_trim_rule("テスト", "テスト") is None
+
+
+def test_archive_stale_rules_180_days():
+    import datetime
+    from tools.profile_builder.profile_model import ReplacementRule, SpeakerProfile
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    old_dt = (now - datetime.timedelta(days=200)).isoformat()
+    recent_dt = (now - datetime.timedelta(days=30)).isoformat()
+
+    rule_stale = ReplacementRule(
+        pattern="古い単語",
+        replacement="ふるい単語",
+        hit_count=0,
+        added_at=old_dt,
+    )
+    rule_recent = ReplacementRule(
+        pattern="最近の単語",
+        replacement="さいきん単語",
+        hit_count=0,
+        added_at=recent_dt,
+    )
+    rule_active_used = ReplacementRule(
+        pattern="頻出単語",
+        replacement="ひんしゅつ単語",
+        hit_count=15,
+        added_at=old_dt,
+    )
+
+    prof = SpeakerProfile(
+        speaker_id="archive_test",
+        display_name="Archive Test",
+        replacements=[rule_stale, rule_recent, rule_active_used],
+    )
+
+    # Run archiving with 180 days cutoff
+    archived_count = prof.archive_stale_rules(days=180)
+    assert archived_count == 1
+    assert len(prof.replacements) == 2
+    assert len(prof.archived_replacements) == 1
+    assert prof.archived_replacements[0].pattern == "古い単語"
+
+    # Test replace_text excludes archived
+    replace_txt = prof.to_replace_text()
+    assert "古い単語" not in replace_txt
+    assert "最近の単語" in replace_txt
+    assert "頻出単語" in replace_txt
+
+    # Test unarchive
+    unarchived = prof.unarchive_rule("古い単語")
+    assert unarchived is True
+    assert len(prof.replacements) == 3
+    assert len(prof.archived_replacements) == 0
+
+
+def test_legacy_profile_migration():
+    from tools.profile_builder.profile_model import SpeakerProfile
+
+    legacy_json = {
+        "schema_version": "1.0.0",
+        "speaker_id": "legacy_spk",
+        "display_name": "Legacy Speaker",
+        "created_at": "2026-01-01T00:00:00Z",
+        "replacements": [
+            {"pattern": "れがしー", "replacement": "レガシー"}
+        ],
+    }
+
+    prof = SpeakerProfile.model_validate(legacy_json)
+    assert prof.schema_version == "1.0.0"
+    assert prof.replacements[0].hit_count == 0
+
+    # Migrate
+    changed = prof.migrate_from_legacy()
+    assert changed is True
+    assert prof.schema_version == "1.1.0"
+    # Verify legacy rule is given grace period using created_at
+    assert prof.replacements[0].added_at == "2026-01-01T00:00:00Z"
+    assert prof.replacements[0].is_archived is False
+
+
+
 

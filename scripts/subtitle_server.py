@@ -23,11 +23,14 @@ if hasattr(sys.stderr, "reconfigure"):
 
 import http.server
 import json
+import logging
 import os
 import queue
 import socket
 import threading
 from typing import Callable
+
+logger = logging.getLogger("hayamimi.subtitle_server")
 
 # リポジトリルートを sys.path に確実に追加 (tools モジュール等の解決用)
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -129,6 +132,214 @@ def _get_storage_dir() -> str:
         pass
     import tempfile
     return tempfile.gettempdir()
+
+
+_maintenance_lock = threading.Lock()
+_maintenance_status = {
+    "scanning": False,
+    "last_scan_at": None,
+    "pending_count": 0,
+    "pending_videos": [],
+    "stale_rules_count": 0,
+    "error": None,
+    "running": False,
+    "run_message": "",
+}
+
+
+def _sync_stats_to_profile(server, profile=None):
+    """Synchronize ASR engine's runtime hit stats into profile and persist to disk."""
+    if server is None or getattr(server, "asr", None) is None:
+        return
+    prof = profile or getattr(server, "_active_profile", None)
+    if not prof:
+        return
+    stats_fn = getattr(server.asr, "get_replacement_stats", None)
+    if not stats_fn:
+        return
+    stats = stats_fn()
+    if not stats:
+        return
+    changed = False
+    for r in prof.replacements:
+        if r.pattern in stats:
+            st = stats[r.pattern]
+            if st.get("hit_count", 0) > r.hit_count:
+                r.hit_count = st["hit_count"]
+                changed = True
+            if st.get("last_hit_at"):
+                r.last_hit_at = st["last_hit_at"]
+                changed = True
+    if changed:
+        try:
+            from tools.profile_builder.profile_exporter import save_profile
+            pdir = _get_profiles_dir()
+            save_profile(prof, pdir)
+            logger.info("Synchronized runtime hit stats to profile '%s'", prof.speaker_id)
+        except Exception as e:
+            logger.warning("Failed to save synced stats to profile: %s", e)
+
+
+def _scan_channels_for_maintenance(server):
+    """Scan YouTube channels for new videos across profiles and check for stale rules."""
+    with _maintenance_lock:
+        if _maintenance_status["scanning"] or _maintenance_status["running"]:
+            return
+        _maintenance_status["scanning"] = True
+        _maintenance_status["error"] = None
+
+    def _worker():
+        import datetime
+        try:
+            from tools.profile_builder.profile_exporter import list_profiles, save_profile
+            from tools.profile_builder.youtube_fetcher import YouTubeFetcher
+            pdir = _get_profiles_dir()
+            profs = list_profiles(pdir)
+            fetcher = YouTubeFetcher()
+            pending_vids = []
+            stale_count = 0
+
+            for prof in profs:
+                # Count stale rules (>=180 days with hit_count == 0)
+                now = datetime.datetime.now(datetime.timezone.utc)
+                cutoff = now - datetime.timedelta(days=180)
+                for r in prof.replacements:
+                    ts_str = r.last_hit_at or r.added_at
+                    if r.hit_count == 0 and ts_str:
+                        try:
+                            rdt = datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                            if rdt < cutoff:
+                                stale_count += 1
+                        except Exception:
+                            pass
+
+                # Auto-infer channel_url from source video if missing
+                chan_url = prof.youtube_channel_url
+                if not chan_url and prof.source_video_urls:
+                    try:
+                        meta = fetcher.fetch_metadata(prof.source_video_urls[0])
+                        if meta.channel_url:
+                            chan_url = meta.channel_url
+                            prof.youtube_channel_url = chan_url
+                            save_profile(prof, pdir)
+                    except Exception:
+                        pass
+
+                if chan_url:
+                    try:
+                        exclude = set(prof.processed_video_ids) | set(prof.skipped_video_ids)
+                        new_vids = fetcher.fetch_channel_videos(
+                            channel_url=chan_url,
+                            limit=2,
+                            candidate_pool=15,
+                            exclude_video_ids=exclude,
+                            sort_by="recent",
+                        )
+                        for nv in new_vids:
+                            pending_vids.append({
+                                "id": nv["id"],
+                                "title": nv["title"],
+                                "url": nv["url"],
+                                "channel": nv["channel"],
+                                "speaker_id": prof.speaker_id,
+                                "display_name": prof.display_name,
+                            })
+                    except Exception as fe:
+                        logger.warning("Failed to scan channel %s: %s", chan_url, fe)
+
+            with _maintenance_lock:
+                _maintenance_status["pending_videos"] = pending_vids
+                _maintenance_status["pending_count"] = len(pending_vids)
+                _maintenance_status["stale_rules_count"] = stale_count
+                _maintenance_status["last_scan_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            logger.info("Maintenance scan completed: %d pending videos, %d stale rules", len(pending_vids), stale_count)
+        except Exception as e:
+            logger.error("Maintenance scan failed: %s", e)
+            with _maintenance_lock:
+                _maintenance_status["error"] = str(e)
+        finally:
+            with _maintenance_lock:
+                _maintenance_status["scanning"] = False
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _execute_maintenance(server, log_callback=None):
+    """Execute all pending maintenance tasks: learn new videos and archive stale rules."""
+    with _maintenance_lock:
+        if _maintenance_status["running"]:
+            return {"ok": False, "message": "Already running"}
+        _maintenance_status["running"] = True
+        _maintenance_status["run_message"] = "メンテナンスを開始しました..."
+
+    import datetime
+    from tools.profile_builder.pipeline import ProfileBuilderPipeline
+    from tools.profile_builder.profile_exporter import list_profiles, save_profile
+    pdir = _get_profiles_dir()
+    vids_to_process = list(_maintenance_status.get("pending_videos", []))
+
+    try:
+        # 1. First sync live stats to active profile
+        _sync_stats_to_profile(server)
+
+        # 2. Process pending new videos automatically (continuous growing)
+        key = _get_gemini_key()
+        learned_videos = 0
+        if vids_to_process and key:
+            pipeline = ProfileBuilderPipeline(api_key=key)
+            for idx, v_info in enumerate(vids_to_process):
+                msg = f"新着動画を自動学習中 [{idx+1}/{len(vids_to_process)}]: {v_info['title']}"
+                if log_callback:
+                    log_callback(msg)
+                with _maintenance_lock:
+                    _maintenance_status["run_message"] = msg
+                try:
+                    pipeline.run(
+                        youtube_url=v_info["url"],
+                        speaker_id=v_info["speaker_id"],
+                        existing_profile_id=v_info["speaker_id"],
+                        duration_sec=720.0,
+                    )
+                    learned_videos += 1
+                except Exception as ve:
+                    logger.error("Maintenance video %s failed: %s", v_info["url"], ve)
+
+        # 3. Archive stale rules (180 days / 6 months) across profiles
+        archived_total = 0
+        profs = list_profiles(pdir)
+        for p in profs:
+            cnt = p.archive_stale_rules(days=180)
+            if cnt > 0:
+                archived_total += cnt
+                save_profile(p, pdir)
+                if server and getattr(server, "_active_profile", None) and server._active_profile.speaker_id == p.speaker_id:
+                    server._active_profile = p
+                    if server.asr:
+                        mapping = {r.pattern: r.replacement for r in p.replacements if not r.is_archived and r.pattern and r.replacement}
+                        server.asr.set_replacements(mapping)
+
+        final_msg = f"メンテナンス完了: {learned_videos}本の新着動画を学習、{archived_total}件の古いルールを休眠整理しました。"
+        with _maintenance_lock:
+            _maintenance_status["pending_videos"] = []
+            _maintenance_status["pending_count"] = 0
+            _maintenance_status["stale_rules_count"] = 0
+            _maintenance_status["run_message"] = final_msg
+
+        logger.info(final_msg)
+        return {
+            "ok": True,
+            "learned_videos": learned_videos,
+            "archived_rules": archived_total,
+            "message": final_msg,
+        }
+    except Exception as e:
+        logger.error("Maintenance execution failed: %s", e)
+        with _maintenance_lock:
+            _maintenance_status["run_message"] = f"メンテナンス失敗: {e}"
+        return {"ok": False, "error": str(e)}
+    finally:
+        with _maintenance_lock:
+            _maintenance_status["running"] = False
 
 _DEFAULT_STYLE = {
     "font": "'Zen Kaku Gothic New', sans-serif",
@@ -830,6 +1041,10 @@ class SubtitleServer:
                     k = _get_gemini_key()
                     masked = (k[:6] + "..." + k[-4:]) if len(k) > 10 else ("設定済み" if k else "")
                     self._json(200, {"configured": bool(k), "masked": masked})
+                elif req_path == "/api/maintenance/status":
+                    with _maintenance_lock:
+                        st = dict(_maintenance_status)
+                    self._json(200, st)
                 elif req_path == "/api/profiles/task-status":
                     with _generation_lock:
                         self._json(200, dict(_generation_task))
@@ -1059,6 +1274,18 @@ class SubtitleServer:
                     threading.Thread(target=_run_gen, daemon=True).start()
                     self._json(202, {"ok": True, "message": "Generation started"})
                     return
+                if req_path == "/api/maintenance/run":
+                    res = _execute_maintenance(server)
+                    self._json(200 if res.get("ok") else 500, res)
+                    return
+                if req_path == "/api/maintenance/scan":
+                    _scan_channels_for_maintenance(server)
+                    self._json(200, {"ok": True, "message": "Scan started"})
+                    return
+                if req_path == "/api/profiles/sync-stats":
+                    _sync_stats_to_profile(server)
+                    self._json(200, {"ok": True})
+                    return
                 if req_path == "/api/profiles/apply":
                     length = int(self.headers.get("Content-Length") or 0)
                     raw = self.rfile.read(length)
@@ -1068,13 +1295,16 @@ class SubtitleServer:
                         if not sid:
                             self._json(400, {"error": "speaker_id is required"})
                             return
+                        # Sync existing active profile stats before switching
+                        _sync_stats_to_profile(server)
+
                         from tools.profile_builder.profile_exporter import load_profile
                         pdir = _get_profiles_dir()
                         prof = load_profile(sid, pdir)
                         if prof is None:
                             self._json(404, {"error": f"profile {sid} not found"})
                             return
-                        mapping = {r.pattern: r.replacement for r in prof.replacements if r.pattern and r.replacement}
+                        mapping = {r.pattern: r.replacement for r in prof.replacements if not r.is_archived and r.pattern and r.replacement}
                         if server.asr is not None:
                             server.asr.set_replacements(mapping)
                         server._active_profile = prof
@@ -1180,4 +1410,9 @@ class SubtitleServer:
 
         self._httpd = _QuietThreadingHTTPServer((self.host, self.port), Handler)
         threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
+
+        # Kick off background maintenance scan 3 seconds after startup (non-blocking)
+        if "PYTEST_CURRENT_TEST" not in os.environ:
+            threading.Timer(3.0, _scan_channels_for_maintenance, args=(self,)).start()
+
         return self

@@ -13,7 +13,12 @@ from typing import Callable, Optional
 from google import genai
 from google.genai import types
 
-from tools.profile_builder.profile_model import ExtractedSection, ReplacementRule, SpeakerProfile
+from tools.profile_builder.profile_model import (
+    ExtractedSection,
+    ReplacementRule,
+    SpeakerProfile,
+    sanitize_and_trim_rule,
+)
 from tools.profile_builder.youtube_fetcher import VideoMetadata
 
 logger = logging.getLogger("hayamimi.gemini_analyzer")
@@ -142,7 +147,7 @@ hayamimi (ReazonSpeech) が話者の生音声を聞いて誤認識したテキ�
 
 ■ Skill 2: 過剰置換ガード（副作用防止ルール）※最重要！
 ・【絶対禁止】: 1〜2文字の一般的な単語や助詞（「と」→「そ」、「は」→「が」等）の単体置換は絶対に生成しないでください。他の文脈を大量に破壊します。
-・【必須原則】: 必ず前後の助詞や文脈を含んだ「3文字以上のフレーズ単位」（例: 「勝てないとうですね」→「勝てないそうですね」）で置換ルールを生成してください。
+・【文字数上限】: 10文字を超える長い文や会話全体のフレーズ（例: 「本日はよろしくお願いします」など）は絶対にルール化しないでください。置換対象（pattern）は2〜8文字程度の「単語・固有名詞・口癖・短い慣用句」に限定してください。
 ・日常会話で頻出する正常な単語を、話者の癖と誤認して壊さないよう慎重に判定してください。
 
 ■ Skill 3: ゲーム固有名詞・文脈突合
@@ -444,9 +449,25 @@ class GeminiProfileAnalyzer:
             if extracted_section:
                 profile.extracted_section = extracted_section
 
-            # Filter out any accidentally short or dangerous patterns
-            safe_rules = profile.filter_safe_replacements(min_len=2)
-            profile.replacements = safe_rules
+            # Extract video ID for tracking source
+            vid_id = None
+            if metadata and metadata.url:
+                from tools.profile_builder.youtube_fetcher import extract_video_id
+                vid_id = extract_video_id(metadata.url)
+
+            # Sanitize, trim fillers/particles, and guard against overly long/short rules
+            cleaned_rules = []
+            for r in profile.replacements:
+                cleaned = sanitize_and_trim_rule(r.pattern, r.replacement)
+                if cleaned:
+                    p_clean, r_clean = cleaned
+                    cleaned_rules.append(ReplacementRule(
+                        pattern=p_clean,
+                        replacement=r_clean,
+                        reason=r.reason,
+                        source_video_id=vid_id,
+                    ))
+            profile.replacements = cleaned_rules
 
             if log_callback:
                 log_callback("GEMINI", f"AI分析完了！ 補正ルール {len(profile.replacements)} 件、活舌特徴 {len(profile.articulation_traits)} 件を抽出しました。")

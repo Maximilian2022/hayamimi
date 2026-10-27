@@ -1,5 +1,5 @@
 ﻿# --- バージョン管理 (version.txt を Single Source of Truth として動的同期) ---
-$script:AppVersion = "1.4.4"
+$script:AppVersion = "1.5.0"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $versionTxtFile = Join-Path $repoRoot "version.txt"
 if (Test-Path $versionTxtFile) {
@@ -472,7 +472,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi ランチャー (GUI v1.4.4)"
+        Title="hayamimi ランチャー (GUI v1.5.0)"
         Height="780" Width="780"
         MinHeight="680" MinWidth="720"
         WindowStartupLocation="CenterScreen"
@@ -550,7 +550,7 @@ function Update-ContainerLogFile {
                         <TextBlock x:Name="GpuBadge" Text="⚡ GPU: 検出中..." FontSize="11" Foreground="#10B981" FontWeight="SemiBold"/>
                     </Border>
                     <Border Background="#1E1B4B" CornerRadius="12" Padding="10,5" Margin="0,0,8,0" BorderBrush="#4338CA" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.4.4" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.5.0" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#141B2D" CornerRadius="12" Padding="10,5" BorderBrush="#253350" BorderThickness="1">
                         <TextBlock x:Name="RuntimeBadge" Text="Python venv" FontSize="11" Foreground="#38BDF8" FontWeight="SemiBold"/>
@@ -3105,10 +3105,293 @@ if ($btnRestart) {
     })
 }
 
-# 終了ボタン処理
-$btnStop.Add_Click({
+# --- 終了時 辞書自動メンテナンス確認ダイアログ & シャットダウンフロー ---
+$script:MaintenanceExitChoice = "CANCEL"
+
+function Show-MaintenanceExitDialog {
+    param(
+        [int]$PendingVideosCount = 0,
+        [int]$StaleRulesCount = 0
+    )
+
+    $script:MaintenanceExitChoice = "CANCEL"
+
+    $dlgXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="辞書メンテナンス確認 - hayamimi"
+        Width="510" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None" AllowsTransparency="True"
+        Background="Transparent" ResizeMode="NoResize" ShowInTaskbar="False">
+    <Border Background="#0F172A" BorderBrush="#334155" BorderThickness="1.5" CornerRadius="12" Margin="10">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.6" Color="#000000"/>
+        </Border.Effect>
+        <Grid Margin="24">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- ヘッダー (ドラッグ移動可能) -->
+            <Grid x:Name="DlgHeader" Grid.Row="0" Margin="0,0,0,16" Background="Transparent" Cursor="SizeAll">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Background="#0369A1" CornerRadius="8" Width="40" Height="40" Margin="0,0,14,0">
+                    <TextBlock Text="🛠️" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="辞書の自動更新・整理の確認" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC"/>
+                    <TextBlock Text="未処理の自動学習・整理キューがあります" FontSize="12" Foreground="#94A3B8" Margin="0,2,0,0"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- プロンプトパネル (通常時) -->
+            <StackPanel x:Name="PanelPrompt" Grid.Row="1">
+                <TextBlock Text="最新のYouTube動画からの語彙学習、および180日以上未ヒットの古いルールの休眠化を安全に実行できます。終了前にメンテナンスを実行しますか？"
+                           FontSize="13" Foreground="#CBD5E1" TextWrapping="Wrap" LineHeight="19" Margin="0,0,0,14"/>
+                
+                <Border Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,16">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,8">
+                            <TextBlock Text="🎥 新着動画からの語彙抽出・マージ" FontSize="13" Foreground="#E2E8F0"/>
+                            <TextBlock x:Name="TxtPendingVideos" Text="0 件" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" HorizontalAlignment="Right"/>
+                        </Grid>
+                        <Grid>
+                            <TextBlock Text="📦 180日未ヒットルールの休眠化整理" FontSize="13" Foreground="#E2E8F0"/>
+                            <TextBlock x:Name="TxtStaleRules" Text="0 件" FontSize="13" FontWeight="Bold" Foreground="#F59E0B" HorizontalAlignment="Right"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- ボタンエリア -->
+                <StackPanel Orientation="Vertical">
+                    <Button x:Name="BtnMaintainAndExit" Height="42" Margin="0,0,0,8" Cursor="Hand"
+                            Background="#0284C7" Foreground="#FFFFFF" BorderThickness="0">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="8"/>
+                            </Style>
+                        </Button.Resources>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <TextBlock Text="🔧" FontSize="15" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="メンテナンスを実行して終了 (推奨)" FontSize="13.5" FontWeight="Bold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="10"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="BtnImmediateExit" Grid.Column="0" Height="36" Cursor="Hand"
+                                Background="#334155" Foreground="#F1F5F9" BorderThickness="0">
+                            <Button.Resources>
+                                <Style TargetType="Border">
+                                    <Setter Property="CornerRadius" Value="6"/>
+                                </Style>
+                            </Button.Resources>
+                            <TextBlock Text="⚡ 今すぐ終了" FontSize="12.5" FontWeight="SemiBold"/>
+                        </Button>
+                        <Button x:Name="BtnCancelExit" Grid.Column="2" Height="36" Cursor="Hand"
+                                Background="Transparent" Foreground="#94A3B8" BorderBrush="#475569" BorderThickness="1">
+                            <Button.Resources>
+                                <Style TargetType="Border">
+                                    <Setter Property="CornerRadius" Value="6"/>
+                                </Style>
+                            </Button.Resources>
+                            <TextBlock Text="キャンセル" FontSize="12.5"/>
+                        </Button>
+                    </Grid>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- プログレスパネル (実行中) -->
+            <StackPanel x:Name="PanelProgress" Grid.Row="2" Visibility="Collapsed" Margin="0,4,0,4">
+                <TextBlock x:Name="TxtProgressStatus" Text="辞書の自動メンテナンスを実行中..." FontSize="13.5" Foreground="#38BDF8" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                <ProgressBar x:Name="PbMaintenance" Height="8" IsIndeterminate="True" Background="#1E293B" Foreground="#0284C7" BorderThickness="0" Margin="0,0,0,12">
+                    <ProgressBar.Resources>
+                        <Style TargetType="Border">
+                            <Setter Property="CornerRadius" Value="4"/>
+                        </Style>
+                    </ProgressBar.Resources>
+                </ProgressBar>
+                <TextBlock x:Name="TxtProgressDetail" Text="新着動画から語彙を抽出・自動マージしています..." FontSize="12" Foreground="#94A3B8" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>
+'@
+
     try {
-        $healthTimer.Stop()
+        $dlg = [System.Windows.Markup.XamlReader]::Parse($dlgXaml)
+        if ($window -and $window.IsVisible) {
+            $dlg.Owner = $window
+        }
+
+        $header = $dlg.FindName("DlgHeader")
+        $pPrompt = $dlg.FindName("PanelPrompt")
+        $pProgress = $dlg.FindName("PanelProgress")
+        $txtVideos = $dlg.FindName("TxtPendingVideos")
+        $txtStale = $dlg.FindName("TxtStaleRules")
+        $btnMaintain = $dlg.FindName("BtnMaintainAndExit")
+        $btnExit = $dlg.FindName("BtnImmediateExit")
+        $btnCancel = $dlg.FindName("BtnCancelExit")
+        $txtStatus = $dlg.FindName("TxtProgressStatus")
+        $txtDetail = $dlg.FindName("TxtProgressDetail")
+
+        if ($txtVideos) { $txtVideos.Text = "$PendingVideosCount 件" }
+        if ($txtStale) { $txtStale.Text = "$StaleRulesCount 件" }
+
+        if ($header) {
+            $header.Add_MouseLeftButtonDown({
+                param($eventSender, $e)
+                try { $dlg.DragMove() } catch {}
+            })
+        }
+
+        # キャンセルボタン
+        $btnCancel.Add_Click({
+            $script:MaintenanceExitChoice = "CANCEL"
+            $dlg.DialogResult = $false
+            $dlg.Close()
+        })
+
+        # 今すぐ終了ボタン
+        $btnExit.Add_Click({
+            $script:MaintenanceExitChoice = "FORCE_EXIT"
+            $dlg.DialogResult = $true
+            $dlg.Close()
+        })
+
+        # メンテナンス実行ボタン
+        $btnMaintain.Add_Click({
+            $pPrompt.Visibility = "Collapsed"
+            $pProgress.Visibility = "Visible"
+            $txtStatus.Text = "辞書の自動メンテナンスを実行中..."
+            $txtDetail.Text = "新着動画から語彙を抽出・自動マージしています..."
+
+            # API 実行
+            try {
+                Invoke-RestMethod -Uri "http://localhost:8833/api/maintenance/run" -Method Post -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null
+            } catch {
+                Write-AppLog "メンテナンスAPIのキックに失敗しました: $_" "WARN"
+            }
+
+            # ポーリングタイマー
+            $pollTimer = [System.Windows.Threading.DispatcherTimer]::new()
+            $pollTimer.Interval = [TimeSpan]::FromMilliseconds(800)
+            $script:maintPollElapsed = 0
+
+            $pollTimer.Add_Tick({
+                $script:maintPollElapsed += 1
+                try {
+                    $st = Invoke-RestMethod -Uri "http://localhost:8833/api/maintenance/status" -Method Get -TimeoutSec 3 -ErrorAction Stop
+                    if ($st) {
+                        if ($st.message) {
+                            $txtDetail.Text = $st.message
+                        }
+                        if ($st.status -eq "completed" -or $st.status -eq "idle") {
+                            $pollTimer.Stop()
+                            $txtStatus.Text = "✅ メンテナンスが完了しました"
+                            $txtDetail.Text = "最新の辞書ルールを保存しました。終了します..."
+                            $closeTimer = [System.Windows.Threading.DispatcherTimer]::new()
+                            $closeTimer.Interval = [TimeSpan]::FromMilliseconds(700)
+                            $closeTimer.Add_Tick({
+                                $closeTimer.Stop()
+                                $script:MaintenanceExitChoice = "MAINTAIN"
+                                $dlg.DialogResult = $true
+                                $dlg.Close()
+                            })
+                            $closeTimer.Start()
+                            return
+                        } elseif ($st.status -eq "error") {
+                            $pollTimer.Stop()
+                            $txtStatus.Text = "⚠️ メンテナンス中にエラーが発生しました"
+                            $txtDetail.Text = "エラーが発生したため、そのまま終了します..."
+                            $closeTimer = [System.Windows.Threading.DispatcherTimer]::new()
+                            $closeTimer.Interval = [TimeSpan]::FromMilliseconds(1000)
+                            $closeTimer.Add_Tick({
+                                $closeTimer.Stop()
+                                $script:MaintenanceExitChoice = "MAINTAIN"
+                                $dlg.DialogResult = $true
+                                $dlg.Close()
+                            })
+                            $closeTimer.Start()
+                            return
+                        }
+                    }
+                } catch {}
+
+                # 最大 120 秒でタイムアウト
+                if ($script:maintPollElapsed -gt 150) {
+                    $pollTimer.Stop()
+                    $txtStatus.Text = "⏱️ メンテナンスがタイムアウトしました"
+                    $txtDetail.Text = "処理を中断し、終了します..."
+                    $script:MaintenanceExitChoice = "MAINTAIN"
+                    $dlg.DialogResult = $true
+                    $dlg.Close()
+                }
+            })
+            $pollTimer.Start()
+        })
+
+        $dlg.ShowDialog() | Out-Null
+        return $script:MaintenanceExitChoice
+    } catch {
+        Write-AppLog "メンテナンス確認ダイアログの表示中にエラーが発生しました: $_" "WARN"
+        return "FORCE_EXIT"
+    }
+}
+
+$script:IsShuttingDown = $false
+
+function Invoke-ShutdownApp {
+    param([bool]$Force = $false)
+
+    if ($script:IsShuttingDown) { return }
+    $script:IsShuttingDown = $true
+
+    try {
+        $isRunning = Test-AppRunning
+        if (-not $isRunning -or $Force) {
+            $script:IsClosing = $true
+            $window.Close()
+            return
+        }
+
+        # 1. ASRリアルタイム統計をプロファイルへフラッシュ同期
+        try {
+            Invoke-RestMethod -Uri "http://localhost:8833/api/profiles/sync-stats" -Method Post -TimeoutSec 2 -ErrorAction SilentlyContinue | Out-Null
+        } catch {}
+
+        # 2. メンテナンスキュー状態の確認
+        $pendingVideos = 0
+        $staleRules = 0
+        try {
+            $mStatus = Invoke-RestMethod -Uri "http://localhost:8833/api/maintenance/status" -Method Get -TimeoutSec 3 -ErrorAction SilentlyContinue
+            if ($mStatus) {
+                $pendingVideos = [int]($mStatus.total_pending_videos)
+                $staleRules = [int]($mStatus.total_stale_rules)
+            }
+        } catch {}
+
+        # 3. キューがある場合はユーザー選択ダイアログを表示
+        if ($pendingVideos -gt 0 -or $staleRules -gt 0) {
+            $choice = Show-MaintenanceExitDialog -PendingVideosCount $pendingVideos -StaleRulesCount $staleRules
+            if ($choice -eq "CANCEL") {
+                $script:IsShuttingDown = $false
+                return
+            }
+        }
+
+        # 4. サービスの安全停止
+        if ($healthTimer -and $healthTimer.IsEnabled) { $healthTimer.Stop() }
         Set-UIState "停止処理中..." $brushOrange $false $false
 
         if ($script:CurrentEngineMode -eq "Venv") {
@@ -3117,14 +3400,20 @@ $btnStop.Add_Click({
             Stop-HayamimiContainer
         }
 
-        # 残留プロセスの安全なクリーンアップ
         Cleanup-ResidualProcesses -LogOutput $false
 
+        $script:IsClosing = $true
         $window.Close()
     } catch {
-        Write-AppLog "停止処理中にエラーが発生しました: $_" "ERROR"
+        Write-AppLog "終了処理中にエラーが発生しました: $_" "ERROR"
+        $script:IsClosing = $true
         $window.Close()
     }
+}
+
+# 終了ボタン処理
+$btnStop.Add_Click({
+    Invoke-ShutdownApp
 })
 
 # 実行基盤ラジオボタン処理 (稼働中安全停止確認付き)
@@ -3250,6 +3539,13 @@ $window.Add_Closing({
     param($eventSender, $e)
     if ($script:IsClosing) { return }
 
+    if (Test-PythonRunning -or Test-ContainerRunning) {
+        $e.Cancel = $true
+        Invoke-ShutdownApp
+        return
+    }
+
+    $script:IsClosing = $true
     if ($updateCheckTimer -and $updateCheckTimer.IsEnabled) {
         $updateCheckTimer.Stop()
     }
@@ -3258,37 +3554,6 @@ $window.Add_Closing({
     }
     if ($script:ProcBuild -and -not $script:ProcBuild.HasExited) {
         try { $script:ProcBuild.Kill() } catch {}
-    }
-
-    if (Test-PythonRunning) {
-        $script:IsClosing = $true
-        Write-AppLog "ウィンドウが閉じられたため、Python プロセスを停止します..."
-        Stop-PythonVenvApp -Silent $true
-    }
-
-    if (Test-ContainerRunning) {
-        $script:IsClosing = $true
-        Write-AppLog "ウィンドウが閉じられたため、コンテナを停止して終了します..."
-        Update-ContainerLogFile -EchoToGui $false
-        if ($script:WslcCmd) {
-            try {
-                $pinfoStop = [System.Diagnostics.ProcessStartInfo]::new()
-                $pinfoStop.FileName = $script:WslcCmd
-                $pinfoStop.Arguments = "stop $ContainerName"
-                $pinfoStop.UseShellExecute = $false
-                $pinfoStop.CreateNoWindow = $true
-                $procStop = [System.Diagnostics.Process]::Start($pinfoStop)
-                $procStop.WaitForExit()
-
-                $pinfoRm = [System.Diagnostics.ProcessStartInfo]::new()
-                $pinfoRm.FileName = $script:WslcCmd
-                $pinfoRm.Arguments = "remove $ContainerName"
-                $pinfoRm.UseShellExecute = $false
-                $pinfoRm.CreateNoWindow = $true
-                $procRm = [System.Diagnostics.Process]::Start($pinfoRm)
-                $procRm.WaitForExit()
-            } catch {}
-        }
     }
 })
 

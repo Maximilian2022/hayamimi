@@ -259,6 +259,8 @@ class VideoMetadata:
     description: str
     duration_sec: float
     tags: List[str]
+    channel_url: Optional[str] = None
+    url: Optional[str] = None
 
 
 def parse_vtt_timestamp(ts: str) -> float:
@@ -491,15 +493,17 @@ class YouTubeFetcher:
         limit: int = 10,
         candidate_pool: int = 50,
         exclude_video_ids: Optional[set[str]] = None,
+        sort_by: str = "views",
         log_callback: Optional[Callable[[str, str], None]] = None,
     ) -> List[dict]:
-        """Fetch recent videos from a channel, filter out duplicates, and sort by view_count descending.
+        """Fetch recent videos from a channel, filter out duplicates, and sort by views or recency.
         
         Args:
             channel_url: YouTube channel URL (e.g. https://www.youtube.com/@ValChannel)
             limit: Maximum number of videos to return (default: 10)
             candidate_pool: Number of recent videos to fetch for evaluation (default: 50)
             exclude_video_ids: Set of video IDs already trained to prevent duplicate processing.
+            sort_by: "views" (most viewed first) or "recent" (latest uploaded first).
             log_callback: Optional callback for streaming log messages.
         """
         exclude_video_ids = exclude_video_ids or set()
@@ -572,14 +576,20 @@ class YouTubeFetcher:
                 "channel": e.get("channel") or e.get("uploader") or "",
             })
 
-        # Sort by view_count descending (最も再生数が多い人気動画順)
-        valid_videos.sort(key=lambda x: x["view_count"], reverse=True)
-        chosen = valid_videos[:limit]
+        if sort_by == "recent":
+            # Flat-playlist preserves chronological order from YouTube
+            chosen = valid_videos[:limit]
+        else:
+            # Sort by view_count descending (最も再生数が多い人気動画順)
+            valid_videos.sort(key=lambda x: x["view_count"], reverse=True)
+            chosen = valid_videos[:limit]
+
         if log_callback:
             dup_cnt = len(seen_ids & exclude_video_ids)
+            sort_desc = "新着順" if sort_by == "recent" else "再生数上位順"
             log_callback(
                 "YTDL",
-                f"スキャン完了: 取得候補 {len(entries)} 件中、既学習 {dup_cnt} 件をスキップし、再生数上位 {len(chosen)} 件を一括学習対象に決定。"
+                f"スキャン完了: 取得候補 {len(entries)} 件中、既学習 {dup_cnt} 件をスキップし、{sort_desc} {len(chosen)} 件を一括学習対象に決定。"
             )
         return chosen
 
@@ -690,6 +700,7 @@ class YouTubeFetcher:
             err_msg = (res.stderr or "").strip()
             raise RuntimeError(f"yt-dlp metadata fetch failed (code {res.returncode}): {err_msg}")
         data = json.loads(res.stdout)
+        chan_url = data.get("channel_url") or data.get("uploader_url")
         return VideoMetadata(
             video_id=data.get("id", ""),
             title=data.get("title", ""),
@@ -697,6 +708,8 @@ class YouTubeFetcher:
             description=data.get("description", ""),
             duration_sec=float(data.get("duration", 0) or 0),
             tags=data.get("tags", []) or [],
+            channel_url=chan_url,
+            url=data.get("webpage_url") or url,
         )
 
     def fetch_subtitles(self, url: str, temp_dir: str, log_callback: Optional[Callable[[str, str], None]] = None) -> List[SubtitleSegment]:

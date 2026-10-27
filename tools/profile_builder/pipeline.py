@@ -358,6 +358,8 @@ class ProfileBuilderPipeline:
                 log_callback=log_callback,
             )
             profile.source_video_url = youtube_url
+            if metadata.channel_url:
+                profile.youtube_channel_url = metadata.channel_url
 
             # Track video ID for duplicate prevention
             vid_id = metadata.video_id or extract_video_id(youtube_url)

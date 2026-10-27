@@ -22,6 +22,14 @@ class ReplacementRule(BaseModel):
     pattern: str = Field(..., description="Misrecognized phrase or word")
     replacement: str = Field(..., description="Correct intended phrase or word")
     reason: Optional[str] = Field(None, description="Reason for replacement (articulation habit, game term, etc.)")
+    hit_count: int = Field(0, description="Number of times matched in live transcription")
+    last_hit_at: Optional[str] = Field(None, description="Last matched timestamp in ISO 8601")
+    added_at: str = Field(
+        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        description="Timestamp when rule was created",
+    )
+    source_video_id: Optional[str] = Field(None, description="YouTube Video ID from which this rule was extracted")
+    is_archived: bool = Field(False, description="Whether this rule is archived (inactive) due to staleness")
 
     @field_validator("pattern", "replacement")
     @classmethod
@@ -29,9 +37,45 @@ class ReplacementRule(BaseModel):
         return v.strip()
 
 
+def sanitize_and_trim_rule(pattern: str, replacement: str) -> Optional[tuple[str, str]]:
+    """Sanitize, trim fillers/particles, and guard against overly long or short patterns.
+    Returns (cleaned_pattern, cleaned_replacement) or None if unsafe/invalid.
+    - Strips whitespace and quotes.
+    - Rejects patterns shorter than 2 chars (e.g. 1-char particles like 'と' -> 'そ').
+    - Trims common Japanese prefix fillers ('えーっと', 'あの') and leading/trailing particles.
+    - Rejects patterns longer than 12 characters to prevent accidental sentence-level overrides.
+    """
+    if not pattern or not replacement:
+        return None
+    p = pattern.strip().strip("\"'「」『』【】")
+    r = replacement.strip().strip("\"'「」『』【】")
+
+    # Reject identical or empty
+    if not p or not r or p == r:
+        return None
+
+    # Strip prefix fillers: えーっと, あのー, まあ, なんか etc.
+    p = re.sub(r"^(?:えーっと|ええと|あのー|あの|えー|そのー|まぁ|まあ|なんか|うーん)\s*", "", p)
+    # Strip leading/trailing particles if pattern is still long
+    if len(p) > 4:
+        p = re.sub(r"^[はがをにへとでもやの]\s*", "", p)
+        p = re.sub(r"\s*[はがをにへとでもやの]$", "", p)
+    p = p.strip()
+
+    # Reject too short (single char)
+    if len(p) < 2:
+        return None
+
+    # Reject overly long sentence-level phrases (> 12 chars)
+    if len(p) > 12:
+        return None
+
+    return (p, r)
+
+
 class SpeakerProfile(BaseModel):
     """Complete speaker profile model."""
-    schema_version: str = Field("1.0.0", description="Schema version")
+    schema_version: str = Field("1.1.0", description="Schema version")
     speaker_id: str = Field(..., description="Unique alphanumeric identifier (e.g. val_channel)")
     display_name: str = Field(..., description="Human-readable display name (e.g. ヴァル閣下)")
     created_at: str = Field(
@@ -47,9 +91,17 @@ class SpeakerProfile(BaseModel):
         default_factory=list,
         description="List of YouTube video URLs processed to train this profile",
     )
+    youtube_channel_url: Optional[str] = Field(
+        None,
+        description="Associated YouTube Channel URL (for continuous automatic updates)",
+    )
     processed_video_ids: List[str] = Field(
         default_factory=list,
         description="List of processed YouTube Video IDs to prevent duplicate training",
+    )
+    skipped_video_ids: List[str] = Field(
+        default_factory=list,
+        description="List of skipped YouTube Video IDs (e.g. shorts, music, non-speech)",
     )
     extracted_section: Optional[ExtractedSection] = Field(None, description="Extracted section info")
     articulation_traits: List[str] = Field(
@@ -58,7 +110,11 @@ class SpeakerProfile(BaseModel):
     )
     replacements: List[ReplacementRule] = Field(
         default_factory=list,
-        description="List of replacement rules",
+        description="List of active replacement rules",
+    )
+    archived_replacements: List[ReplacementRule] = Field(
+        default_factory=list,
+        description="List of archived (inactive) replacement rules due to staleness (>=180 days without hits)",
     )
     second_pass_hints: Optional[str] = Field(
         None,
@@ -77,12 +133,97 @@ class SpeakerProfile(BaseModel):
         description="Total speech segments used to compute/refine this voiceprint centroid",
     )
 
+    def migrate_from_legacy(self) -> bool:
+        """Ensure backward compatibility for profiles created with older versions.
+        - Sets schema_version to 1.1.0.
+        - Sets added_at of existing rules to created_at/updated_at to guarantee a 180-day grace period.
+        - Infers youtube_channel_url from source_video_urls if not yet set.
+        """
+        changed = False
+        is_legacy = (self.schema_version != "1.1.0")
+        if is_legacy:
+            self.schema_version = "1.1.0"
+            changed = True
+
+        # Base timestamp for legacy rules
+        fallback_dt = self.created_at or self.updated_at or datetime.datetime.now(datetime.timezone.utc).isoformat()
+        for r in self.replacements:
+            if is_legacy or not getattr(r, "added_at", None):
+                r.added_at = fallback_dt
+                changed = True
+            if getattr(r, "hit_count", None) is None:
+                r.hit_count = 0
+                changed = True
+            if getattr(r, "is_archived", None) is None:
+                r.is_archived = False
+                changed = True
+
+        return changed
+
+    def archive_stale_rules(self, days: int = 180) -> int:
+        """Archive rules that have not been hit for >= days (default 180 days / 6 months) and have hit_count == 0.
+        Returns the number of rules moved to archived_replacements.
+        """
+        now = datetime.datetime.now(datetime.timezone.utc)
+        cutoff = now - datetime.timedelta(days=days)
+
+        active: List[ReplacementRule] = []
+        to_archive: List[ReplacementRule] = []
+
+        for r in self.replacements:
+            # Check timestamp: prefer last_hit_at, then added_at
+            ts_str = r.last_hit_at or r.added_at
+            rule_dt = None
+            if ts_str:
+                try:
+                    rule_dt = datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                except Exception:
+                    pass
+
+            # Stale if never hit (hit_count == 0) AND older than cutoff
+            if r.hit_count == 0 and rule_dt and rule_dt < cutoff:
+                r.is_archived = True
+                to_archive.append(r)
+            else:
+                active.append(r)
+
+        if to_archive:
+            self.replacements = active
+            # Merge into archived_replacements without duplicate pattern
+            archived_map = {ar.pattern: ar for ar in self.archived_replacements}
+            for ar in to_archive:
+                archived_map[ar.pattern] = ar
+            self.archived_replacements = list(archived_map.values())
+            self.updated_at = now.isoformat()
+
+        return len(to_archive)
+
+    def unarchive_rule(self, pattern: str) -> bool:
+        """Unarchive a rule from archived_replacements back to active replacements."""
+        found = None
+        remaining: List[ReplacementRule] = []
+        for ar in self.archived_replacements:
+            if ar.pattern == pattern and found is None:
+                found = ar
+            else:
+                remaining.append(ar)
+
+        if found:
+            self.archived_replacements = remaining
+            found.is_archived = False
+            found.added_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            self.replacements.append(found)
+            self.updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            return True
+        return False
+
     def merge_profile(self, other: "SpeakerProfile") -> "SpeakerProfile":
         """Merge another profile's findings (from an additional YouTube video) into this profile.
         - Preserves existing rules and appends new unique rules.
         - Combines articulation traits without duplicates.
         - Merges voiceprint embeddings with weighted vector average and L2-normalization.
         - Keeps full training history of source video URLs and video IDs (prevents duplicate runs).
+        - Merges channel URL and skipped video IDs.
         - Updates updated_at timestamp.
         """
         urls = list(self.source_video_urls)
@@ -97,6 +238,10 @@ class SpeakerProfile(BaseModel):
         if other.source_video_url:
             self.source_video_url = other.source_video_url
 
+        # Merge YouTube channel URL if self doesn't have one
+        if not self.youtube_channel_url and other.youtube_channel_url:
+            self.youtube_channel_url = other.youtube_channel_url
+
         # Merge processed video IDs for duplicate prevention
         vids = list(self.processed_video_ids)
         for vid in other.processed_video_ids:
@@ -108,6 +253,13 @@ class SpeakerProfile(BaseModel):
             if m and m.group(1) not in vids:
                 vids.append(m.group(1))
         self.processed_video_ids = vids
+
+        # Merge skipped video IDs
+        skipped = set(self.skipped_video_ids)
+        for svid in other.skipped_video_ids:
+            if svid:
+                skipped.add(svid)
+        self.skipped_video_ids = list(skipped)
 
         existing_traits = list(self.articulation_traits)
         for t in other.articulation_traits:
@@ -125,6 +277,11 @@ class SpeakerProfile(BaseModel):
                         pattern=cur.pattern,
                         replacement=cur.replacement,
                         reason=combined_reason,
+                        hit_count=cur.hit_count,
+                        last_hit_at=cur.last_hit_at,
+                        added_at=cur.added_at,
+                        source_video_id=cur.source_video_id or new_r.source_video_id,
+                        is_archived=cur.is_archived,
                     )
             else:
                 rule_map[new_r.pattern] = new_r
@@ -171,7 +328,7 @@ class SpeakerProfile(BaseModel):
         return sanitized
 
     def to_replace_text(self) -> str:
-        """Convert replacements to hayamimi standard --replace compatible text.
+        """Convert active replacements to hayamimi standard --replace compatible text.
         Format:
         # Speaker Profile: <display_name> (<speaker_id>)
         pattern\treplacement
@@ -182,6 +339,9 @@ class SpeakerProfile(BaseModel):
             "",
         ]
         for rule in self.replacements:
+            # Exclude archived rules from live replace text
+            if rule.is_archived:
+                continue
             if rule.pattern and rule.replacement:
                 # Tab-separated
                 lines.append(f"{rule.pattern}\t{rule.replacement}")
@@ -191,9 +351,12 @@ class SpeakerProfile(BaseModel):
         """Filter out potentially dangerous short replacements (e.g. 1 char words like 'と' -> 'そ')."""
         safe_rules = []
         for r in self.replacements:
+            if r.is_archived:
+                continue
             p = r.pattern.strip()
             # If pattern is too short or is a common punctuation/particle, skip
             if len(p) < min_len:
                 continue
             safe_rules.append(r)
         return safe_rules
+

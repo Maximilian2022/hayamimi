@@ -680,6 +680,11 @@
         <input type="text" id="modalDisplayName" class="input-text">
       </div>
       <div class="form-group">
+        <label class="form-label">連携 YouTube チャンネル URL / @ハンドル</label>
+        <input type="text" id="modalYoutubeChannel" class="input-text" placeholder="https://www.youtube.com/@ChannelName">
+        <div style="font-size: 0.72rem; color: var(--paper-muted); margin-top: 3px;">※起動時・終了時に新着動画を自動検知し、辞書学習・マージを行う対象チャンネル</div>
+      </div>
+      <div class="form-group">
         <label class="form-label">発声・活舌の特徴 (カンマ区切り)</label>
         <input type="text" id="modalTraits" class="input-text">
       </div>
@@ -692,9 +697,10 @@
       <table class="rule-table">
         <thead>
           <tr>
-            <th style="width: 35%;">誤認識パターン</th>
-            <th style="width: 35%;">正しい置換後</th>
-            <th style="width: 20%;">理由・メモ</th>
+            <th style="width: 28%;">誤認識パターン</th>
+            <th style="width: 28%;">正しい置換後</th>
+            <th style="width: 18%;">理由・メモ</th>
+            <th style="width: 16%;">統計 (ヒット/最終)</th>
             <th style="width: 10%;">操作</th>
           </tr>
         </thead>
@@ -702,6 +708,28 @@
           <!-- Dynamic -->
         </tbody>
       </table>
+
+      <!-- 休眠中ルール (180日未ヒット) -->
+      <details style="margin-top: 14px; background: rgba(0,0,0,0.2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 12px;">
+        <summary style="cursor: pointer; font-size: 0.82rem; font-weight: 600; color: var(--paper-dim); display: flex; justify-content: space-between; align-items: center;">
+          <span>📦 休眠中のルール (180日未ヒットで自動退避) <span id="archivedCountBadge" class="badge" style="font-size:0.7rem; margin-left:6px;">0 件</span></span>
+        </summary>
+        <div style="margin-top: 10px;">
+          <table class="rule-table" style="font-size: 0.82rem;">
+            <thead>
+              <tr>
+                <th style="width: 28%;">休眠パターン</th>
+                <th style="width: 28%;">置換後</th>
+                <th style="width: 30%;">理由 / 休眠前ヒット数</th>
+                <th style="width: 14%;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="archivedTableBody">
+              <!-- Dynamic -->
+            </tbody>
+          </table>
+        </div>
+      </details>
     </div>
     <div class="modal-footer">
       <button id="btnCancelEdit" class="btn btn-secondary">キャンセル</button>
@@ -930,8 +958,10 @@
           </div>
           <div class="profile-stats" style="margin-top: 10px;">
             <span>補正ルール: <b>${p.replacements ? p.replacements.length : 0}</b> 件</span>
+            ${p.archived_replacements && p.archived_replacements.length ? `<span style="color: var(--paper-muted);">休眠: <b>${p.archived_replacements.length}</b> 件</span>` : ''}
             <span style="color: var(--gold);">学習動画: <b>${vCount}</b> 本</span>
             <span>声紋: <b style="color: ${p.voiceprint && p.voiceprint.length ? 'var(--blue)' : 'var(--paper-muted)'}">${p.voiceprint && p.voiceprint.length ? '学習済' : '未学習'}</b></span>
+            ${p.youtube_channel_url ? `<span style="color: var(--blue);">📺 チャンネル連携済</span>` : ''}
             ${p.extracted_section ? `<span>直近抽出: ${p.extracted_section.duration_sec}秒</span>` : ''}
           </div>
           ${p.articulation_traits && p.articulation_traits.length ? `
@@ -1228,6 +1258,7 @@
 
     document.getElementById("modalTitle").textContent = editingProfile.display_name;
     document.getElementById("modalDisplayName").value = editingProfile.display_name;
+    document.getElementById("modalYoutubeChannel").value = editingProfile.youtube_channel_url || "";
     document.getElementById("modalTraits").value = (editingProfile.articulation_traits || []).join(", ");
     renderRuleTable();
     document.getElementById("editModal").classList.add("open");
@@ -1238,15 +1269,62 @@
     tbody.innerHTML = "";
     (editingProfile.replacements || []).forEach((r, idx) => {
       const tr = document.createElement("tr");
+      const lastHitStr = r.last_hit_at ? r.last_hit_at.substring(0, 10) : "未ヒット";
       tr.innerHTML = `
         <td><input type="text" value="${escapeHtml(r.pattern)}" onchange="updateRule(${idx}, 'pattern', this.value)"></td>
         <td><input type="text" value="${escapeHtml(r.replacement)}" onchange="updateRule(${idx}, 'replacement', this.value)"></td>
         <td><input type="text" value="${escapeHtml(r.reason || '')}" onchange="updateRule(${idx}, 'reason', this.value)"></td>
+        <td style="font-size: 0.75rem; color: var(--paper-dim);">
+          <span style="display:inline-block; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:3px; font-weight:600; color:${(r.hit_count && r.hit_count > 0) ? 'var(--green)' : 'var(--paper-muted)'};">${r.hit_count || 0}回</span>
+          <span style="display:block; font-size:0.68rem; color:var(--paper-muted); margin-top:2px;">${lastHitStr}</span>
+        </td>
         <td><button class="btn btn-danger btn-sm" onclick="removeRule(${idx})" style="padding: 4px 8px; font-size: 0.75rem;">✕</button></td>
       `;
       tbody.appendChild(tr);
     });
+    renderArchivedTable();
   }
+
+  function renderArchivedTable() {
+    const tbody = document.getElementById("archivedTableBody");
+    const badge = document.getElementById("archivedCountBadge");
+    if (!tbody || !badge) return;
+    tbody.innerHTML = "";
+    const archived = editingProfile.archived_replacements || [];
+    badge.textContent = `${archived.length} 件`;
+
+    if (archived.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--paper-muted); font-size:0.75rem; padding:10px;">休眠中のルールはありません。</td></tr>';
+      return;
+    }
+
+    archived.forEach((r, idx) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td style="color:var(--paper-muted);"><del>${escapeHtml(r.pattern)}</del></td>
+        <td style="color:var(--paper-muted);">${escapeHtml(r.replacement)}</td>
+        <td style="font-size:0.72rem; color:var(--paper-muted);">
+          ${escapeHtml(r.reason || '未ヒット休眠')} (${r.hit_count || 0}回)
+        </td>
+        <td>
+          <button class="btn btn-primary btn-sm" onclick="unarchiveRule(${idx})" style="padding: 3px 8px; font-size: 0.72rem;">↩ 復帰</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  window.unarchiveRule = (idx) => {
+    if (!editingProfile || !editingProfile.archived_replacements) return;
+    const rule = editingProfile.archived_replacements.splice(idx, 1)[0];
+    if (rule) {
+      rule.is_archived = false;
+      rule.added_at = new Date().toISOString();
+      if (!editingProfile.replacements) editingProfile.replacements = [];
+      editingProfile.replacements.push(rule);
+      renderRuleTable();
+    }
+  };
 
   window.updateRule = (idx, field, val) => {
     if (editingProfile && editingProfile.replacements[idx]) {
@@ -1264,7 +1342,7 @@
   document.getElementById("btnAddRuleRow").onclick = () => {
     if (editingProfile) {
       if (!editingProfile.replacements) editingProfile.replacements = [];
-      editingProfile.replacements.push({ pattern: "", replacement: "", reason: "" });
+      editingProfile.replacements.push({ pattern: "", replacement: "", reason: "", hit_count: 0 });
       renderRuleTable();
     }
   };
@@ -1278,6 +1356,7 @@
   document.getElementById("btnSaveEdit").onclick = async () => {
     if (!editingProfile) return;
     editingProfile.display_name = document.getElementById("modalDisplayName").value.trim();
+    editingProfile.youtube_channel_url = document.getElementById("modalYoutubeChannel").value.trim();
     const traitsStr = document.getElementById("modalTraits").value.trim();
     editingProfile.articulation_traits = traitsStr ? traitsStr.split(",").map(s => s.trim()).filter(Boolean) : [];
     editingProfile.replacements = (editingProfile.replacements || []).filter(r => r.pattern.trim() && r.replacement.trim());

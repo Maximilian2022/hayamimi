@@ -51,7 +51,9 @@ def load_profile(speaker_id: str, storage_dir: str = DEFAULT_PROFILES_DIR) -> Op
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return SpeakerProfile.model_validate(data)
+        prof = SpeakerProfile.model_validate(data)
+        prof.migrate_from_legacy()
+        return prof
     except Exception as e:
         logger.error("Failed to load profile %s: %s", json_path, e)
         return None

@@ -17,6 +17,7 @@ Models are loaded lazily on first use and, when `max_resident` is set, the
 least-recently-used ones are unloaded so memory stays bounded no matter how
 many languages a session wanders through.
 """
+import datetime
 import difflib
 import glob
 import os
@@ -842,6 +843,9 @@ class RoutedASR:
         self._hotwords_file = hotwords_file
         self._warn_hotwords_encodability(hotwords_file)
         self._replacements = _load_replacements(replace_file)
+        self._rule_hit_counts: dict[str, int] = {}
+        self._rule_last_hit: dict[str, str] = {}
+        self._stats_lock = threading.Lock()
         self._itn_overrides = itn_cjk.EMPTY_OVERRIDES
         # refine-time ja second opinion (parakeet-ja agreement gate); live
         # finals are never affected -- see transcribe()'s second_opinion arg.
@@ -1531,8 +1535,23 @@ class RoutedASR:
 
     def _replace(self, text: str) -> str:
         for wrong, right in self._replacements:
-            text = text.replace(wrong, right)
+            if wrong in text:
+                text = text.replace(wrong, right)
+                with self._stats_lock:
+                    self._rule_hit_counts[wrong] = self._rule_hit_counts.get(wrong, 0) + 1
+                    self._rule_last_hit[wrong] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         return text
+
+    def get_replacement_stats(self) -> dict[str, dict]:
+        """Return snapshot of runtime hit counts and last hit timestamps per replacement rule pattern."""
+        with self._stats_lock:
+            return {
+                pattern: {
+                    "hit_count": self._rule_hit_counts.get(pattern, 0),
+                    "last_hit_at": self._rule_last_hit.get(pattern),
+                }
+                for pattern in set(self._rule_hit_counts) | set(self._rule_last_hit)
+            }
 
     def set_replacements(self, mapping: dict) -> None:
         """Replace the postprocessing find/replace dictionary at runtime.
