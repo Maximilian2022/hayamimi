@@ -1192,6 +1192,12 @@ class SubtitleServer:
                     if not url:
                         self._json(400, {"error": "url is required"})
                         return
+                    key = _get_gemini_key()
+                    if not key:
+                        self._json(400, {
+                            "error": "Gemini API キーが設定されていません。プロファイルの自動生成・辞書育成には Google AI Studio の API キーが必要です。上部のキー設定欄から登録してください。"
+                        })
+                        return
                     display_name = payload.get("display_name")
                     speaker_id = payload.get("speaker_id")
                     existing_profile_id = payload.get("existing_profile_id")

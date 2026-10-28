@@ -44,6 +44,9 @@ def test_profile_page_served(running_server):
         assert res.status == 200
         html = res.read().decode("utf-8")
         assert "話者特化プロファイル管理" in html
+        assert "Gemini API キーの取得手順" in html
+        assert "apiKeyNoticeBanner" in html
+        assert "keyGuardMessage" in html
 
 
 def test_gemini_key_api(running_server):
@@ -163,8 +166,29 @@ def test_profiles_crud_api(running_server):
         assert data == []
 
 
+def test_generate_api_requires_gemini_key(running_server):
+    """Verify that /api/profiles/generate returns 400 when Gemini API key is missing."""
+    base_url, _ = running_server
+    payload = json.dumps({
+        "url": "https://www.youtube.com/watch?v=no_key_test",
+        "display_name": "キーなしテスト話者",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url}/api/profiles/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+    assert exc_info.value.code == 400
+    err_body = json.loads(exc_info.value.read().decode("utf-8"))
+    assert "Gemini API キー" in err_body["error"]
+
+
 def test_generate_api_with_grow_mode(running_server, monkeypatch):
     base_url, _ = running_server
+    monkeypatch.setattr("scripts.subtitle_server._get_gemini_key", lambda: "fake_test_key_12345")
 
     captured_call = {}
 
@@ -205,6 +229,7 @@ def test_generate_api_with_grow_mode(running_server, monkeypatch):
 
 def test_generate_api_with_channel_url(running_server, monkeypatch):
     base_url, _ = running_server
+    monkeypatch.setattr("scripts.subtitle_server._get_gemini_key", lambda: "fake_test_key_12345")
 
     captured_call = {}
 
@@ -245,6 +270,7 @@ def test_generate_task_status_metadata(running_server, monkeypatch):
     import time
     import threading
     base_url, _ = running_server
+    monkeypatch.setattr("scripts.subtitle_server._get_gemini_key", lambda: "fake_test_key_12345")
 
     block_event = threading.Event()
 
