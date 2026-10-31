@@ -4,7 +4,7 @@ chcp 65001 >nul 2>&1
 cd /d "%~dp0"
 
 echo ===================================================
-echo   hayamimi (Early Hearing) - Setup Launcher
+echo   Hayamimi Live (Early Hearing Live) - Setup Launcher
 echo ===================================================
 echo.
 
@@ -18,7 +18,7 @@ set "SETUP_SCRIPT=%~dp0setup.ps1"
 if exist "%SETUP_SCRIPT%" goto run_setup
 
 set "SETUP_SCRIPT=%TEMP%\hayamimi_setup.ps1"
-set "GITHUB_RAW_URL=https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/setup.ps1"
+set "GITHUB_RAW_URL=https://raw.githubusercontent.com/Maximilian2022/hayamimi-live/main/setup.ps1"
 
 echo [*] Downloading setup script from GitHub...
 echo     URL: %GITHUB_RAW_URL%

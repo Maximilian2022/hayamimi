@@ -36,7 +36,7 @@ public class SetupConsoleHelper {
 
 <#
 .SYNOPSIS
-    hayamimi (早耳) - モダンGUI インストーラー / セットアップスクリプト
+    Hayamimi Live (早耳 Live) - モダンGUI インストーラー / セットアップスクリプト
 .DESCRIPTION
     GitHubから最新の hayamimi を安全なローカル領域（既定: AppData\Local\hayamimi）にダウンロード・展開し、
     デスクトップショートカットの作成や実行環境のセットアップを行います。
@@ -55,7 +55,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 # OneDrive や保護フォルダー配下での Python バイトコードキャッシュ (__pycache__) 作成を抑止
 $env:PYTHONDONTWRITEBYTECODE = "1"
 
-$RepoZipUrl = "https://github.com/Maximilian2022/hayamimi/archive/refs/heads/main.zip"
+$RepoZipUrl = "https://github.com/Maximilian2022/hayamimi-live/archive/refs/heads/main.zip"
 # 既定のインストール先 (マイドキュメント\hayamimi: 完全ポータブル & 削除が容易)
 $DefaultInstallPath = [System.IO.Path]::Combine([System.Environment]::GetFolderPath('MyDocuments'), "hayamimi")
 
@@ -63,7 +63,7 @@ $DefaultInstallPath = [System.IO.Path]::Combine([System.Environment]::GetFolderP
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi セットアップ"
+        Title="Hayamimi Live セットアップ"
         Height="620" Width="660"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanMinimize"

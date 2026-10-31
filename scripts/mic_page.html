@@ -670,7 +670,37 @@
     }
     footer a { color: var(--paper-dim); text-decoration: none; }
     footer a:hover { color: var(--paper); text-decoration: underline; }
-  </style>
+  
+    /* デザインモード切り替えピル */
+    .mode-toggle-group {
+      display: flex; gap: 8px; margin-bottom: 16px; background: rgba(0,0,0,0.25);
+      padding: 4px; border-radius: var(--radius-md); border: 1px solid var(--line);
+    }
+    .mode-btn {
+      flex: 1; padding: 8px 12px; border: none; background: transparent; color: var(--paper-dim);
+      font-weight: 600; font-size: 0.82rem; border-radius: var(--radius-sm); cursor: pointer;
+      transition: all 0.2s ease; text-align: center;
+    }
+    .mode-btn.active {
+      background: var(--shu); color: #fff; box-shadow: 0 0 10px var(--shu-glow);
+    }
+    /* 個別カスタマイズ用サブタブ */
+    .subtabs-container {
+      display: flex; gap: 6px; margin-bottom: 14px; border-bottom: 1px solid var(--line); padding-bottom: 8px;
+    }
+    .subtab-btn {
+      padding: 6px 12px; border: 1px solid transparent; background: rgba(255,255,255,0.04);
+      color: var(--paper-dim); font-size: 0.78rem; font-weight: 600; border-radius: var(--radius-sm);
+      cursor: pointer; transition: all 0.2s;
+    }
+    .subtab-btn.active {
+      background: rgba(224, 79, 47, 0.15); border-color: var(--shu); color: var(--paper); font-weight: 700;
+    }
+    .subpanel { display: none; }
+    .subpanel.active { display: block; animation: fadeIn 0.2s ease; }
+    .optgroup-header { font-weight: bold; color: var(--paper-dim); }
+
+</style>
 </head>
 <body>
 
@@ -927,62 +957,256 @@
           OBS 字幕デザイン設定 <span class="tag">SUBTITLE STYLING</span>
         </div>
 
-        <!-- フォント選択 -->
+        <!-- デザインモード選択 (全体一括 vs 個別詳細) -->
         <div class="form-group">
-          <label for="style-font">字幕フォント (配信・商用利用OKなGoogle Fonts):</label>
-          <select id="style-font">
-            <option value="'Zen Kaku Gothic New', sans-serif" selected>Zen Kaku Gothic New (洗練モダン角ゴシック / OFL)</option>
-            <option value="'LINE Seed JP', 'LINE Seed KR', 'Noto Sans SC', 'Noto Sans TC', sans-serif">LINE Seed (親しみやすい幾何学モダン・日英韓欧対応 / OFL)</option>
-            <option value="'IBM Plex Sans JP', 'IBM Plex Sans KR', 'IBM Plex Sans', 'Noto Sans SC', sans-serif">IBM Plex Sans (洗練された知的デザイン・日英韓欧対応 / OFL)</option>
-            <option value="'Source Han Sans JP', '源ノ角ゴシック JP', 'Noto Sans JP', 'Noto Sans SC', 'Noto Sans TC', 'Noto Sans KR', sans-serif">源ノ角ゴシック / Noto Sans CJK (日中韓英欧・多言語完全対応 / OFL)</option>
-            <option value="'M PLUS 1p', sans-serif">M PLUS 1p (すっきり親しみやすい / OFL)</option>
-            <option value="'M PLUS Rounded 1c', sans-serif">M PLUS Rounded 1c (丸ゴシック・VTuberや雑談配信に大人気 / OFL)</option>
-            <option value="'Shippori Mincho B1', serif">Shippori Mincho B1 (上品・和風明朝体 / OFL)</option>
-            <option value="'Dela Gothic One', sans-serif">Dela Gothic One (極太・強烈なインパクトタイトル風 / OFL)</option>
-            <option value="'Kosugi Maru', sans-serif">Kosugi Maru (優しく読みやすい丸文字 / Apache 2.0)</option>
-            <option value="'Kaisei Decol', serif">Kaisei Decol (レトロモダン装飾風 / OFL)</option>
-          </select>
-          <div class="desc">※すべて商用利用・配信利用が公式に許可された完全オープンライセンスフォントです。</div>
+          <label>デザイン設定モード:</label>
+          <div class="mode-toggle-group">
+            <button type="button" class="mode-btn active" id="btn-mode-unified" onclick="setDesignMode('unified')">
+              ⚪ 全体一括設定 (シンプル)
+            </button>
+            <button type="button" class="mode-btn" id="btn-mode-split" onclick="setDesignMode('split')">
+              🔘 メイン / 翻訳個別設定 (アドバンス)
+            </button>
+          </div>
+          <div class="desc" id="mode-desc">全体で統一されたフォント・色・サイズを一括設定します。</div>
         </div>
 
-        <!-- 文字サイズ -->
-        <div class="form-row">
-          <label for="style-size">文字サイズ: <span id="val-size">42</span>px</label>
-          <input type="range" id="style-size" min="20" max="90" value="42">
+        <!-- ================= A. 全体一括設定パネル ================= -->
+        <div id="panel-unified">
+          <div class="form-group">
+            <label for="style-font">字幕フォント (配信・商用利用OKなGoogle Fonts):</label>
+            <select id="style-font" onchange="updatePreview()">
+              <optgroup label="🇯🇵 日本語・定番（配信で大人気）">
+                <option value="'Zen Kaku Gothic New', sans-serif" selected>Zen Kaku Gothic New (洗練モダン角ゴシック / OFL)</option>
+                <option value="'M PLUS Rounded 1c', sans-serif">M PLUS Rounded 1c (丸ゴシック・VTuberや雑談配信に大人気 / OFL)</option>
+                <option value="'Dela Gothic One', sans-serif">Dela Gothic One (極太・強烈なインパクトタイトル風 / OFL)</option>
+                <option value="'Hachi Maru Pop', sans-serif">Hachi Maru Pop (手書き丸文字・可愛いポップ系 / OFL)</option>
+                <option value="'DotGothic16', sans-serif">DotGothic16 (レトロゲーム・ピクセルドット風 / OFL)</option>
+                <option value="'Reggae One', sans-serif">Reggae One (躍動感・バラエティ＆リアクション風 / OFL)</option>
+                <option value="'Rampart One', sans-serif">Rampart One (3Dアウトライン・立体ブロック風 / OFL)</option>
+                <option value="'Kiwi Maru', serif">Kiwi Maru (丸明朝・レトロ可愛い / OFL)</option>
+                <option value="'Yuji Boku', serif">Yuji Boku (毛筆・和風筆文字 / OFL)</option>
+                <option value="'Shippori Mincho B1', serif">Shippori Mincho B1 (上品・和風明朝体 / OFL)</option>
+                <option value="'LINE Seed JP', 'LINE Seed KR', 'Noto Sans SC', 'Noto Sans TC', sans-serif">LINE Seed (親しみやすい幾何学モダン・日英韓欧対応 / OFL)</option>
+                <option value="'IBM Plex Sans JP', 'IBM Plex Sans KR', 'IBM Plex Sans', 'Noto Sans SC', sans-serif">IBM Plex Sans (洗練された知的デザイン / OFL)</option>
+                <option value="'Source Han Sans JP', '源ノ角ゴシック JP', 'Noto Sans JP', 'Noto Sans SC', 'Noto Sans TC', 'Noto Sans KR', sans-serif">源ノ角ゴシック / Noto Sans CJK (日中韓英欧・完全対応 / OFL)</option>
+              </optgroup>
+              <optgroup label="🇺🇸 英語・欧文特化（スタイリッシュ洋画＆海外風）">
+                <option value="'Montserrat', sans-serif">Montserrat (洗練された美しい欧文モダン / OFL)</option>
+                <option value="'Bungee', cursive">Bungee (アーケードゲーム風・極太立体 / OFL)</option>
+                <option value="'Fredoka', sans-serif">Fredoka (丸みのある可愛いポップ欧文 / OFL)</option>
+                <option value="'Oswald', sans-serif">Oswald (映画字幕風・すっきり縦長 / OFL)</option>
+                <option value="'Righteous', cursive">Righteous (近未来・レトロサイバー風 / OFL)</option>
+              </optgroup>
+              <optgroup label="🇨🇳 中国語特化（簡体・繁体）">
+                <option value="'ZCOOL KuaiLe', 'Noto Sans SC', sans-serif">ZCOOL KuaiLe (中国で大人気のポップ弾ける手書き風 / OFL)</option>
+                <option value="'Ma Shan Zheng', 'Noto Sans SC', cursive">Ma Shan Zheng (迫力ある伝統毛筆書体 / OFL)</option>
+                <option value="'Noto Sans SC', sans-serif">Noto Sans SC (中国標準・簡体字 / OFL)</option>
+                <option value="'Noto Sans TC', sans-serif">Noto Sans TC (台湾・香港標準・繁体字 / OFL)</option>
+              </optgroup>
+              <optgroup label="🇰🇷 韓国語特化（ハングル）">
+                <option value="'Do Hyeon', 'Noto Sans KR', sans-serif">Do Hyeon (韓国バラエティ定番の極太フォント / OFL)</option>
+                <option value="'Jua', 'Noto Sans KR', sans-serif">Jua (温かみのある可愛い丸文字 / OFL)</option>
+                <option value="'Black Han Sans', 'Noto Sans KR', sans-serif">Black Han Sans (超極太・圧倒的インパクト / OFL)</option>
+                <option value="'LINE Seed KR', 'Noto Sans KR', sans-serif">LINE Seed KR (幾何学モダン・抜群の可読性 / OFL)</option>
+                <option value="'Noto Sans KR', sans-serif">Noto Sans KR (韓国標準・ハングル / OFL)</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <div class="form-row">
+            <label for="style-size">基本文字サイズ: <span id="val-size">42</span>px</label>
+            <input type="range" id="style-size" min="20" max="90" value="42" oninput="updatePreview()">
+          </div>
+
+          <div class="form-row">
+            <label for="style-color">文字色:</label>
+            <input type="color" id="style-color" value="#ffffff" oninput="updatePreview()">
+          </div>
+
+          <div class="form-row">
+            <label for="style-effect">エフェクト演出:</label>
+            <select id="style-effect" onchange="updatePreview()">
+              <option value="stroke" selected>通常縁取り（クッキリ強調）</option>
+              <option value="double">二重縁取り（テレビテロップ風）</option>
+              <option value="glow">ネオン発光（サイバー・光る文字）</option>
+            </select>
+          </div>
+
+          <div class="form-row">
+            <label for="style-stroke-color">外枠 / 発光色:</label>
+            <input type="color" id="style-stroke-color" value="#000000" oninput="updatePreview()">
+          </div>
+          <div class="form-row">
+            <label for="style-stroke-width">枠の太さ / 発光量: <span id="val-stroke">3</span>px</label>
+            <input type="range" id="style-stroke-width" min="0" max="8" value="3" oninput="updatePreview()">
+          </div>
         </div>
 
-        <!-- 文字色 & 縁取り -->
-        <div class="form-row">
-          <label for="style-color">文字色:</label>
-          <input type="color" id="style-color" value="#ffffff">
-        </div>
-        <div class="form-row">
-          <label for="style-stroke-color">文字の縁取り (影) 色:</label>
-          <input type="color" id="style-stroke-color" value="#000000">
-        </div>
-        <div class="form-row">
-          <label for="style-stroke-width">縁取りの太さ: <span id="val-stroke">3</span>px</label>
-          <input type="range" id="style-stroke-width" min="0" max="8" value="3">
+        <!-- ================= B. 個別詳細設定パネル ================= -->
+        <div id="panel-split" style="display: none;">
+          <!-- サブタブ切り替え -->
+          <div class="subtabs-container">
+            <button type="button" class="subtab-btn active" id="subtab-btn-main" onclick="switchSubtab('main')">
+              🎙️ メイン字幕 (自分の声)
+            </button>
+            <button type="button" class="subtab-btn" id="subtab-btn-trans" onclick="switchSubtab('trans')">
+              🌐 翻訳字幕 (共通)
+            </button>
+            <button type="button" class="subtab-btn" id="subtab-btn-langs" onclick="switchSubtab('langs')">
+              🎨 翻訳言語別カラー
+            </button>
+          </div>
+
+          <!-- B-1. メイン字幕タブ -->
+          <div id="subpanel-main" class="subpanel active">
+            <div class="form-group">
+              <label for="style-main-font">メイン字幕フォント:</label>
+              <select id="style-main-font" onchange="updatePreview()">
+                <optgroup label="🇯🇵 日本語・定番フォント">
+                  <option value="'Zen Kaku Gothic New', sans-serif">Zen Kaku Gothic New (洗練角ゴシック)</option>
+                  <option value="'M PLUS Rounded 1c', sans-serif" selected>M PLUS Rounded 1c (丸ゴシック・大人気)</option>
+                  <option value="'Dela Gothic One', sans-serif">Dela Gothic One (極太タイトル風)</option>
+                  <option value="'Hachi Maru Pop', sans-serif">Hachi Maru Pop (手書き可愛い丸文字)</option>
+                  <option value="'DotGothic16', sans-serif">DotGothic16 (レトロゲーム風ドット)</option>
+                  <option value="'Reggae One', sans-serif">Reggae One (躍動バラエティ風)</option>
+                  <option value="'Rampart One', sans-serif">Rampart One (3D立体ブロック風)</option>
+                  <option value="'Kiwi Maru', serif">Kiwi Maru (丸明朝・レトロ可愛い)</option>
+                  <option value="'Yuji Boku', serif">Yuji Boku (毛筆・和風筆文字)</option>
+                  <option value="'Shippori Mincho B1', serif">Shippori Mincho B1 (上品和風明朝)</option>
+                  <option value="'LINE Seed JP', sans-serif">LINE Seed JP (幾何学モダン)</option>
+                  <option value="'Source Han Sans JP', sans-serif">源ノ角ゴシック / Noto Sans JP</option>
+                </optgroup>
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="style-main-size">文字サイズ: <span id="val-main-size">44</span>px</label>
+              <input type="range" id="style-main-size" min="20" max="90" value="44" oninput="updatePreview()">
+            </div>
+            <div class="form-row">
+              <label for="style-main-color">文字色:</label>
+              <input type="color" id="style-main-color" value="#ffffff" oninput="updatePreview()">
+            </div>
+            <div class="form-row">
+              <label for="style-main-effect">エフェクト演出:</label>
+              <select id="style-main-effect" onchange="updatePreview()">
+                <option value="stroke" selected>通常縁取り</option>
+                <option value="double">二重縁取り (テレビ風)</option>
+                <option value="glow">ネオン発光 (サイバー)</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="style-main-stroke-color">外枠 / 発光色:</label>
+              <input type="color" id="style-main-stroke-color" value="#000000" oninput="updatePreview()">
+            </div>
+            <div class="form-row">
+              <label for="style-main-stroke-width">枠の太さ / 発光量: <span id="val-main-stroke">4</span>px</label>
+              <input type="range" id="style-main-stroke-width" min="0" max="8" value="4" oninput="updatePreview()">
+            </div>
+          </div>
+
+          <!-- B-2. 翻訳字幕 (共通) タブ -->
+          <div id="subpanel-trans" class="subpanel">
+            <div class="form-group">
+              <label for="style-trans-font">翻訳字幕フォント (多言語最適化):</label>
+              <select id="style-trans-font" onchange="updatePreview()">
+                <optgroup label="🇺🇸 英語・欧文特化フォント">
+                  <option value="'Montserrat', sans-serif" selected>Montserrat (洗練欧文モダン)</option>
+                  <option value="'Bungee', cursive">Bungee (アーケードゲーム風・極太)</option>
+                  <option value="'Fredoka', sans-serif">Fredoka (丸みのある可愛いポップ)</option>
+                  <option value="'Oswald', sans-serif">Oswald (映画字幕風・すっきり縦長)</option>
+                  <option value="'Righteous', cursive">Righteous (近未来・レトロサイバー)</option>
+                </optgroup>
+                <optgroup label="🇨🇳 中国語特化フォント">
+                  <option value="'ZCOOL KuaiLe', 'Noto Sans SC', sans-serif">ZCOOL KuaiLe (中国人気ポップ手書き風)</option>
+                  <option value="'Ma Shan Zheng', 'Noto Sans SC', cursive">Ma Shan Zheng (中国伝統毛筆体)</option>
+                  <option value="'Noto Sans SC', sans-serif">Noto Sans SC (中国標準・簡体字)</option>
+                  <option value="'Noto Sans TC', sans-serif">Noto Sans TC (繁体字)</option>
+                </optgroup>
+                <optgroup label="🇰🇷 韓国語特化フォント">
+                  <option value="'Do Hyeon', 'Noto Sans KR', sans-serif">Do Hyeon (韓国バラエティ極太)</option>
+                  <option value="'Jua', 'Noto Sans KR', sans-serif">Jua (可愛い丸文字)</option>
+                  <option value="'Black Han Sans', 'Noto Sans KR', sans-serif">Black Han Sans (超極太)</option>
+                  <option value="'LINE Seed KR', 'Noto Sans KR', sans-serif">LINE Seed KR (幾何学モダン)</option>
+                </optgroup>
+                <optgroup label="🌐 日本語・全言語共通">
+                  <option value="'Zen Kaku Gothic New', sans-serif">Zen Kaku Gothic New (万能角ゴシック)</option>
+                  <option value="'M PLUS Rounded 1c', sans-serif">M PLUS Rounded 1c (丸ゴシック)</option>
+                  <option value="'DotGothic16', sans-serif">DotGothic16 (ドット風)</option>
+                </optgroup>
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="style-trans-size">翻訳文字サイズ: <span id="val-trans-size">32</span>px</label>
+              <input type="range" id="style-trans-size" min="16" max="70" value="32" oninput="updatePreview()">
+            </div>
+            <div class="form-row">
+              <label for="style-trans-color">翻訳文字色:</label>
+              <input type="color" id="style-trans-color" value="#ffd166" oninput="updatePreview()">
+            </div>
+            <div class="form-row">
+              <label for="style-trans-effect">エフェクト演出:</label>
+              <select id="style-trans-effect" onchange="updatePreview()">
+                <option value="stroke" selected>通常縁取り</option>
+                <option value="double">二重縁取り</option>
+                <option value="glow">ネオン発光</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="style-trans-stroke-color">外枠 / 発光色:</label>
+              <input type="color" id="style-trans-stroke-color" value="#000000" oninput="updatePreview()">
+            </div>
+            <div class="form-row">
+              <label for="style-trans-stroke-width">枠の太さ: <span id="val-trans-stroke">2.5</span>px</label>
+              <input type="range" id="style-trans-stroke-width" min="0" max="6" step="0.5" value="2.5" oninput="updatePreview()">
+            </div>
+          </div>
+
+          <!-- B-3. 翻訳言語別カラー設定タブ -->
+          <div id="subpanel-langs" class="subpanel">
+            <div class="desc" style="margin-bottom: 12px;">言語ごとに字幕文字色を個別指定できます（空欄の場合は上記の翻訳共通カラーが使われます）。</div>
+            <div class="form-row">
+              <label for="style-lang-en">🇺🇸 英語 (en):</label>
+              <input type="color" id="style-lang-en" value="#70d6ff" oninput="updatePreview()">
+            </div>
+            <div class="form-row">
+              <label for="style-lang-zh">🇨🇳 中国語・簡体字 (zh):</label>
+              <input type="color" id="style-lang-zh" value="#ff9770" oninput="updatePreview()">
+            </div>
+            <div class="form-row">
+              <label for="style-lang-zhtw">🇹🇼 台湾語・繁体字 (zh-tw):</label>
+              <input type="color" id="style-lang-zhtw" value="#ff9770" oninput="updatePreview()">
+            </div>
+            <div class="form-row">
+              <label for="style-lang-ko">🇰🇷 韓国語 (ko):</label>
+              <input type="color" id="style-lang-ko" value="#a8dadc" oninput="updatePreview()">
+            </div>
+            <div class="form-row">
+              <label for="style-lang-es">🇪🇸 スペイン語 (es):</label>
+              <input type="color" id="style-lang-es" value="#ffd166" oninput="updatePreview()">
+            </div>
+          </div>
         </div>
 
-        <!-- 背景プレート & 不透明度 -->
+        <hr style="border: 0; border-top: 1px solid var(--line); margin: 18px 0;">
+
+        <!-- 共通配置・背景設定 -->
         <div class="form-row">
           <label for="style-bg-color">背景プレート色:</label>
-          <input type="color" id="style-bg-color" value="#000000">
+          <input type="color" id="style-bg-color" value="#000000" oninput="updatePreview()">
         </div>
         <div class="form-row">
           <label for="style-bg-opacity">背景の不透明度: <span id="val-opacity">0</span>% (0%で完全透明)</label>
-          <input type="range" id="style-bg-opacity" min="0" max="100" value="0">
+          <input type="range" id="style-bg-opacity" min="0" max="100" value="0" oninput="updatePreview()">
         </div>
         <div class="form-row">
           <label for="style-radius">背景の角丸: <span id="val-radius">8</span>px</label>
-          <input type="range" id="style-radius" min="0" max="30" value="8">
+          <input type="range" id="style-radius" min="0" max="30" value="8" oninput="updatePreview()">
         </div>
 
-        <!-- 配置と余白 -->
         <div class="form-row">
           <label for="style-align">テキスト配置:</label>
-          <select id="style-align" style="width: 140px;">
+          <select id="style-align" style="width: 140px;" onchange="updatePreview()">
             <option value="center" selected>中央揃え</option>
             <option value="left">左揃え</option>
             <option value="right">右揃え</option>
@@ -990,7 +1214,7 @@
         </div>
         <div class="form-row">
           <label for="style-bottom">画面下部からの余白: <span id="val-bottom">4</span>vh</label>
-          <input type="range" id="style-bottom" min="0" max="30" value="4">
+          <input type="range" id="style-bottom" min="0" max="30" value="4" oninput="updatePreview()">
         </div>
 
         <!-- 翻訳行表示トグル -->
@@ -1000,7 +1224,7 @@
             <div class="desc">確定字幕の下に翻訳文を同時表示します。</div>
           </div>
           <label class="toggle-switch">
-            <input type="checkbox" id="style-show-trans" checked>
+            <input type="checkbox" id="style-show-trans" checked onchange="updatePreview()">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -1581,7 +1805,7 @@
       if (res.ok) {
         const loaded = await res.json();
         serverStyleLoaded = true;
-        currentStyle = Object.assign(currentStyle, loaded);
+        currentStyle = deepMerge(currentStyle, loaded);
         applyStyleToInputs();
       }
     } catch (e) {
@@ -1593,7 +1817,7 @@
         const localStyleRaw = localStorage.getItem("hayamimi_overlay_style");
         if (localStyleRaw) {
           const loaded = JSON.parse(localStyleRaw);
-          currentStyle = Object.assign(currentStyle, loaded);
+          currentStyle = deepMerge(currentStyle, loaded);
           applyStyleToInputs();
           fetch("/overlay-style", {
             method: "POST",
@@ -1606,7 +1830,6 @@
       }
     }
 
-    // サーバーがまだ起動準備中の場合、バックグラウンドで自動リトライ
     if (!serverCfgLoaded) {
       setTimeout(() => {
         if (!window._serverCfgRetryCount) window._serverCfgRetryCount = 0;
@@ -1620,23 +1843,95 @@
     updatePreview();
   }
 
+  function deepMerge(target, source) {
+    if (!source) return target;
+    const output = Object.assign({}, target);
+    for (const key of Object.keys(source)) {
+      if (source[key] instanceof Object && !Array.isArray(source[key]) && key in target) {
+        output[key] = deepMerge(target[key], source[key]);
+      } else {
+        output[key] = source[key];
+      }
+    }
+    return output;
+  }
+
+  function setDesignMode(mode) {
+    currentStyle.mode = mode;
+    const isSplit = mode === "split";
+    document.getElementById("btn-mode-unified").classList.toggle("active", !isSplit);
+    document.getElementById("btn-mode-split").classList.toggle("active", isSplit);
+    document.getElementById("panel-unified").style.display = isSplit ? "none" : "block";
+    document.getElementById("panel-split").style.display = isSplit ? "block" : "none";
+    document.getElementById("mode-desc").textContent = isSplit 
+      ? "メイン字幕、翻訳字幕、言語ごとのカラーをそれぞれ個別にカスタマイズします。"
+      : "全体で統一されたフォント・色・サイズを一括設定します。";
+    updatePreview();
+  }
+
+  function switchSubtab(tabName) {
+    document.querySelectorAll(".subtab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".subpanel").forEach(p => p.classList.remove("active"));
+    const btn = document.getElementById("subtab-btn-" + tabName);
+    const panel = document.getElementById("subpanel-" + tabName);
+    if (btn) btn.classList.add("active");
+    if (panel) panel.classList.add("active");
+  }
+
   function applyStyleToInputs() {
-    document.getElementById("style-font").value = currentStyle.font;
-    document.getElementById("style-size").value = currentStyle.size;
-    document.getElementById("val-size").textContent = currentStyle.size;
-    document.getElementById("style-color").value = currentStyle.color;
-    document.getElementById("style-stroke-color").value = currentStyle.strokeColor;
-    document.getElementById("style-stroke-width").value = currentStyle.strokeWidth;
-    document.getElementById("val-stroke").textContent = currentStyle.strokeWidth;
-    document.getElementById("style-bg-color").value = currentStyle.bgColor;
-    document.getElementById("style-bg-opacity").value = currentStyle.bgOpacity;
-    document.getElementById("val-opacity").textContent = currentStyle.bgOpacity;
-    document.getElementById("style-radius").value = currentStyle.radius;
-    document.getElementById("val-radius").textContent = currentStyle.radius;
-    document.getElementById("style-align").value = currentStyle.align;
-    document.getElementById("style-bottom").value = currentStyle.bottom;
-    document.getElementById("val-bottom").textContent = currentStyle.bottom;
-    document.getElementById("style-show-trans").checked = currentStyle.showTrans;
+    // Mode
+    setDesignMode(currentStyle.mode || "unified");
+
+    // Unified inputs
+    document.getElementById("style-font").value = currentStyle.font || "'Zen Kaku Gothic New', sans-serif";
+    document.getElementById("style-size").value = currentStyle.size || 42;
+    document.getElementById("val-size").textContent = currentStyle.size || 42;
+    document.getElementById("style-color").value = currentStyle.color || "#ffffff";
+    document.getElementById("style-effect").value = currentStyle.effect || "stroke";
+    document.getElementById("style-stroke-color").value = currentStyle.strokeColor || "#000000";
+    document.getElementById("style-stroke-width").value = currentStyle.strokeWidth != null ? currentStyle.strokeWidth : 3;
+    document.getElementById("val-stroke").textContent = document.getElementById("style-stroke-width").value;
+
+    // Split main inputs
+    const m = currentStyle.main || {};
+    document.getElementById("style-main-font").value = m.font || currentStyle.font || "'M PLUS Rounded 1c', sans-serif";
+    document.getElementById("style-main-size").value = m.size || 44;
+    document.getElementById("val-main-size").textContent = m.size || 44;
+    document.getElementById("style-main-color").value = m.color || "#ffffff";
+    document.getElementById("style-main-effect").value = m.effect || "stroke";
+    document.getElementById("style-main-stroke-color").value = m.strokeColor || "#000000";
+    document.getElementById("style-main-stroke-width").value = m.strokeWidth != null ? m.strokeWidth : 4;
+    document.getElementById("val-main-stroke").textContent = document.getElementById("style-main-stroke-width").value;
+
+    // Split trans inputs
+    const t = currentStyle.trans || {};
+    document.getElementById("style-trans-font").value = t.font || "'Montserrat', sans-serif";
+    document.getElementById("style-trans-size").value = t.size || 32;
+    document.getElementById("val-trans-size").textContent = t.size || 32;
+    document.getElementById("style-trans-color").value = t.color || "#ffd166";
+    document.getElementById("style-trans-effect").value = t.effect || "stroke";
+    document.getElementById("style-trans-stroke-color").value = t.strokeColor || "#000000";
+    document.getElementById("style-trans-stroke-width").value = t.strokeWidth != null ? t.strokeWidth : 2.5;
+    document.getElementById("val-trans-stroke").textContent = document.getElementById("style-trans-stroke-width").value;
+
+    // Language color overrides
+    const lo = currentStyle.langOverrides || {};
+    if (lo["en"]) document.getElementById("style-lang-en").value = lo["en"].color || "#70d6ff";
+    if (lo["zh"]) document.getElementById("style-lang-zh").value = lo["zh"].color || "#ff9770";
+    if (lo["zh-tw"]) document.getElementById("style-lang-zhtw").value = lo["zh-tw"].color || "#ff9770";
+    if (lo["ko"]) document.getElementById("style-lang-ko").value = lo["ko"].color || "#a8dadc";
+    if (lo["es"]) document.getElementById("style-lang-es").value = lo["es"].color || "#ffd166";
+
+    // Common inputs
+    document.getElementById("style-bg-color").value = currentStyle.bgColor || "#000000";
+    document.getElementById("style-bg-opacity").value = currentStyle.bgOpacity != null ? currentStyle.bgOpacity : 0;
+    document.getElementById("val-opacity").textContent = currentStyle.bgOpacity || 0;
+    document.getElementById("style-radius").value = currentStyle.radius != null ? currentStyle.radius : 8;
+    document.getElementById("val-radius").textContent = currentStyle.radius || 8;
+    document.getElementById("style-align").value = currentStyle.align || "center";
+    document.getElementById("style-bottom").value = currentStyle.bottom != null ? currentStyle.bottom : 4;
+    document.getElementById("val-bottom").textContent = currentStyle.bottom || 4;
+    document.getElementById("style-show-trans").checked = currentStyle.showTrans !== false;
   }
 
   function hexToRgba(hex, alphaPercent) {
@@ -1648,8 +1943,27 @@
     return `rgba(${r}, ${g}, ${b}, ${(alphaPercent || 0) / 100})`;
   }
 
-  function generateTextShadow(color, width) {
+  function generateTextShadow(color, width, effect) {
     if (width <= 0) return "none";
+    if (effect === "glow") {
+      return `0 0 ${width * 2}px ${color}, 0 0 ${width * 4}px ${color}, 0 0 ${width * 7}px ${color}`;
+    }
+    if (effect === "double") {
+      let s = [];
+      for (let x = -width; x <= width; x++) {
+        for (let y = -width; y <= width; y++) {
+          if (x !== 0 || y !== 0) s.push(`${x}px ${y}px 0 #000000`);
+        }
+      }
+      const w2 = width + 2;
+      for (let x = -w2; x <= w2; x += 2) {
+        for (let y = -w2; y <= w2; y += 2) {
+          s.push(`${x}px ${y}px 0 ${color}`);
+        }
+      }
+      s.push(`0 0 ${w2 * 2}px ${color}`);
+      return s.join(", ");
+    }
     let s = [];
     for (let x = -width; x <= width; x++) {
       for (let y = -width; y <= width; y++) {
@@ -1681,11 +1995,37 @@
     const par = document.getElementById("preview-partial");
     const tr = document.getElementById("preview-trans");
 
+    // Collect values
     currentStyle.font = document.getElementById("style-font").value;
     currentStyle.size = parseInt(document.getElementById("style-size").value);
     currentStyle.color = document.getElementById("style-color").value;
+    currentStyle.effect = document.getElementById("style-effect").value;
     currentStyle.strokeColor = document.getElementById("style-stroke-color").value;
-    currentStyle.strokeWidth = parseInt(document.getElementById("style-stroke-width").value);
+    currentStyle.strokeWidth = parseFloat(document.getElementById("style-stroke-width").value);
+
+    if (!currentStyle.main) currentStyle.main = {};
+    currentStyle.main.font = document.getElementById("style-main-font").value;
+    currentStyle.main.size = parseInt(document.getElementById("style-main-size").value);
+    currentStyle.main.color = document.getElementById("style-main-color").value;
+    currentStyle.main.effect = document.getElementById("style-main-effect").value;
+    currentStyle.main.strokeColor = document.getElementById("style-main-stroke-color").value;
+    currentStyle.main.strokeWidth = parseFloat(document.getElementById("style-main-stroke-width").value);
+
+    if (!currentStyle.trans) currentStyle.trans = {};
+    currentStyle.trans.font = document.getElementById("style-trans-font").value;
+    currentStyle.trans.size = parseInt(document.getElementById("style-trans-size").value);
+    currentStyle.trans.color = document.getElementById("style-trans-color").value;
+    currentStyle.trans.effect = document.getElementById("style-trans-effect").value;
+    currentStyle.trans.strokeColor = document.getElementById("style-trans-stroke-color").value;
+    currentStyle.trans.strokeWidth = parseFloat(document.getElementById("style-trans-stroke-width").value);
+
+    if (!currentStyle.langOverrides) currentStyle.langOverrides = {};
+    currentStyle.langOverrides["en"] = { color: document.getElementById("style-lang-en").value };
+    currentStyle.langOverrides["zh"] = { color: document.getElementById("style-lang-zh").value };
+    currentStyle.langOverrides["zh-tw"] = { color: document.getElementById("style-lang-zhtw").value };
+    currentStyle.langOverrides["ko"] = { color: document.getElementById("style-lang-ko").value };
+    currentStyle.langOverrides["es"] = { color: document.getElementById("style-lang-es").value };
+
     currentStyle.bgColor = document.getElementById("style-bg-color").value;
     currentStyle.bgOpacity = parseInt(document.getElementById("style-bg-opacity").value);
     currentStyle.radius = parseInt(document.getElementById("style-radius").value);
@@ -1693,22 +2033,39 @@
     currentStyle.bottom = parseInt(document.getElementById("style-bottom").value);
     currentStyle.showTrans = document.getElementById("style-show-trans").checked;
 
+    // Update label values
     document.getElementById("val-size").textContent = currentStyle.size;
     document.getElementById("val-stroke").textContent = currentStyle.strokeWidth;
+    document.getElementById("val-main-size").textContent = currentStyle.main.size;
+    document.getElementById("val-main-stroke").textContent = currentStyle.main.strokeWidth;
+    document.getElementById("val-trans-size").textContent = currentStyle.trans.size;
+    document.getElementById("val-trans-stroke").textContent = currentStyle.trans.strokeWidth;
     document.getElementById("val-opacity").textContent = currentStyle.bgOpacity;
     document.getElementById("val-radius").textContent = currentStyle.radius;
     document.getElementById("val-bottom").textContent = currentStyle.bottom;
 
-    box.style.fontFamily = currentStyle.font;
-    box.style.fontSize = Math.min(28, currentStyle.size * 0.72) + "px";
-    box.style.color = currentStyle.color;
+    // Apply to preview container
     box.style.textAlign = currentStyle.align;
-    box.style.textShadow = generateTextShadow(currentStyle.strokeColor, currentStyle.strokeWidth);
     box.style.backgroundColor = hexToRgba(currentStyle.bgColor, currentStyle.bgOpacity);
     box.style.borderRadius = currentStyle.radius + "px";
     box.style.padding = currentStyle.bgOpacity > 0 ? "0.6rem 1rem" : "0";
 
-    // 複数翻訳言語のプレビュー反映
+    const isSplit = currentStyle.mode === "split";
+    const mainCfg = isSplit ? currentStyle.main : currentStyle;
+    const transCfg = isSplit ? currentStyle.trans : currentStyle;
+
+    // Main line in preview
+    fin.style.fontFamily = mainCfg.font;
+    fin.style.fontSize = Math.min(28, (mainCfg.size || 42) * 0.72) + "px";
+    fin.style.color = mainCfg.color;
+    fin.style.textShadow = generateTextShadow(mainCfg.strokeColor, mainCfg.strokeWidth, mainCfg.effect);
+
+    par.style.fontFamily = fin.style.fontFamily;
+    par.style.fontSize = (parseFloat(fin.style.fontSize) * 0.85) + "px";
+    par.style.color = fin.style.color;
+    par.style.textShadow = fin.style.textShadow;
+
+    // Translations in preview
     const transEnabled = document.getElementById("cfg-trans-enable").checked;
     if (!currentStyle.showTrans || !transEnabled) {
       tr.style.display = "none";
@@ -1725,86 +2082,22 @@
           const line = document.createElement("div");
           line.className = "preview-trans-line";
           line.textContent = SAMPLE_TRANSLATIONS[lang] || `→ [${lang}] Sample translation subtitle.`;
+
+          const lo = isSplit && currentStyle.langOverrides ? currentStyle.langOverrides[lang] : null;
+          line.style.fontFamily = (lo && lo.font) ? lo.font : transCfg.font;
+          const tSize = isSplit ? transCfg.size : (currentStyle.size * 0.75);
+          line.style.fontSize = Math.min(22, tSize * 0.72) + "px";
+          line.style.color = (lo && lo.color) ? lo.color : (isSplit ? transCfg.color : currentStyle.color);
+          const tStroke = (lo && lo.strokeColor) ? lo.strokeColor : transCfg.strokeColor;
+          const tWidth = (lo && lo.strokeWidth != null) ? lo.strokeWidth : transCfg.strokeWidth;
+          const tEff = (lo && lo.effect) ? lo.effect : transCfg.effect;
+          line.style.textShadow = generateTextShadow(tStroke, tWidth, tEff);
+
           tr.appendChild(line);
         });
       }
     }
   }
-
-  let livePreviewResetTimer = null;
-  function updateLivePreviewFromEvent(ev) {
-    const box = document.getElementById("preview-box");
-    const fin = document.getElementById("preview-final");
-    const par = document.getElementById("preview-partial");
-    const tr = document.getElementById("preview-trans");
-    if (!box || !fin || !par || !tr) return;
-
-    if (livePreviewResetTimer) {
-      clearTimeout(livePreviewResetTimer);
-      livePreviewResetTimer = null;
-    }
-
-    if (ev.type === "partial") {
-      par.textContent = ev.text;
-    } else if (ev.type === "final") {
-      fin.textContent = ev.text;
-      par.textContent = "";
-      tr.innerHTML = "";
-    } else if (ev.type === "translation") {
-      const showTrans = document.getElementById("style-show-trans").checked;
-      const transEnabled = document.getElementById("cfg-trans-enable").checked;
-      if (showTrans && transEnabled) {
-        tr.style.display = "block";
-        const line = document.createElement("div");
-        line.className = "preview-trans-line";
-        line.textContent = `→ [${ev.lang}] ${ev.text}`;
-        tr.appendChild(line);
-      }
-    }
-
-    // 7秒間無音なら、設定画面用のサンプル表示に復帰
-    livePreviewResetTimer = setTimeout(() => {
-      fin.textContent = "早耳によるリアルタイム字幕の表示例です。";
-      par.textContent = "いま話している途中です…";
-      updatePreview();
-    }, 7000);
-  }
-
-  // 設定入力イベント
-  document.querySelectorAll("#panel-settings input, #panel-settings select").forEach(el => {
-    if (el.name !== "trans-lang" && el.id !== "cfg-trans-enable") {
-      el.addEventListener("input", updatePreview);
-    }
-  });
-
-  // 翻訳先ピルチェックボックスの変更イベント
-  document.querySelectorAll('input[name="trans-lang"]').forEach(chk => {
-    chk.addEventListener("change", () => {
-      updateTransPillStates();
-      const anyChecked = Array.from(document.querySelectorAll('input[name="trans-lang"]')).some(c => c.checked);
-      if (anyChecked && !document.getElementById("cfg-trans-enable").checked) {
-        document.getElementById("cfg-trans-enable").checked = true;
-        document.getElementById("trans-lang-group").style.display = "flex";
-      }
-      updatePreview();
-      saveAllSettings();
-    });
-  });
-
-  document.getElementById("cfg-trans-enable").addEventListener("change", (e) => {
-    const isEnabled = e.target.checked;
-    document.getElementById("trans-lang-group").style.display = isEnabled ? "flex" : "none";
-    if (isEnabled) {
-      const anyChecked = Array.from(document.querySelectorAll('input[name="trans-lang"]')).some(c => c.checked);
-      if (!anyChecked) {
-        const enChk = document.getElementById("trans-chk-en");
-        if (enChk) enChk.checked = true;
-      }
-    }
-    updateTransPillStates();
-    updatePreview();
-    saveAllSettings();
-  });
 
   async function saveAllSettings() {
     const saveMsg = document.getElementById("save-msg");

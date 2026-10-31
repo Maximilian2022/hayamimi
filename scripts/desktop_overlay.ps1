@@ -124,7 +124,7 @@ if (Test-Path $configFile) {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="早耳 デスクトップ字幕オーバーレイ"
+        Title="Hayamimi Live デスクトップ字幕オーバーレイ"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
@@ -591,7 +591,7 @@ $window.Add_PreviewKeyDown({
 
 # タスクバートレイアイコン
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
-$notifyIcon.Text = "早耳 - デスクトップ字幕 (ダブルクリックで復帰)"
+$notifyIcon.Text = "Hayamimi Live - デスクトップ字幕 (ダブルクリックで復帰)"
 $iconStream = [System.Drawing.SystemIcons]::Application
 $notifyIcon.Icon = $iconStream
 $notifyIcon.Visible = $true

@@ -9,7 +9,15 @@ if (Test-Path $versionTxtFile) {
     } catch {}
 }
 $version = "GUI v$script:AppVersion"
-$script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi/main/version.txt"
+$script:VersionCheckUrl = "https://raw.githubusercontent.com/Maximilian2022/hayamimi-live/main/version.txt"
+
+# --- 既存ユーザーの Git Remote URL 自動更新 (hayamimi -> hayamimi-live) ---
+try {
+    $currentOrigin = (git remote get-url origin 2>$null)
+    if ($currentOrigin -and $currentOrigin -match "Maximilian2022/hayamimi(\.git)?$") {
+        git remote set-url origin "https://github.com/Maximilian2022/hayamimi-live.git" 2>$null
+    }
+} catch {}
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -472,7 +480,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi ランチャー (GUI v1.5.1)"
+        Title="Hayamimi Live ランチャー (GUI v1.5.1)"
         Height="780" Width="780"
         MinHeight="680" MinWidth="720"
         WindowStartupLocation="CenterScreen"
@@ -539,8 +547,8 @@ function Update-ContainerLogFile {
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Vertical">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="hayamimi" FontSize="26" FontWeight="ExtraBold" Foreground="#F8FAFC" FontFamily="{StaticResource MainFont}"/>
-                        <TextBlock Text=" (早耳)" FontSize="22" FontWeight="Bold" Foreground="#FF6B4A" FontFamily="{StaticResource MainFont}" Margin="6,2,0,0"/>
+                        <TextBlock Text="Hayamimi Live" FontSize="26" FontWeight="ExtraBold" Foreground="#F8FAFC" FontFamily="{StaticResource MainFont}"/>
+                        <TextBlock Text=" (早耳 Live)" FontSize="22" FontWeight="Bold" Foreground="#FF6B4A" FontFamily="{StaticResource MainFont}" Margin="6,2,0,0"/>
                     </StackPanel>
                     <TextBlock Text="リアルタイム音声認識 &amp; 多言語同時翻訳 (ローカル完結・高速ASR)" 
                                FontSize="12" Foreground="#8B949E" Margin="2,4,0,0"/>
@@ -862,7 +870,7 @@ $versionBadge = $window.FindName("VersionBadge")
 if ($versionBadge) {
     $versionBadge.Text = $version
 }
-$window.Title = "hayamimi (早耳) ランチャー ($version)"
+$window.Title = "Hayamimi Live (早耳 Live) ランチャー ($version)"
 $btnStart = $window.FindName("BtnStart")
 $btnStartText = $window.FindName("BtnStartText")
 $btnRestart = $window.FindName("BtnRestart")
@@ -1039,7 +1047,7 @@ function Set-UIState {
 function Show-AppConfirm {
     param(
         [string]$Message,
-        [string]$Title = "確認 - hayamimi",
+        [string]$Title = "確認 - Hayamimi Live",
         [System.Windows.MessageBoxButton]$Buttons = [System.Windows.MessageBoxButton]::YesNo,
         [System.Windows.MessageBoxImage]$Icon = [System.Windows.MessageBoxImage]::Question
     )
@@ -1383,7 +1391,7 @@ function Invoke-DeviceModeSwitch {
     if (Test-AppRunning) {
         $curDevName = if ($script:CurrentDeviceMode -eq "Gpu") { "GPU 起動 (CUDA)" } else { "CPU 起動 (推奨)" }
         $targetDevName = if ($TargetMode -eq "Gpu") { "GPU 起動 (CUDA)" } else { "CPU 起動 (推奨)" }
-        $ask = Show-AppConfirm -Message "現在アプリが稼働中です。`r`n`r`n推論設定を「$targetDevName」に切り替えるには、現在のプロセスを再起動する必要があります。`r`n`r`n稼働中のプロセスを停止して切り替えますか？" -Title "推論設定の切り替え確認 - hayamimi"
+        $ask = Show-AppConfirm -Message "現在アプリが稼働中です。`r`n`r`n推論設定を「$targetDevName」に切り替えるには、現在のプロセスを再起動する必要があります。`r`n`r`n稼働中のプロセスを停止して切り替えますか？" -Title "推論設定の切り替え確認 - Hayamimi Live"
         if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
             $script:IsSwitchingDevice = $true
             if ($script:CurrentEngineMode -eq "Venv") {
@@ -1424,7 +1432,7 @@ function Invoke-EngineModeSwitch {
     if (Test-AppRunning) {
         $curModeName = if ($script:CurrentEngineMode -eq "Venv") { "Python venv" } else { "WSL Containers" }
         $targetModeName = if ($TargetMode -eq "Venv") { "Python venv" } else { "WSL Containers" }
-        $ask = Show-AppConfirm -Message "現在 $curModeName が稼働中です。`r`n`r`n実行基盤を $targetModeName に切り替えるには、現在のプロセスを停止する必要があります。`r`n`r`n稼働中のプロセスを停止して切り替えますか？" -Title "実行基盤の切り替え確認 - hayamimi"
+        $ask = Show-AppConfirm -Message "現在 $curModeName が稼働中です。`r`n`r`n実行基盤を $targetModeName に切り替えるには、現在のプロセスを停止する必要があります。`r`n`r`n稼働中のプロセスを停止して切り替えますか？" -Title "実行基盤の切り替え確認 - Hayamimi Live"
         if ($ask -eq [System.Windows.MessageBoxResult]::Yes) {
             $script:IsSwitchingMode = $true
             if ($script:CurrentEngineMode -eq "Venv") {
