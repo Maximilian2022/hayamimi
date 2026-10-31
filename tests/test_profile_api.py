@@ -417,8 +417,11 @@ def test_maintenance_status_and_sync_stats_api(running_server, monkeypatch, tmp_
         assert res.status == 200
         st = json.loads(res.read().decode("utf-8"))
         assert "pending_count" in st
-        assert "scanning" in st
+        assert "total_pending_videos" in st
         assert "stale_rules_count" in st
+        assert "total_stale_rules" in st
+        assert "scanning" in st
+        assert "status" in st
 
     # 2. Setup mock profile and ASR stats
     prof = SpeakerProfile(
@@ -455,7 +458,7 @@ def test_maintenance_status_and_sync_stats_api(running_server, monkeypatch, tmp_
     assert server._active_profile.replacements[0].hit_count == 5
     assert server._active_profile.replacements[0].last_hit_at == "2026-10-27T12:00:00Z"
 
-    # 3. Call POST /api/maintenance/run
+    # 3. Call POST /api/maintenance/run (non-blocking, returns 202)
     req_maint = urllib.request.Request(
         f"{base_url}/api/maintenance/run",
         data=b"{}",
@@ -463,11 +466,20 @@ def test_maintenance_status_and_sync_stats_api(running_server, monkeypatch, tmp_
         method="POST",
     )
     with urllib.request.urlopen(req_maint) as res:
-        assert res.status == 200
+        assert res.status in (200, 202)
         maint_res = json.loads(res.read().decode("utf-8"))
         assert maint_res["ok"] is True
-        assert "learned_videos" in maint_res
-        assert "archived_rules" in maint_res
+        assert maint_res.get("status") == "running"
+
+    # Wait for background maintenance to complete
+    import time
+    for _ in range(20):
+        with urllib.request.urlopen(f"{base_url}/api/maintenance/status") as res:
+            st = json.loads(res.read().decode("utf-8"))
+            if not st.get("running"):
+                assert st.get("status") in ("completed", "idle")
+                break
+        time.sleep(0.1)
 
 
 

@@ -1,5 +1,5 @@
 ﻿# --- バージョン管理 (version.txt を Single Source of Truth として動的同期) ---
-$script:AppVersion = "1.5.0"
+$script:AppVersion = "1.5.1"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $versionTxtFile = Join-Path $repoRoot "version.txt"
 if (Test-Path $versionTxtFile) {
@@ -472,7 +472,7 @@ function Update-ContainerLogFile {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="hayamimi ランチャー (GUI v1.5.0)"
+        Title="hayamimi ランチャー (GUI v1.5.1)"
         Height="780" Width="780"
         MinHeight="680" MinWidth="720"
         WindowStartupLocation="CenterScreen"
@@ -550,7 +550,7 @@ function Update-ContainerLogFile {
                         <TextBlock x:Name="GpuBadge" Text="⚡ GPU: 検出中..." FontSize="11" Foreground="#10B981" FontWeight="SemiBold"/>
                     </Border>
                     <Border Background="#1E1B4B" CornerRadius="12" Padding="10,5" Margin="0,0,8,0" BorderBrush="#4338CA" BorderThickness="1">
-                        <TextBlock x:Name="VersionBadge" Text="GUI v1.5.0" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
+                        <TextBlock x:Name="VersionBadge" Text="GUI v1.5.1" FontSize="11" Foreground="#A5B4FC" FontWeight="Bold" FontFamily="{StaticResource MonoFont}"/>
                     </Border>
                     <Border Background="#141B2D" CornerRadius="12" Padding="10,5" BorderBrush="#253350" BorderThickness="1">
                         <TextBlock x:Name="RuntimeBadge" Text="Python venv" FontSize="11" Foreground="#38BDF8" FontWeight="SemiBold"/>
@@ -3293,13 +3293,17 @@ function Show-MaintenanceExitDialog {
                 try {
                     $st = Invoke-RestMethod -Uri "http://localhost:8833/api/maintenance/status" -Method Get -TimeoutSec 3 -ErrorAction Stop
                     if ($st) {
-                        if ($st.message) {
-                            $txtDetail.Text = $st.message
+                        $msg = if ($st.message) { $st.message } elseif ($st.run_message) { $st.run_message } else { $null }
+                        if ($msg) {
+                            $txtDetail.Text = $msg
                         }
-                        if ($st.status -eq "completed" -or $st.status -eq "idle") {
+                        $isCompleted = ($st.status -eq "completed") -or (-not $st.running -and $script:maintPollElapsed -gt 2 -and ($st.last_result -or $st.pending_count -eq 0))
+                        $isError = ($st.status -eq "error") -or ($st.error -and -not $st.running)
+
+                        if ($isCompleted) {
                             $pollTimer.Stop()
                             $txtStatus.Text = "✅ メンテナンスが完了しました"
-                            $txtDetail.Text = "最新の辞書ルールを保存しました。終了します..."
+                            $txtDetail.Text = if ($msg) { $msg } else { "最新の辞書ルールを保存しました。終了します..." }
                             $closeTimer = [System.Windows.Threading.DispatcherTimer]::new()
                             $closeTimer.Interval = [TimeSpan]::FromMilliseconds(700)
                             $closeTimer.Add_Tick({
@@ -3310,10 +3314,10 @@ function Show-MaintenanceExitDialog {
                             })
                             $closeTimer.Start()
                             return
-                        } elseif ($st.status -eq "error") {
+                        } elseif ($isError) {
                             $pollTimer.Stop()
                             $txtStatus.Text = "⚠️ メンテナンス中にエラーが発生しました"
-                            $txtDetail.Text = "エラーが発生したため、そのまま終了します..."
+                            $txtDetail.Text = if ($st.error) { "$($st.error)。そのまま終了します..." } else { "エラーが発生したため、そのまま終了します..." }
                             $closeTimer = [System.Windows.Threading.DispatcherTimer]::new()
                             $closeTimer.Interval = [TimeSpan]::FromMilliseconds(1000)
                             $closeTimer.Add_Tick({
@@ -3328,8 +3332,8 @@ function Show-MaintenanceExitDialog {
                     }
                 } catch {}
 
-                # 最大 120 秒でタイムアウト
-                if ($script:maintPollElapsed -gt 150) {
+                # 最大 300 秒でタイムアウト (動画DLとGemini分析を考慮)
+                if ($script:maintPollElapsed -gt 375) {
                     $pollTimer.Stop()
                     $txtStatus.Text = "⏱️ メンテナンスがタイムアウトしました"
                     $txtDetail.Text = "処理を中断し、終了します..."
@@ -3375,9 +3379,29 @@ function Invoke-ShutdownApp {
         $staleRules = 0
         try {
             $mStatus = Invoke-RestMethod -Uri "http://localhost:8833/api/maintenance/status" -Method Get -TimeoutSec 3 -ErrorAction SilentlyContinue
+
+            # 起動直後等でスキャン中の場合は最大2秒間完了を待機
+            $waitCount = 0
+            while ($mStatus -and $mStatus.scanning -and $waitCount -lt 4) {
+                Start-Sleep -Milliseconds 500
+                $mStatus = Invoke-RestMethod -Uri "http://localhost:8833/api/maintenance/status" -Method Get -TimeoutSec 2 -ErrorAction SilentlyContinue
+                $waitCount++
+            }
+
             if ($mStatus) {
-                $pendingVideos = [int]($mStatus.total_pending_videos)
-                $staleRules = [int]($mStatus.total_stale_rules)
+                if ($null -ne $mStatus.pending_count) {
+                    $pendingVideos = [int]$mStatus.pending_count
+                } elseif ($null -ne $mStatus.total_pending_videos) {
+                    $pendingVideos = [int]$mStatus.total_pending_videos
+                } elseif ($null -ne $mStatus.pending_videos) {
+                    $pendingVideos = [int]@($mStatus.pending_videos).Count
+                }
+
+                if ($null -ne $mStatus.stale_rules_count) {
+                    $staleRules = [int]$mStatus.stale_rules_count
+                } elseif ($null -ne $mStatus.total_stale_rules) {
+                    $staleRules = [int]$mStatus.total_stale_rules
+                }
             }
         } catch {}
 
@@ -3388,6 +3412,8 @@ function Invoke-ShutdownApp {
                 $script:IsShuttingDown = $false
                 return
             }
+        } else {
+            Write-AppLog "終了前メンテナンス確認: 未処理の学習・整理キューはありませんでした (即時終了)"
         }
 
         # 4. サービスの安全停止

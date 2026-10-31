@@ -144,6 +144,8 @@ _maintenance_status = {
     "error": None,
     "running": False,
     "run_message": "",
+    "status": "idle",
+    "last_result": None,
 }
 
 
@@ -324,6 +326,7 @@ def _execute_maintenance(server, log_callback=None):
             _maintenance_status["pending_count"] = 0
             _maintenance_status["stale_rules_count"] = 0
             _maintenance_status["run_message"] = final_msg
+            _maintenance_status["status"] = "completed" 
 
         logger.info(final_msg)
         return {
@@ -336,6 +339,8 @@ def _execute_maintenance(server, log_callback=None):
         logger.error("Maintenance execution failed: %s", e)
         with _maintenance_lock:
             _maintenance_status["run_message"] = f"メンテナンス失敗: {e}"
+            _maintenance_status["status"] = "error"
+            _maintenance_status["error"] = str(e)
         return {"ok": False, "error": str(e)}
     finally:
         with _maintenance_lock:
@@ -1044,6 +1049,17 @@ class SubtitleServer:
                 elif req_path == "/api/maintenance/status":
                     with _maintenance_lock:
                         st = dict(_maintenance_status)
+                        st["total_pending_videos"] = st.get("pending_count", 0)
+                        st["total_stale_rules"] = st.get("stale_rules_count", 0)
+                        if st.get("running"):
+                            st["status"] = "running"
+                        elif st.get("scanning"):
+                            st["status"] = "scanning"
+                        elif st.get("error") and not st.get("run_message"):
+                            st["status"] = "error"
+                        elif st.get("last_result") is not None or st.get("status") == "completed":
+                            st["status"] = "completed"
+                        st["message"] = st.get("run_message", "")
                     self._json(200, st)
                 elif req_path == "/api/profiles/task-status":
                     with _generation_lock:
@@ -1281,8 +1297,22 @@ class SubtitleServer:
                     self._json(202, {"ok": True, "message": "Generation started"})
                     return
                 if req_path == "/api/maintenance/run":
-                    res = _execute_maintenance(server)
-                    self._json(200 if res.get("ok") else 500, res)
+                    with _maintenance_lock:
+                        if _maintenance_status["running"]:
+                            self._json(200, {"ok": False, "message": "Already running", "status": "running"})
+                            return
+                        _maintenance_status["running"] = True
+                        _maintenance_status["run_message"] = "メンテナンスを開始しました..."
+                        _maintenance_status["status"] = "running"
+                        _maintenance_status["last_result"] = None
+
+                    def _run_maint():
+                        res = _execute_maintenance(server)
+                        with _maintenance_lock:
+                            _maintenance_status["last_result"] = res
+
+                    threading.Thread(target=_run_maint, daemon=True).start()
+                    self._json(202, {"ok": True, "message": "Maintenance started", "status": "running"})
                     return
                 if req_path == "/api/maintenance/scan":
                     _scan_channels_for_maintenance(server)
