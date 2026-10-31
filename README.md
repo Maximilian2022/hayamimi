@@ -4,6 +4,8 @@ Hayamimi Live（早耳 Live）は、CPU のみで動作するローカル完結�
 
 GPU やクラウド API を使用せず、一般的な PC の CPU 上で軽量・低遅延に推論処理を行い、OBS Studio などの配信ソフトに透過字幕として重ねて表示できます。
 
+このプロジェクトは、オリジナルのFork元Hayamimiに主に自分用にAIの支援を受けてガワを付けたものです。
+
 [English README](README.en.md) / [操作マニュアル (MANUAL.md)](MANUAL.md) / [開発時ベンチマーク・技術仕様 (ORIGINAL.ja.md)](ORIGINAL.ja.md)
 
 ---
