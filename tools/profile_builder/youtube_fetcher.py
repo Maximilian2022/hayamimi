@@ -185,19 +185,53 @@ def resolve_ffmpeg_cmd(custom_cmd: Optional[str] = None) -> str:
     return "ffmpeg"
 
 
+def validate_youtube_url(url: str) -> str:
+    """Validate that the URL is a safe, valid YouTube URL and protect against CLI injection."""
+    import urllib.parse
+    if not isinstance(url, str):
+        raise ValueError("URL must be a string")
+    clean = url.strip()
+    if not clean:
+        raise ValueError("URL cannot be empty")
+    if clean.startswith("-"):
+        raise ValueError(f"URL cannot start with a dash: {clean!r}")
+    try:
+        parsed = urllib.parse.urlparse(clean)
+    except Exception as exc:
+        raise ValueError(f"Invalid URL structure: {exc}")
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Invalid scheme '{parsed.scheme}': only http and https allowed")
+    host = (parsed.hostname or "").lower()
+    allowed_hosts = {
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "music.youtube.com",
+        "youtu.be",
+    }
+    if host not in allowed_hosts and not host.endswith(".youtube.com"):
+        raise ValueError(f"Host '{host}' is not a recognized YouTube domain")
+    return clean
+
+
 def get_cookie_args(prefer_cache: bool = True) -> List[str]:
-    """Return yt-dlp cookie options.
+    """Return yt-dlp cookie options based on available credentials.
     
     Priority:
-    1. config/cookies.txt (or cookies.txt)
-    2. Cached working browser (_WORKING_COOKIE_BROWSER)
-    3. Empty list
+    1. YOUTUBE_COOKIES_FILE environment variable
+    2. config/cookies.txt (or cookies.txt)
+    3. Cached browser (only if HAYAMIMI_ALLOW_BROWSER_COOKIES=1 is set)
+    4. Empty list
     """
     global _WORKING_COOKIE_BROWSER
+    env_file = os.environ.get("YOUTUBE_COOKIES_FILE")
+    if env_file and os.path.isfile(env_file) and os.path.getsize(env_file) > 0:
+        return ["--cookies", os.path.abspath(env_file)]
+
     for cookie_file in ["config/cookies.txt", "cookies.txt"]:
         if os.path.exists(cookie_file) and os.path.getsize(cookie_file) > 0:
             return ["--cookies", os.path.abspath(cookie_file)]
-    if prefer_cache and _WORKING_COOKIE_BROWSER:
+    if os.environ.get("HAYAMIMI_ALLOW_BROWSER_COOKIES") == "1" and prefer_cache and _WORKING_COOKIE_BROWSER:
         return ["--cookies-from-browser", _WORKING_COOKIE_BROWSER]
     return []
 
@@ -213,15 +247,20 @@ def is_bot_detection_error(text: str) -> bool:
 
 
 def discover_working_browser(test_url: str, yt_dlp_cmd: Union[str, List[str]] = "yt-dlp") -> Optional[str]:
-    """Probe installed browsers with yt-dlp to find one that bypasses YouTube bot detection."""
+    """Probe installed browsers with yt-dlp if opt-in via HAYAMIMI_ALLOW_BROWSER_COOKIES=1."""
     global _WORKING_COOKIE_BROWSER
+    if os.environ.get("HAYAMIMI_ALLOW_BROWSER_COOKIES") != "1":
+        return None
+    test_url = validate_youtube_url(test_url)
     cmd_base = resolve_yt_dlp_cmd(yt_dlp_cmd)
     for b in _KNOWN_BROWSERS:
         cmd = list(cmd_base) + [
+            "--ignore-config",
             "--dump-json",
             "--no-playlist",
             "--skip-download",
             "--cookies-from-browser", b,
+            "--",
             test_url,
         ]
         try:
@@ -507,7 +546,7 @@ class YouTubeFetcher:
             log_callback: Optional callback for streaming log messages.
         """
         exclude_video_ids = exclude_video_ids or set()
-        clean_url = channel_url.strip()
+        clean_url = validate_youtube_url(channel_url)
 
         # Prioritize /streams (stream archives) then /videos if not specified
         candidate_urls = []
@@ -688,11 +727,14 @@ class YouTubeFetcher:
 
     def fetch_metadata(self, url: str, log_callback: Optional[Callable[[str, str], None]] = None) -> VideoMetadata:
         """Fetch video metadata without downloading video."""
+        url = validate_youtube_url(url)
         cmd = list(self.yt_dlp_cmd) + [
+            "--ignore-config",
             "--dump-json",
             "--no-playlist",
             "--skip-download",
             "--extractor-args", "youtube:player_client=android,web",
+            "--",
             url,
         ]
         res = self._run_ytdl_command(cmd, log_callback=log_callback, test_url=url)
@@ -714,14 +756,17 @@ class YouTubeFetcher:
 
     def fetch_subtitles(self, url: str, temp_dir: str, log_callback: Optional[Callable[[str, str], None]] = None) -> List[SubtitleSegment]:
         """Fetch Japanese automatic subtitles (.vtt) without downloading video."""
+        url = validate_youtube_url(url)
         out_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
         cmd = list(self.yt_dlp_cmd) + [
+            "--ignore-config",
             "--skip-download",
             "--write-auto-sub",
             "--sub-lang", "ja",
             "--sub-format", "vtt",
             "--extractor-args", "youtube:player_client=android,web",
             "-o", out_template,
+            "--",
             url,
         ]
         res = self._run_ytdl_command(cmd, log_callback=log_callback, test_url=url)
@@ -842,7 +887,9 @@ class YouTubeFetcher:
         if self.ffmpeg_cmd and os.path.exists(self.ffmpeg_cmd):
             ffmpeg_location_args = ["--ffmpeg-location", os.path.dirname(os.path.abspath(self.ffmpeg_cmd))]
 
+        url = validate_youtube_url(url)
         cmd = list(self.yt_dlp_cmd) + [
+            "--ignore-config",
             "--newline",
             "--progress",
             "--progress-delta", "0.5",
@@ -855,6 +902,7 @@ class YouTubeFetcher:
             "--postprocessor-args", "ffmpeg:-ar 16000 -ac 1",
             *cookie_args,
             "-o", output_wav_path,
+            "--",
             url,
         ]
 
@@ -1030,7 +1078,9 @@ class YouTubeFetcher:
             if self.ffmpeg_cmd and os.path.exists(self.ffmpeg_cmd):
                 ffmpeg_location_args = ["--ffmpeg-location", os.path.dirname(os.path.abspath(self.ffmpeg_cmd))]
 
+            url = validate_youtube_url(url)
             cmd = list(self.yt_dlp_cmd) + [
+                "--ignore-config",
                 "--newline",
                 "--progress",
                 "--progress-delta", "0.5",
@@ -1040,6 +1090,7 @@ class YouTubeFetcher:
                 *cookie_args,
                 "-f", "ba/ba*",
                 "-o", temp_audio,
+                "--",
                 url,
             ]
 

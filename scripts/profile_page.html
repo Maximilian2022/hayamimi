@@ -1180,11 +1180,11 @@
           ` : ''}
         </div>
         <div class="profile-actions">
-          <button class="btn btn-success btn-sm" onclick="applyProfile('${p.speaker_id}')" style="font-size:0.75rem; padding: 5px 10px;">⚡ 適用</button>
-          <button class="btn btn-primary btn-sm" onclick="startGrowProfile('${p.speaker_id}')" style="font-size:0.75rem; padding: 5px 10px;">🌱 育てる</button>
-          <button class="btn btn-secondary btn-sm" onclick="exportProfile('${p.speaker_id}')" style="font-size:0.75rem; padding: 5px 10px;">📤 出力</button>
-          <button class="btn btn-secondary btn-sm" onclick="openEditModal('${p.speaker_id}')" style="font-size:0.75rem; padding: 5px 10px;">✏ 編集</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteProfile('${p.speaker_id}')" style="font-size:0.75rem; padding: 5px 10px;">🗑</button>
+          <button class="btn btn-success btn-sm" onclick="applyProfile('${escapeHtml(p.speaker_id)}')" style="font-size:0.75rem; padding: 5px 10px;">⚡ 適用</button>
+          <button class="btn btn-primary btn-sm" onclick="startGrowProfile('${escapeHtml(p.speaker_id)}')" style="font-size:0.75rem; padding: 5px 10px;">🌱 育てる</button>
+          <button class="btn btn-secondary btn-sm" onclick="exportProfile('${escapeHtml(p.speaker_id)}')" style="font-size:0.75rem; padding: 5px 10px;">📤 出力</button>
+          <button class="btn btn-secondary btn-sm" onclick="openEditModal('${escapeHtml(p.speaker_id)}')" style="font-size:0.75rem; padding: 5px 10px;">✏ 編集</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteProfile('${escapeHtml(p.speaker_id)}')" style="font-size:0.75rem; padding: 5px 10px;">🗑</button>
         </div>
       `;
       grid.appendChild(card);
@@ -1495,7 +1495,7 @@
         <td><input type="text" value="${escapeHtml(r.reason || '')}" onchange="updateRule(${idx}, 'reason', this.value)"></td>
         <td style="font-size: 0.75rem; color: var(--paper-dim);">
           <span style="display:inline-block; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:3px; font-weight:600; color:${(r.hit_count && r.hit_count > 0) ? 'var(--green)' : 'var(--paper-muted)'};">${r.hit_count || 0}回</span>
-          <span style="display:block; font-size:0.68rem; color:var(--paper-muted); margin-top:2px;">${lastHitStr}</span>
+          <span style="display:block; font-size:0.68rem; color:var(--paper-muted); margin-top:2px;">${escapeHtml(lastHitStr)}</span>
         </td>
         <td><button class="btn btn-danger btn-sm" onclick="removeRule(${idx})" style="padding: 4px 8px; font-size: 0.75rem;">✕</button></td>
       `;
@@ -1599,8 +1599,13 @@
   };
 
   function escapeHtml(str) {
-    if (!str) return "";
-    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    if (str === null || str === undefined) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   window.onload = init;

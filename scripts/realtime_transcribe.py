@@ -2267,6 +2267,8 @@ def main():
                     help="max non-tier0 models kept in memory (LRU eviction); 0 or less = unlimited")
     ap.add_argument("--serve", type=int, nargs="?", const=8833, default=None, metavar="PORT",
                     help="serve an OBS browser-source overlay at http://localhost:PORT (default 8833)")
+    ap.add_argument("--serve-host", type=str, default="127.0.0.1", metavar="HOST",
+                    help="host interface to bind the subtitle server to (default 127.0.0.1)")
     ap.add_argument("--no-refine", action="store_true",
                     help="disable the second-pass re-decode of utterance groups")
     ap.add_argument("--refine-ja-second-opinion", action="store_true",
@@ -2480,7 +2482,7 @@ def main():
     control = ControlQueue()
     server = None
     if args.serve:
-        server = SubtitleServer(port=args.serve, hub=hub).start()
+        server = SubtitleServer(port=args.serve, host=args.serve_host, hub=hub).start()
         print(f"subtitle overlay: http://localhost:{args.serve}/  (OBS browser source)",
               file=sys.stderr)
 

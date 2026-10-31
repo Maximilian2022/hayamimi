@@ -12,7 +12,8 @@ This project wraps the upstream Hayamimi fork with an intuitive interface, devel
 
 Hayamimi Live provides real-time speech-to-text and simultaneous translation for live video production and streaming software such as OBS Studio.
 
-All models run locally on the CPU using quantized INT8 weights. Because inference requires neither a dedicated GPU nor external cloud APIs, the system functions entirely offline without telemetry, recurring API costs, or rate limits.
+All models run locally on the CPU using quantized INT8 weights. Because live speech recognition and translation require neither a dedicated GPU nor external cloud APIs, the core pipeline functions entirely offline without telemetry, recurring API costs, or rate limits.  
+*Note: External network communication occurs only when using the automated dictionary generation feature to fetch YouTube archive metadata and query the Google Gemini API (Google AI Studio).*
 
 ### Key Capabilities
 

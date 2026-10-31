@@ -39,7 +39,9 @@ The system is optimized to run efficiently on standard personal computer CPUs wi
 | **Audio** | Standard USB microphone or headset | Audio input device |
 
 > [!NOTE]
-> All speech recognition and translation pipelines run entirely on the local machine. Audio data is processed in-memory and is never transmitted to external cloud servers.
+> **Privacy & Network Architecture**:  
+> Live speech-to-text and real-time translation pipelines execute 100% locally on your CPU. The core transcription works completely offline with zero telemetry; audio streams and transcripts are never uploaded to external servers.  
+> *Note: External network requests occur exclusively when utilizing the automated speaker profile builder to analyze YouTube archives (fetching metadata/captions via yt-dlp) and extracting vocabulary via Google AI Studio (Gemini API). Saved API keys are stored solely in local `config/gemini_key.txt`.*
 
 ---
 

@@ -1534,9 +1534,13 @@ class RoutedASR:
         return self._replace(sv_text)
 
     def _replace(self, text: str) -> str:
+        if not text:
+            return text
         for wrong, right in self._replacements:
+            if not wrong or not isinstance(wrong, str):
+                continue
             if wrong in text:
-                text = text.replace(wrong, right)
+                text = text.replace(wrong, right if isinstance(right, str) else str(right))
                 with self._stats_lock:
                     self._rule_hit_counts[wrong] = self._rule_hit_counts.get(wrong, 0) + 1
                     self._rule_last_hit[wrong] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -1569,7 +1573,11 @@ class RoutedASR:
         in transcribe() -- so this can override anything ITN or punctuation
         restoration produced.
         """
-        self._replacements = tuple(mapping.items())
+        safe_pairs = []
+        for k, v in (mapping or {}).items():
+            if isinstance(k, str) and k.strip() != "":
+                safe_pairs.append((k, v if isinstance(v, str) else str(v)))
+        self._replacements = tuple(safe_pairs)
 
     def set_itn_overrides(self, exclude: set | None = None,
                            force: dict | None = None) -> None:

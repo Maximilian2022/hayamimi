@@ -82,6 +82,8 @@ outside `models/`), not by `download_models.py`.
 | [psutil](https://github.com/giampaolo/psutil) | BSD-3-Clause | memory diagnostics |
 | [tokenizers](https://github.com/huggingface/tokenizers) | Apache-2.0 | fast subword tokenization for opt-in 4-class punctuation restoration (`punct_ja.PunctuatorJa4Class`) |
 | [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) | BSD-2-Clause (binary: LGPL-2.1) | bundled standalone ffmpeg binaries for audio extraction in profile builder |
+| [pydantic](https://github.com/pydantic/pydantic) | MIT | data validation and schema modeling for speaker profiles |
+| [google-genai](https://github.com/googleapis/python-genai) | Apache-2.0 | Google Gemini API SDK for automatic profile dictionary learning |
 
 ### Dev / eval-only dependencies (`requirements-dev.txt`)
 

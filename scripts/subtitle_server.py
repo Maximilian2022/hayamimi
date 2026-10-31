@@ -37,6 +37,8 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+from tools.profile_builder.profile_exporter import is_safe_speaker_id
+
 _MIC_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mic_page.html")
 _PROFILE_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profile_page.html")
 _STYLE_FILENAME = "overlay_style.json"
@@ -106,10 +108,17 @@ def _get_profiles_dir() -> str:
     os.makedirs(pdir, exist_ok=True)
     return pdir
 
+_CACHED_STORAGE_DIR = None
+
 def _get_storage_dir() -> str:
     """Return a persistent storage directory.
     Checks /app/config, /app/models, project root config/, or falls back to system tempdir.
+    Cached after the first probe to avoid repetitive disk write testing.
     """
+    global _CACHED_STORAGE_DIR
+    if _CACHED_STORAGE_DIR and os.path.isdir(_CACHED_STORAGE_DIR):
+        return _CACHED_STORAGE_DIR
+
     for candidate in ("/app/config", "/app/models"):
         if os.path.isdir(candidate):
             try:
@@ -117,6 +126,7 @@ def _get_storage_dir() -> str:
                 with open(test_file, "w") as f:
                     f.write("ok")
                 os.remove(test_file)
+                _CACHED_STORAGE_DIR = candidate
                 return candidate
             except Exception:
                 pass
@@ -127,11 +137,13 @@ def _get_storage_dir() -> str:
         with open(test_file, "w") as f:
             f.write("ok")
         os.remove(test_file)
+        _CACHED_STORAGE_DIR = local_cfg
         return local_cfg
     except Exception:
         pass
     import tempfile
-    return tempfile.gettempdir()
+    _CACHED_STORAGE_DIR = tempfile.gettempdir()
+    return _CACHED_STORAGE_DIR
 
 
 _maintenance_lock = threading.Lock()
@@ -149,8 +161,10 @@ _maintenance_status = {
 }
 
 
+_synced_session_hits: dict[str, int] = {}
+
 def _sync_stats_to_profile(server, profile=None):
-    """Synchronize ASR engine's runtime hit stats into profile and persist to disk."""
+    """Synchronize ASR engine's runtime hit stats into profile incrementally and persist to disk."""
     if server is None or getattr(server, "asr", None) is None:
         return
     prof = profile or getattr(server, "_active_profile", None)
@@ -166,8 +180,12 @@ def _sync_stats_to_profile(server, profile=None):
     for r in prof.replacements:
         if r.pattern in stats:
             st = stats[r.pattern]
-            if st.get("hit_count", 0) > r.hit_count:
-                r.hit_count = st["hit_count"]
+            session_hits = int(st.get("hit_count", 0))
+            last_synced = _synced_session_hits.get(r.pattern, 0)
+            delta = max(0, session_hits - last_synced)
+            if delta > 0:
+                r.hit_count = (r.hit_count or 0) + delta
+                _synced_session_hits[r.pattern] = session_hits
                 changed = True
             if st.get("last_hit_at"):
                 r.last_hit_at = st["last_hit_at"]
@@ -272,7 +290,9 @@ def _execute_maintenance(server, log_callback=None):
         if _maintenance_status["running"]:
             return {"ok": False, "message": "Already running"}
         _maintenance_status["running"] = True
+        _maintenance_status["status"] = "running"
         _maintenance_status["run_message"] = "メンテナンスを開始しました..."
+        _maintenance_status["last_result"] = None
 
     import datetime
     from tools.profile_builder.pipeline import ProfileBuilderPipeline
@@ -399,6 +419,50 @@ def _deep_merge_dict(base: dict, update: dict) -> dict:
         else:
             res[k] = copy.deepcopy(v)
     return res
+
+
+def _sanitize_overlay_style(style: dict) -> dict:
+    """Sanitize and clamp overlay style settings within safe boundaries."""
+    import copy
+    if not isinstance(style, dict):
+        return copy.deepcopy(_DEFAULT_STYLE)
+    s = copy.deepcopy(style)
+
+    def _clamp_num(val, low, high, default):
+        try:
+            num = float(val)
+            return max(low, min(high, num))
+        except (ValueError, TypeError):
+            return default
+
+    if "size" in s:
+        s["size"] = int(_clamp_num(s["size"], 8, 200, 42))
+    if "strokeWidth" in s:
+        s["strokeWidth"] = round(_clamp_num(s["strokeWidth"], 0.0, 30.0, 3.0), 1)
+    if "bottom" in s:
+        s["bottom"] = round(_clamp_num(s["bottom"], 0.0, 100.0, 4.0), 1)
+    if "bgOpacity" in s:
+        s["bgOpacity"] = round(_clamp_num(s["bgOpacity"], 0.0, 1.0, 0.0), 2)
+    if "radius" in s:
+        s["radius"] = int(_clamp_num(s["radius"], 0, 50, 8))
+    if "mode" in s and s["mode"] not in ("unified", "split"):
+        s["mode"] = "unified"
+    if "align" in s and s["align"] not in ("left", "center", "right"):
+        s["align"] = "center"
+    if "effect" in s and s["effect"] not in ("stroke", "double", "glow"):
+        s["effect"] = "stroke"
+
+    for sub in ("main", "trans"):
+        if sub in s and isinstance(s[sub], dict):
+            sub_d = s[sub]
+            if "size" in sub_d:
+                sub_d["size"] = int(_clamp_num(sub_d["size"], 8, 200, 42 if sub == "main" else 32))
+            if "strokeWidth" in sub_d:
+                sub_d["strokeWidth"] = round(_clamp_num(sub_d["strokeWidth"], 0.0, 30.0, 3.0 if sub == "main" else 2.5), 1)
+            if "effect" in sub_d and sub_d["effect"] not in ("stroke", "double", "glow"):
+                sub_d["effect"] = "stroke"
+
+    return s
 
 def _get_overlay_style() -> dict:
     storage_dir = _get_storage_dir()
@@ -1037,7 +1101,7 @@ class SubtitleServer:
     all 404 when no `.controls` is attached.
     """
 
-    def __init__(self, port: int = 8833, host: str = "0.0.0.0", hub: "EventHub | None" = None):
+    def __init__(self, port: int = 8833, host: str = "127.0.0.1", hub: "EventHub | None" = None):
         self.port = port
         self.host = host
         self.hub = hub if hub is not None else EventHub()
@@ -1101,7 +1165,63 @@ class SubtitleServer:
                 except Exception:
                     raise
 
+            def _validate_host(self) -> bool:
+                """Prevent DNS rebinding attacks by validating the Host header."""
+                host_hdr = self.headers.get("Host")
+                if not host_hdr:
+                    return True
+                req_host = host_hdr.split(":")[0].strip().lower()
+                allowed = {"localhost", "127.0.0.1", "::1"}
+                bound_host = (server.host or "").lower()
+                if bound_host and bound_host != "0.0.0.0":
+                    allowed.add(bound_host)
+                if bound_host == "0.0.0.0":
+                    if req_host.startswith("192.168.") or req_host.startswith("10."):
+                        return True
+                    if req_host.startswith("172."):
+                        parts = req_host.split(".")
+                        if len(parts) >= 2 and parts[1].isdigit() and 16 <= int(parts[1]) <= 31:
+                            return True
+                if req_host in allowed:
+                    return True
+                self.send_response(403)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b"403 Forbidden: Invalid Host header")
+                return False
+
+            def _read_json_body(self, max_bytes: int = _MAX_DICT_BODY_BYTES):
+                """Safely read and parse incoming JSON body with strict size checks."""
+                hdr = self.headers.get("Content-Length")
+                if hdr is None:
+                    return 200, {}
+                try:
+                    length = int(hdr)
+                except ValueError:
+                    self._json(400, {"error": "Invalid Content-Length header"})
+                    return 400, None
+                if length < 0:
+                    self._json(400, {"error": "Negative Content-Length"})
+                    return 400, None
+                if length > max_bytes:
+                    self._json(413, {"error": f"Payload exceeds size limit ({max_bytes} bytes)"})
+                    return 413, None
+                if length == 0:
+                    return 200, {}
+                raw = self.rfile.read(length)
+                if len(raw) != length:
+                    self._json(400, {"error": "Unexpected EOF reading request body"})
+                    return 400, None
+                try:
+                    payload = json.loads(raw.decode("utf-8"))
+                    return 200, payload
+                except Exception as exc:
+                    self._json(400, {"error": f"Invalid JSON: {exc}"})
+                    return 400, None
+
             def do_GET(self):
+                if not self._validate_host():
+                    return
                 req_path = urllib.parse.urlsplit(self.path).path
                 origin = self.headers.get("Origin")
                 if req_path == "/events":
@@ -1194,6 +1314,9 @@ class SubtitleServer:
                     parts = req_path.split("/")
                     if len(parts) == 5:
                         speaker_id = urllib.parse.unquote(parts[3])
+                        if not is_safe_speaker_id(speaker_id):
+                            self._json(400, {"error": "Invalid speaker_id format"})
+                            return
                         try:
                             from tools.profile_builder.profile_exporter import load_profile, export_profile_json
                             pdir = _get_profiles_dir()
@@ -1249,6 +1372,18 @@ class SubtitleServer:
                     self.wfile.write(body)
 
             def do_POST(self):
+                if not self._validate_host():
+                    return
+                origin = self.headers.get("Origin")
+                if origin:
+                    safe_origin = _get_safe_origin(origin, self.headers.get("Host"))
+                    if not safe_origin:
+                        self.send_response(403)
+                        self.send_header("Content-Type", "text/plain; charset=utf-8")
+                        self.end_headers()
+                        self.wfile.write(b"403 Forbidden: Untrusted Origin")
+                        return
+
                 req_path = urllib.parse.urlsplit(self.path).path
                 ctype = self.headers.get("Content-Type", "").lower()
                 if not ctype.startswith("application/json") and req_path != "/reset":
@@ -1273,42 +1408,38 @@ class SubtitleServer:
                         self._json(202, {"ok": False, "pending": True})
                     return
                 if req_path == "/overlay-style":
-                    length = int(self.headers.get("Content-Length") or 0)
-                    if length <= 0 or length > _MAX_DICT_BODY_BYTES:
-                        self._json(400, {"error": "missing or oversized body"})
-                        return
-                    raw = self.rfile.read(length)
-                    try:
-                        payload = json.loads(raw.decode("utf-8"))
-                    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                        self._json(400, {"error": f"invalid JSON: {exc}"})
+                    code, payload = self._read_json_body()
+                    if code != 200 or payload is None:
                         return
                     if not isinstance(payload, dict):
                         self._json(400, {"error": "body must be a JSON object"})
                         return
                     cur = _get_overlay_style()
-                    cur.update(payload)
-                    _save_overlay_style(cur)
-                    server.publish({"type": "style_update", "style": cur})
-                    self._json(200, {"ok": True, "style": cur})
+                    merged = _deep_merge_dict(cur, payload)
+                    sanitized = _sanitize_overlay_style(merged)
+                    _save_overlay_style(sanitized)
+                    server.publish({"type": "style_update", "style": sanitized})
+                    self._json(200, {"ok": True, "style": sanitized})
                     return
                 if req_path == "/api/gemini-key":
-                    length = int(self.headers.get("Content-Length") or 0)
-                    raw = self.rfile.read(length)
+                    code, payload = self._read_json_body()
+                    if code != 200 or payload is None:
+                        return
+                    if not isinstance(payload, dict):
+                        self._json(400, {"error": "body must be a JSON object"})
+                        return
                     try:
-                        payload = json.loads(raw.decode("utf-8"))
                         _save_gemini_key(payload.get("key", ""))
                         self._json(200, {"ok": True})
                     except Exception as exc:
                         self._json(400, {"error": str(exc)})
                     return
                 if req_path == "/api/profiles/generate":
-                    length = int(self.headers.get("Content-Length") or 0)
-                    raw = self.rfile.read(length)
-                    try:
-                        payload = json.loads(raw.decode("utf-8"))
-                    except Exception as exc:
-                        self._json(400, {"error": f"invalid JSON: {exc}"})
+                    code, payload = self._read_json_body()
+                    if code != 200 or payload is None:
+                        return
+                    if not isinstance(payload, dict):
+                        self._json(400, {"error": "body must be a JSON object"})
                         return
                     url = payload.get("url")
                     if not url:
@@ -1323,6 +1454,12 @@ class SubtitleServer:
                     display_name = payload.get("display_name")
                     speaker_id = payload.get("speaker_id")
                     existing_profile_id = payload.get("existing_profile_id")
+                    if speaker_id and not is_safe_speaker_id(speaker_id):
+                        self._json(400, {"error": "Invalid speaker_id format"})
+                        return
+                    if existing_profile_id and not is_safe_speaker_id(existing_profile_id):
+                        self._json(400, {"error": "Invalid existing_profile_id format"})
+                        return
                     manual_start = payload.get("manual_start")
                     duration = float(payload.get("duration") or 720.0)
                     max_videos = int(payload.get("max_videos") or 10)
@@ -1407,10 +1544,6 @@ class SubtitleServer:
                         if _maintenance_status["running"]:
                             self._json(200, {"ok": False, "message": "Already running", "status": "running"})
                             return
-                        _maintenance_status["running"] = True
-                        _maintenance_status["run_message"] = "メンテナンスを開始しました..."
-                        _maintenance_status["status"] = "running"
-                        _maintenance_status["last_result"] = None
 
                     def _run_maint():
                         res = _execute_maintenance(server)
@@ -1429,13 +1562,19 @@ class SubtitleServer:
                     self._json(200, {"ok": True})
                     return
                 if req_path == "/api/profiles/apply":
-                    length = int(self.headers.get("Content-Length") or 0)
-                    raw = self.rfile.read(length)
+                    code, payload = self._read_json_body()
+                    if code != 200 or payload is None:
+                        return
+                    if not isinstance(payload, dict):
+                        self._json(400, {"error": "body must be a JSON object"})
+                        return
                     try:
-                        payload = json.loads(raw.decode("utf-8"))
                         sid = payload.get("speaker_id")
                         if not sid:
                             self._json(400, {"error": "speaker_id is required"})
+                            return
+                        if not is_safe_speaker_id(sid):
+                            self._json(400, {"error": "Invalid speaker_id format"})
                             return
                         # Sync existing active profile stats before switching
                         _sync_stats_to_profile(server)
@@ -1463,10 +1602,13 @@ class SubtitleServer:
                         self._json(400, {"error": str(exc)})
                     return
                 if req_path == "/api/profiles/import":
-                    length = int(self.headers.get("Content-Length") or 0)
-                    raw = self.rfile.read(length)
+                    code, payload = self._read_json_body()
+                    if code != 200 or payload is None:
+                        return
+                    if not isinstance(payload, dict):
+                        self._json(400, {"error": "body must be a JSON object"})
+                        return
                     try:
-                        payload = json.loads(raw.decode("utf-8"))
                         json_content = payload.get("json_content")
                         if not json_content:
                             self._json(400, {"error": "json_content is required"})
@@ -1479,13 +1621,19 @@ class SubtitleServer:
                         self._json(400, {"error": str(exc)})
                     return
                 if req_path == "/api/profiles/delete":
-                    length = int(self.headers.get("Content-Length") or 0)
-                    raw = self.rfile.read(length)
+                    code, payload = self._read_json_body()
+                    if code != 200 or payload is None:
+                        return
+                    if not isinstance(payload, dict):
+                        self._json(400, {"error": "body must be a JSON object"})
+                        return
                     try:
-                        payload = json.loads(raw.decode("utf-8"))
                         sid = payload.get("speaker_id")
                         if not sid:
                             self._json(400, {"error": "speaker_id is required"})
+                            return
+                        if not is_safe_speaker_id(sid):
+                            self._json(400, {"error": "Invalid speaker_id format"})
                             return
                         from tools.profile_builder.profile_exporter import delete_profile
                         pdir = _get_profiles_dir()
@@ -1504,15 +1652,8 @@ class SubtitleServer:
                 elif server.asr is None:
                     self._json(404, {"error": "no ASR engine attached"})
                     return
-                length = int(self.headers.get("Content-Length") or 0)
-                if length <= 0 or length > _MAX_DICT_BODY_BYTES:
-                    self._json(400, {"error": "missing or oversized body"})
-                    return
-                raw = self.rfile.read(length)
-                try:
-                    payload = json.loads(raw.decode("utf-8"))
-                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                    self._json(400, {"error": f"invalid JSON: {exc}"})
+                code, payload = self._read_json_body()
+                if code != 200 or payload is None:
                     return
                 if not isinstance(payload, dict):
                     self._json(400, {"error": "body must be a JSON object"})

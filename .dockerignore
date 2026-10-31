@@ -11,3 +11,10 @@ testdata
 demo
 models/*.tar.bz2
 models/*.tar.gz
+config/
+models/
+.env*
+profiles/
+*.pem
+*.key
+docs/

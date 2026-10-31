@@ -3286,7 +3286,7 @@ function Show-MaintenanceExitDialog {
 
             # API 実行
             try {
-                Invoke-RestMethod -Uri "http://localhost:8833/api/maintenance/run" -Method Post -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null
+                Invoke-RestMethod -Uri "http://localhost:8833/api/maintenance/run" -Method Post -ContentType "application/json" -Body "{}" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null
             } catch {
                 Write-AppLog "メンテナンスAPIのキックに失敗しました: $_" "WARN"
             }
@@ -3379,7 +3379,7 @@ function Invoke-ShutdownApp {
 
         # 1. ASRリアルタイム統計をプロファイルへフラッシュ同期
         try {
-            Invoke-RestMethod -Uri "http://localhost:8833/api/profiles/sync-stats" -Method Post -TimeoutSec 2 -ErrorAction SilentlyContinue | Out-Null
+            Invoke-RestMethod -Uri "http://localhost:8833/api/profiles/sync-stats" -Method Post -ContentType "application/json" -Body "{}" -TimeoutSec 2 -ErrorAction SilentlyContinue | Out-Null
         } catch {}
 
         # 2. メンテナンスキュー状態の確認

@@ -7,8 +7,8 @@ services:
     container_name: hayamimi_app
     restart: unless-stopped
     ports:
-      - "8833:8833" # OBS向けローカルHTTP / SSE
-      - "8766:8766" # WebSocket音声直接受信 (LAN内/開発用)
+      - "127.0.0.1:8833:8833" # OBS向けローカルHTTP / SSE (ホストループバック限定)
+      - "127.0.0.1:8766:8766" # WebSocket音声直接受信 (ホストループバック限定)
     volumes:
       - ./models:/app/models
       - ./scripts:/app/scripts:ro
