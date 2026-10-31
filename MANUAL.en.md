@@ -1,0 +1,186 @@
+# Hayamimi Live - User Manual
+
+[日本語マニュアル](MANUAL.md) / [README](README.en.md)
+
+This manual details the system requirements, startup procedures, OBS Studio integration, subtitle customization, multilingual translation, speaker profile customization, and troubleshooting for Hayamimi Live.
+
+---
+
+## Table of Contents
+1. [System Requirements](#1-system-requirements)
+2. [Startup Procedures](#2-startup-procedures)
+3. [OBS Studio Integration](#3-obs-studio-integration)
+4. [Subtitle Styling & Customization](#4-subtitle-styling--customization)
+   - [Unified Mode](#unified-mode)
+   - [Split Custom Mode](#split-custom-mode)
+   - [Available Fonts](#available-fonts)
+   - [Text Effects](#text-effects)
+5. [Multilingual Simultaneous Translation](#5-multilingual-simultaneous-translation)
+6. [Desktop Overlay](#6-desktop-overlay)
+7. [Speaker Profile Studio (Dictionary & Replacement Rules)](#7-speaker-profile-studio-dictionary--replacement-rules)
+   - [Automated Dictionary Generation from YouTube Archives](#automated-dictionary-generation-from-youtube-archives)
+   - [Manual Replacement Rules & Instant Hotwords](#manual-replacement-rules--instant-hotwords)
+8. [Troubleshooting & FAQ](#8-troubleshooting--faq)
+9. [CLI Options & HTTP APIs](#9-cli-options--http-apis)
+
+---
+
+## 1. System Requirements
+
+The system is optimized to run efficiently on standard personal computer CPUs without requiring a dedicated GPU.
+
+| Component | Recommended Specs | Minimum Requirements |
+| :--- | :--- | :--- |
+| **OS** | Windows 11 / Windows 10 (64-bit) | Windows 10 (Build 19044 or later) |
+| **CPU** | Intel Core i5 (8th gen+) / AMD Ryzen 5+ | Quad-core x86_64 CPU |
+| **GPU** | Not required (CPU-only inference) | None |
+| **RAM** | 8 GB or higher | 4 GB |
+| **Disk** | 5 GB free storage (for model weights) | 2 GB |
+| **Audio** | Standard USB microphone or headset | Audio input device |
+
+> [!NOTE]
+> All speech recognition and translation pipelines run entirely on the local machine. Audio data is processed in-memory and is never transmitted to external cloud servers.
+
+---
+
+## 2. Startup Procedures
+
+### Standard Launch
+1. Double-click `start.bat` in the project root directory.
+2. The modern desktop launcher GUI will launch.
+3. Click **"Start Speech Recognition"**.
+4. The status switches to `RUNNING`, and your default browser opens the Web Mic page at `http://localhost:8833/mic`.
+
+### Automatic Runtime Detection
+The runner automatically selects the appropriate environment:
+- **Python venv Mode (Default)**: Direct execution via the local virtual environment (`.venv`).
+- **WSL Containers Mode**: Execution inside an isolated Microsoft WSL 3.0 container.
+
+---
+
+## 3. OBS Studio Integration
+
+To overlay transparent live subtitles on OBS Studio:
+
+### 1. Add Browser Source
+1. In OBS Studio, click the `+` button in the **Sources** dock.
+2. Choose **Browser** and name the source (e.g., `Hayamimi Subtitles`).
+
+### 2. Configure Properties
+- **URL**: `http://localhost:8833/`
+- **Width**: `1920` (match your canvas resolution)
+- **Height**: `1080`
+- **Custom CSS**: Leave blank (background is automatically transparent).
+- **Shutdown source when not visible**: Uncheck (recommended).
+
+Click **OK** to place the subtitle overlay in your scene.
+
+---
+
+## 4. Subtitle Styling & Customization
+
+Open `http://localhost:8833/mic` to adjust styling under the **OBS Subtitle Styling** card.
+
+### Unified Mode
+Applies a single set of font, size, color, outline, and effect parameters across all subtitle lines. Translation lines automatically scale to approximately 75% of the primary font size.
+
+### Split Custom Mode
+Allows independent styling across three tabs:
+1. **Main Subtitles (Voice)**: Font, size, color, stroke color/width, and effect for spoken speech.
+2. **Translation Subtitles (General)**: Shared font, size, color, stroke, and effect for translations.
+3. **Language Color Overrides**: Specify distinct text colors per target language (e.g., English in cyan, Chinese in orange, Korean in mint).
+
+### Available Fonts
+Pre-loaded with open-source Google Fonts:
+- **Japanese & General**: Zen Kaku Gothic New, M PLUS Rounded 1c, Dela Gothic One, Hachi Maru Pop, DotGothic16, Reggae One, Rampart One, Kiwi Maru, Yuji Boku, Shippori Mincho B1, LINE Seed JP.
+- **English / Latin**: Montserrat, Bungee, Fredoka, Oswald, Righteous.
+- **Chinese**: ZCOOL KuaiLe, Ma Shan Zheng, Noto Sans SC, Noto Sans TC.
+- **Korean**: Do Hyeon, Jua, Black Han Sans, LINE Seed KR, Noto Sans KR.
+
+### Text Effects
+- **Stroke**: Crisp outline around characters for clean readability.
+- **Double Outline**: Inner black border with an outer colored outline for broadcast-style text.
+- **Glow**: Soft neon blur for a cyber, luminous effect.
+
+---
+
+## 5. Multilingual Simultaneous Translation
+
+Translates recognized speech into selected target languages in real time:
+- English (`en`): FuguMT (CTranslate2 INT8)
+- Chinese Simplified (`zh`): Meta M2M-100
+- Chinese Traditional / Taiwan (`zh-tw`): M2M-100 + OpenCC
+- Chinese Traditional / Hong Kong (`zh-hk`): M2M-100 + OpenCC
+- Korean (`ko`): M2M-100
+- Spanish (`es`), French (`fr`), German (`de`): M2M-100
+
+Target languages can be toggled on or off on the Web Mic page without restarting the server.
+
+---
+
+## 6. Desktop Overlay
+
+A floating, topmost, transparent subtitle window for on-screen monitoring without OBS.
+- Click **"Desktop Overlay"** on the launcher GUI.
+- Drag borders to move and resize.
+- Press `Ctrl + Shift + H` or toggle via system tray to enable **click-through (mouse transparency)**.
+
+---
+
+## 7. Speaker Profile Studio (Dictionary & Replacement Rules)
+
+Manage specialized terminology, proper nouns, and creator-specific pronunciations at `http://localhost:8833/profile`.
+
+### Automated Dictionary Generation from YouTube Archives
+Automatically extracts proper nouns and pronunciation patterns from past streams:
+1. **Gemini API Key**: Enter your key in the header configuration card (stored locally and masked).
+2. **Input Archive URL**: Enter a YouTube video URL, playlist URL (`playlist?list=...`), or channel handle (`@ChannelName`), then click **"Generate Profile"**.
+3. **Review & Apply**: The system extracts speech segments, transcribes them with local ASR, detects errors and proper nouns, and generates phonetic replacement pairs. Click **"Apply Profile"** to activate.
+4. **Automated Maintenance**: If linked to a channel URL, new video uploads are automatically checked on launcher shutdown to update dictionaries incrementally.
+
+### Manual Replacement Rules & Instant Hotwords
+- **Replacement Rules**: Manually add, edit, or remove word replacement pairs with regex support.
+- **Instant Hotwords**: Paste stream agendas or game walkthroughs to bias acoustic decoding toward specific terminology.
+
+---
+
+## 8. Troubleshooting & FAQ
+
+### Microphone Audio Not Picked Up
+1. Verify browser microphone permissions at `http://localhost:8833/mic`.
+2. Ensure the correct input device is selected in the dropdown.
+3. Check that the visual input level meter responds in green when speaking.
+
+### Subtitles Not Appearing in OBS
+1. Verify launcher status is `RUNNING`.
+2. Confirm the Browser Source URL is set to `http://localhost:8833/` (port 8833).
+3. Right-click the source in OBS and select **Refresh cache of current page**.
+
+---
+
+## 9. CLI Options & HTTP APIs
+
+```bash
+python scripts/realtime_transcribe.py \
+  --input ws \
+  --serve 8833 \
+  --ws-host 0.0.0.0 \
+  --ws-port 8766 \
+  --translate en,zh,ko \
+  --punct-model 4class
+```
+
+### Endpoints
+- `GET /`: OBS transparent overlay HTML
+- `GET /mic`: Web microphone and live controller
+- `GET /dashboard`: Event log and live transcript dashboard
+- `GET /profile`: Speaker profile and dictionary studio
+- `GET /events`: Server-Sent Events stream for speech, translation, and style updates
+- `GET /overlay-style` / `POST /overlay-style`: Subtitle style configuration
+- `GET /config` / `POST /config`: Dynamic runtime settings
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).
