@@ -19,7 +19,7 @@ This manual details the system requirements, startup procedures, OBS Studio inte
 6. [Desktop Overlay](#6-desktop-overlay)
 7. [Speaker Profile Studio (Dictionary & Replacement Rules)](#7-speaker-profile-studio-dictionary--replacement-rules)
    - [Automated Dictionary Generation from YouTube Archives](#automated-dictionary-generation-from-youtube-archives)
-   - [Manual Replacement Rules & Instant Hotwords](#manual-replacement-rules--instant-hotwords)
+   - [Manual Replacement Rules & Profile Migration](#manual-replacement-rules--profile-migration)
 8. [Troubleshooting & FAQ](#8-troubleshooting--faq)
 9. [CLI Options & HTTP APIs](#9-cli-options--http-apis)
 
@@ -138,9 +138,9 @@ Automatically extracts proper nouns and pronunciation patterns from past streams
 3. **Review & Apply**: The system extracts speech segments, transcribes them with local ASR, detects errors and proper nouns, and generates phonetic replacement pairs. Click **"Apply Profile"** to activate.
 4. **Automated Maintenance**: If linked to a channel URL, new video uploads are automatically checked on launcher shutdown to update dictionaries incrementally.
 
-### Manual Replacement Rules & Instant Hotwords
+### Manual Replacement Rules & Profile Migration
 - **Replacement Rules**: Manually add, edit, or remove word replacement pairs with regex support.
-- **Instant Hotwords**: Paste stream agendas or game walkthroughs to bias acoustic decoding toward specific terminology.
+- **Profile Import & Export**: Export speaker profiles as JSON files for easy migration and backup.
 
 ---
 

@@ -4,6 +4,8 @@ A local, CPU-based real-time speech recognition and multilingual translation sub
 
 [日本語版 README](README.md) / [User Manual](MANUAL.en.md) / [Technical Benchmarks & Architecture (ORIGINAL.md)](ORIGINAL.md)
 
+This project wraps the upstream Hayamimi fork with an intuitive interface, developed primarily for personal use with the assistance of AI.
+
 ---
 
 ## Overview
