@@ -52,3 +52,4 @@ Select your microphone input, choose target translation languages, and customize
 ## License
 
 This software is released under the [MIT License](LICENSE). Suitable for personal, commercial, and broadcast use.
+
