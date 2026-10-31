@@ -1,78 +1,56 @@
-# Hayamimi Live 🎙️🔴
+# Hayamimi Live
 
-**Real-Time Multilingual Live Captioning & OBS Subtitles on CPU Only.**
+Hayamimi Live（早耳 Live）は、CPU のみで動作するローカル完結型のリアルタイム音声認識・多言語翻訳字幕ツールです。
 
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![release](https://img.shields.io/badge/release-v1.5.1-emerald.svg)](https://github.com/Maximilian2022/hayamimi-live/releases)
-[![platform](https://img.shields.io/badge/platform-Windows%20%7C%20WSL-indigo.svg)](README.md)
+GPU やクラウド API を使用せず、一般的な PC の CPU 上で軽量・低遅延に推論処理を行い、OBS Studio などの配信ソフトに透過字幕として重ねて表示できます。
 
-[日本語版 README (Japanese)](README.ja.md) / [User Manual](MANUAL.md)
+[English README](README.en.md) / [操作マニュアル (MANUAL.md)](MANUAL.md) / [開発時ベンチマーク・技術仕様 (ORIGINAL.ja.md)](ORIGINAL.ja.md)
 
 ---
 
-## ✨ What is Hayamimi Live?
+## 概要
 
-**Hayamimi Live (早耳 Live)** is an ultra-fast, local, real-time speech-to-text and simultaneous translation subtitle engine designed specifically for streamers, VTubers, and content creators.
+本ツールは、配信者や動画制作者が手軽にリアルタイム字幕および多言語翻訳字幕を導入できるように設計されています。
 
-No expensive graphics card (GPU) or paid cloud APIs needed. Running entirely on standard PC CPUs, subtitles appear instantly as you speak and finalize roughly **100ms after you stop**, overlaying beautifully on OBS Studio.
+音声処理と翻訳処理はすべてローカルマシン内で完結するため、外部サービスへの通信や利用料の発生、API トークンの枯渇を気にせず利用できます。
 
-```
-[ Your Voice (Microphone) ]
-       │
-       ▼ (Ultra-fast CPU-only local inference)
-┌──────────────────────────────────────────────┐
-│  Hayamimi Live Engine                        │
-│  ├─ High-accuracy Japanese ASR (ReazonSpeech)│
-│  └─ Multilingual Translation (FuguMT/M2M-100)│
-└──────────────────────────────────────────────┘
-       │
-       ▼ (OBS Studio Browser Source Overlay)
-┌──────────────────────────────────────────────┐
-│  Live Subtitles:                             │
-│  "Hello! Welcome to today's livestream!"     │
-│  ↳ [ZH] 你好！欢迎来到今天的直播！           │
-│  ↳ [JA] こんにちは！今日の配信へようこそ！   │
-└──────────────────────────────────────────────┘
-```
+### 主な特徴
+
+- **CPU 単体での低遅延推論**:
+  INT8 量子化された ONNX モデル（日本語は ReazonSpeech、英語・多言語は各言語の専用モデル）を採用し、発話終了後おおむね 100ms 前後でテキストを確定します。
+- **リアルタイム多言語翻訳**:
+  発話された日本語から、英語（FuguMT CTranslate2）や中国語、韓国語、欧州言語（M2M-100）への翻訳文を並行して出力します。
+- **柔軟な字幕スタイリング**:
+  Web 設定画面から、フォント、文字サイズ、文字色、外枠（縁取り）、表示エフェクト（通常枠、二重枠、グロー発光）をリアルタイムに調整可能です。発話テキストと翻訳テキストで異なるスタイルを個別に割り当てることもできます。
+- **プライバシー保護**:
+  音声データや文字起こしテキストはローカルメモリ上でのみ処理され、外部サーバーへ送信されることはありません。
 
 ---
 
-## 🔥 Key Highlights
+## 基本的な使い方
 
-- ⚡ **Ultra-Low Latency (~100ms)**: Subtitles land in real-time as you speak, with final text locked in ~0.1s after you pause.
-- 🌐 **Simultaneous Multilingual Translation**: Instantly translate spoken speech into **English, Chinese (Simplified/Traditional), Korean, Spanish, French, German**, and more.
-- 🎨 **Stream-Ready Custom Styling**:
-  - Pre-loaded with popular Google Fonts (cute rounded, comic, pixel dot, traditional brush, and modern western fonts).
-  - Customize main speech and translation lines independently.
-  - Choose rich visual effects: crisp outline, TV-style double stroke, or cyber neon glow.
-- 🔒 **100% Local, Offline & Private**: Zero cloud dependency, zero external API costs, zero data leakage.
+### 1. 起動
+フォルダ内の `start.bat` を実行します。  
+ランチャー画面が表示されたら、「音声認識を開始する」をクリックします。
 
----
+### 2. OBS Studio への追加
+1. OBS Studio の「ソース」パネルで「+」を押し、「ブラウザ」を追加します。
+2. URL に `http://localhost:8833/`、幅 `1920`、高さ `1080` を指定します。
+3. プレビュー画面上に透過字幕が配置されます。
 
-## 🚀 Quick Start in 3 Easy Steps
-
-### Step 1: Launch
-Double-click **`start.bat`**.  
-The desktop launcher will start. Click **"▶ Start Speech Recognition"**.
-
-### Step 2: Add Subtitles to OBS Studio
-1. In OBS Studio, click **`+`** under Sources ──▶ **Browser**.
-2. Enter **`http://localhost:8833/`** with Width `1920` and Height `1080`.
-3. Done! Transparent live subtitles will now overlay on your stream.
-
-### Step 3: Speak & Style
-Open **`http://localhost:8833/mic`** in your browser.  
-Turn on your microphone and start talking. You can tweak fonts, colors, and translation languages live with instant preview!
+### 3. 音声入力とデザイン調整
+ブラウザで `http://localhost:8833/mic` を開きます。  
+マイク入力の有効化、翻訳先言語の選択、字幕フォントや配色の調整を画面上で行えます。変更内容は OBS 側の字幕表示へ即座に反映されます。
 
 ---
 
-## 📖 Documentation & Guides
+## ドキュメント一覧
 
-- 🛠️ **Detailed Settings & OBS Setup**: See the full [User Manual (MANUAL.md)](MANUAL.md).
-- 🔬 **Upstream Research & Benchmarks**: See the original [Technical Report (ORIGINAL.md)](ORIGINAL.md).
+- **[MANUAL.md](MANUAL.md)**: OBS の詳細設定、字幕カスタマイズ仕様、トラブルシューティング、API 一覧をまとめたマニュアルです。
+- **[ORIGINAL.ja.md](ORIGINAL.ja.md)**: 本ツールの基盤となった音声認識モデルの選定理由、認識精度（CER/WER）ベンチマーク測定結果、技術調査レポートです。
 
 ---
 
-## 📄 License
+## ライセンス
 
-Released under the [MIT License](LICENSE). Free for personal, commercial, and streaming use.
+本プロジェクトは [MIT License](LICENSE) のもとで公開されています。個人利用、商用利用を問わず利用可能です。
